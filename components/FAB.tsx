@@ -4,6 +4,7 @@ import { useState, lazy, Suspense } from "react";
 
 const ModalHeuresJour = lazy(() => import("@/components/ModalHeuresJour"));
 const ModalDepense = lazy(() => import("@/components/ModalDepense"));
+const ModalPhotos = lazy(() => import("@/components/ModalPhotos"));
 
 interface Props { onSuccess?: () => void; }
 
@@ -15,6 +16,7 @@ export default function FAB({ onSuccess }: Props) {
   const [ouvert, setOuvert] = useState(false);
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
+  const [modalPhotos, setModalPhotos] = useState(false);
 
   const fermer = () => setOuvert(false);
 
@@ -42,6 +44,12 @@ export default function FAB({ onSuccess }: Props) {
             >
               💸 Dépense
             </button>
+            <button
+              onClick={() => { fermer(); setModalPhotos(true); }}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-full shadow-lg font-semibold text-sm animate-in slide-in-from-right duration-150"
+            >
+              📸 Photos / Vidéo
+            </button>
             <a
               href="/soumissions/nouveau"
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-full shadow-lg font-semibold text-sm animate-in slide-in-from-right duration-150"
@@ -66,6 +74,7 @@ export default function FAB({ onSuccess }: Props) {
       <Suspense fallback={null}>
         {modalHeures && <ModalHeuresJour ouvert={modalHeures} onClose={() => setModalHeures(false)} onSuccess={onSuccess} />}
         {modalDepense && <ModalDepense ouvert={modalDepense} onClose={() => setModalDepense(false)} onSuccess={onSuccess} />}
+        {modalPhotos && <ModalPhotos ouvert={modalPhotos} onClose={() => setModalPhotos(false)} onSuccess={onSuccess} />}
       </Suspense>
     </>
   );

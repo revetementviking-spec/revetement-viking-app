@@ -7,7 +7,22 @@ import BottomSheet from "@/components/BottomSheet";
 import { compresserImage } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; }
-interface LigneJour { projet_id: number; heures: string; description: string; photos: { data: string; type: string; nom: string }[]; }
+interface LigneJour {
+  projet_id: number; heures: string; description: string;
+  photos: { data: string; type: string; nom: string }[];
+  heure_debut: string; heure_fin: string; dejeuner_retire: boolean;
+}
+
+/** Calcule heures entre debut et fin (format HH:MM), minus pause dîner 30 min si activé */
+function calculerHeures(debut: string, fin: string, dejeunerRetire: boolean): number {
+  if (!debut || !fin) return 0;
+  const [hd, md] = debut.split(":").map(Number);
+  const [hf, mf] = fin.split(":").map(Number);
+  let mins = (hf * 60 + mf) - (hd * 60 + md);
+  if (mins < 0) mins += 24 * 60; // si fin le lendemain
+  if (dejeunerRetire) mins -= 30;
+  return Math.max(0, mins / 60);
+}
 interface Employe { id: number; nom: string; taux_horaire: number; das_pct: number; }
 
 export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
@@ -39,7 +54,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     fetch("/api/projets?statut=actif").then((r) => r.json()).then((d) => {
       setProjets(d);
       if (d.length > 0 && lignes.length === 0) {
-        setLignes([{ projet_id: d[0].id, heures: "", description: "", photos: [] }]);
+        setLignes([{ projet_id: d[0].id, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
       }
     });
   }, [ouvert]);
@@ -84,19 +99,27 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     }
   };
 
-  const ajouterLigne = () => setLignes([...lignes, { projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [] }]);
+  const ajouterLigne = () => setLignes([...lignes, { projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
   const supprimerLigne = (i: number) => setLignes(lignes.filter((_, idx) => idx !== i));
   const modifier = (i: number, patch: Partial<LigneJour>) => setLignes(lignes.map((l, idx) => idx === i ? { ...l, ...patch } : l));
 
   const empsActifs = employes.filter((e) => empSelectionnes.has(e.id));
-  const totalHeures = lignes.reduce((s, l) => s + (+l.heures || 0), 0);
+  // Calcul auto des heures à partir de heure_debut/fin si présents et heures vide
+  const heuresEffectives = (l: LigneJour): number => {
+    if (l.heures) return +l.heures || 0;
+    return calculerHeures(l.heure_debut, l.heure_fin, l.dejeuner_retire);
+  };
+  const totalHeures = lignes.reduce((s, l) => s + heuresEffectives(l), 0);
   // Coût total affiché = heures × somme(taux de base) — DAS calculée en arrière-plan
   const coutEmployes = empsActifs.reduce((s, e) => s + e.taux_horaire, 0);
   const totalCout = totalHeures * coutEmployes;
 
   const enregistrer = async () => {
-    const valides = lignes.filter((l) => +l.heures > 0);
-    if (valides.length === 0) { toast("Saisis au moins une ligne", "warning"); return; }
+    // Une ligne est valide si elle a des heures > 0 OU si début/fin permettent de les calculer
+    const valides = lignes
+      .map((l) => ({ ...l, heures_effectives: heuresEffectives(l) }))
+      .filter((l) => l.heures_effectives > 0);
+    if (valides.length === 0) { toast("Saisis au moins une ligne avec heures (manuel ou début/fin)", "warning"); return; }
     if (empsActifs.length === 0) { toast("Sélectionne au moins un employé", "warning"); return; }
     // Alerte budget dépassé
     for (const l of valides) {
@@ -115,11 +138,16 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
       const inserts: Promise<any>[] = [];
       for (const emp of empsActifs) {
         for (const l of valides) {
+          const descBase = l.description || "";
+          const trace = (l.heure_debut && l.heure_fin && !l.heures)
+            ? `${l.heure_debut}→${l.heure_fin}${l.dejeuner_retire ? " (-30min dîner)" : ""}`
+            : "";
+          const desc = [descBase, trace].filter(Boolean).join(" · ");
           inserts.push(fetch("/api/heures", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projet_id: l.projet_id, date, heures: +l.heures,
-              description: l.description, employe: emp.nom, taux_horaire: emp.taux_horaire,
+              projet_id: l.projet_id, date, heures: l.heures_effectives,
+              description: desc, employe: emp.nom, taux_horaire: emp.taux_horaire,
             }),
           }));
         }
@@ -144,7 +172,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
       if (photosInserts.length > 0) await Promise.all(photosInserts);
 
       toast(`✓ ${totalHeures} h × ${empsActifs.length} employé(s)${totalPhotos > 0 ? ` + ${totalPhotos} photo(s)` : ""} (${formatCAD(totalCout)})`, "success");
-      setLignes([{ projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [] }]);
+      setLignes([{ projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
       onSuccess?.();
       onClose();
     } finally { setLoading(false); }
@@ -220,24 +248,48 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
           <div className="space-y-2">
             {lignes.map((l, i) => {
               const proj = projets.find((p) => p.id === l.projet_id);
+              const heuresCalc = heuresEffectives(l);
               return (
                 <div key={i} className="border-2 border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50">
-                  <div className="grid grid-cols-12 gap-2 items-end">
-                    <div className="col-span-8">
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1">
                       <label className="block text-xs font-medium text-slate-600 mb-1">Projet</label>
                       <select value={l.projet_id} onChange={(e) => modifier(i, { projet_id: +e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm bg-white">
                         {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}</option>)}
                       </select>
                     </div>
-                    <div className="col-span-3">
-                      <label className="block text-xs font-medium text-slate-600 mb-1">Heures</label>
-                      <input type="number" inputMode="decimal" step={0.5} value={l.heures} onChange={(e) => modifier(i, { heures: e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm text-right font-bold" />
+                    {lignes.length > 1 && (
+                      <button onClick={() => supprimerLigne(i)} className="w-12 h-12 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-base flex-shrink-0">✕</button>
+                    )}
+                  </div>
+
+                  {/* Heures d'entrée/sortie + dîner */}
+                  <div className="bg-white border rounded-lg p-2 space-y-2">
+                    <div className="grid grid-cols-3 gap-2 items-end">
+                      <div>
+                        <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Entrée</label>
+                        <input type="time" value={l.heure_debut} onChange={(e) => modifier(i, { heure_debut: e.target.value, heures: "" })} className="w-full px-2 py-2 border rounded text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Sortie</label>
+                        <input type="time" value={l.heure_fin} onChange={(e) => modifier(i, { heure_fin: e.target.value, heures: "" })} className="w-full px-2 py-2 border rounded text-sm" />
+                      </div>
+                      <div className="text-right">
+                        <div className="text-[10px] text-slate-500">Total</div>
+                        <div className="text-lg font-bold text-emerald-700">{heuresCalc.toFixed(2)} h</div>
+                      </div>
                     </div>
-                    <div className="col-span-1">
-                      {lignes.length > 1 && (
-                        <button onClick={() => supprimerLigne(i)} className="w-full h-12 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-base">✕</button>
-                      )}
-                    </div>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={l.dejeuner_retire} onChange={(e) => modifier(i, { dejeuner_retire: e.target.checked, heures: "" })} className="w-4 h-4" />
+                      <span>🥪 Retirer dîner (30 min)</span>
+                    </label>
+                    <details className="text-[10px]">
+                      <summary className="text-slate-500 cursor-pointer">Saisie manuelle des heures</summary>
+                      <div className="mt-1">
+                        <input type="number" inputMode="decimal" step={0.25} placeholder="ex: 7.5" value={l.heures} onChange={(e) => modifier(i, { heures: e.target.value })} className="w-full px-2 py-2 border rounded text-sm text-right font-bold" />
+                        <p className="text-[10px] text-slate-500 mt-0.5">Si rempli, écrase le calcul début/fin.</p>
+                      </div>
+                    </details>
                   </div>
                   <input type="text" value={l.description} onChange={(e) => modifier(i, { description: e.target.value })} placeholder="Description (optionnel)" className="w-full px-3 py-2 border rounded text-xs bg-white" />
 
@@ -268,10 +320,10 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
                     )}
                   </div>
 
-                  {proj && (+l.heures > 0) && empsActifs.length > 0 && (
+                  {proj && heuresCalc > 0 && empsActifs.length > 0 && (
                     <div className="text-xs text-slate-600 flex justify-between">
                       <span>Reste budget: {formatCAD((proj.budget_estime || 0) - proj.cout_total)}</span>
-                      <span className="font-bold text-emerald-700">+ {formatCAD(+l.heures * coutEmployes)}</span>
+                      <span className="font-bold text-emerald-700">+ {formatCAD(heuresCalc * coutEmployes)}</span>
                     </div>
                   )}
                 </div>

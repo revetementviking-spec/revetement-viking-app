@@ -6,6 +6,7 @@ import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import ModalHeuresJour from "@/components/ModalHeuresJour";
 import ModalDepense from "@/components/ModalDepense";
+import ModalPhotos from "@/components/ModalPhotos";
 import FAB from "@/components/FAB";
 import Meteo from "@/components/Meteo";
 
@@ -24,6 +25,7 @@ export default function Home() {
   const [relances, setRelances] = useState<any[]>([]);
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
+  const [modalPhotos, setModalPhotos] = useState(false);
   const { toast } = useToast();
 
   const charger = async () => {
@@ -69,20 +71,25 @@ export default function Home() {
         {/* ⚡ ACTIONS RAPIDES */}
         <section className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-lg p-4 md:p-5">
           <h2 className="text-sm font-bold text-emerald-900 uppercase mb-3">⚡ Actions rapides</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-3">
             <button onClick={() => setModalHeures(true)} className="bg-white hover:bg-emerald-50 border-2 border-emerald-300 rounded-lg p-3 md:p-4 text-left transition shadow-sm hover:shadow">
               <div className="text-2xl md:text-3xl mb-1">⏱️</div>
-              <div className="font-bold text-emerald-900 text-sm md:text-base">Saisir mes heures</div>
+              <div className="font-bold text-emerald-900 text-sm md:text-base">Saisir heures</div>
               <div className="text-[10px] md:text-xs text-slate-600">Multi-employés</div>
             </button>
             <button onClick={() => setModalDepense(true)} className="bg-white hover:bg-orange-50 border-2 border-orange-300 rounded-lg p-3 md:p-4 text-left transition shadow-sm hover:shadow">
               <div className="text-2xl md:text-3xl mb-1">💸</div>
               <div className="font-bold text-orange-900 text-sm md:text-base">Ajouter dépense</div>
-              <div className="text-[10px] md:text-xs text-slate-600">Imputée à un projet</div>
+              <div className="text-[10px] md:text-xs text-slate-600">Reçu / facture</div>
+            </button>
+            <button onClick={() => setModalPhotos(true)} className="bg-white hover:bg-sky-50 border-2 border-sky-300 rounded-lg p-3 md:p-4 text-left transition shadow-sm hover:shadow">
+              <div className="text-2xl md:text-3xl mb-1">📸</div>
+              <div className="font-bold text-sky-900 text-sm md:text-base">Photos / Vidéo</div>
+              <div className="text-[10px] md:text-xs text-slate-600">Classer dans projet</div>
             </button>
             <a href="/soumissions/nouveau" className="bg-white hover:bg-blue-50 border-2 border-blue-300 rounded-lg p-3 md:p-4 text-left transition shadow-sm hover:shadow">
               <div className="text-2xl md:text-3xl mb-1">📄</div>
-              <div className="font-bold text-blue-900 text-sm md:text-base">Nouvelle soumission</div>
+              <div className="font-bold text-blue-900 text-sm md:text-base">Soumission</div>
               <div className="text-[10px] md:text-xs text-slate-600">Hover + IA</div>
             </a>
             <a href="/projets" className="bg-white hover:bg-purple-50 border-2 border-purple-300 rounded-lg p-3 md:p-4 text-left transition shadow-sm hover:shadow">
@@ -206,6 +213,7 @@ export default function Home() {
 
       <ModalHeuresJour ouvert={modalHeures} onClose={() => setModalHeures(false)} onSuccess={charger} />
       <ModalDepense ouvert={modalDepense} onClose={() => setModalDepense(false)} onSuccess={charger} />
+      <ModalPhotos ouvert={modalPhotos} onClose={() => setModalPhotos(false)} onSuccess={charger} />
       <FAB onSuccess={charger} />
 
     </div>
