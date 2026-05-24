@@ -19,17 +19,20 @@ const STATUT_LABELS: Record<string, { label: string; couleur: string }> = {
 export default function Home() {
   const [stats, setStats] = useState<any>(null);
   const [projetsActifs, setProjetsActifs] = useState<any[]>([]);
+  const [heuresSemaine, setHeuresSemaine] = useState<any[]>([]);
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
   const { toast } = useToast();
 
   const charger = async () => {
-    const [s, p] = await Promise.all([
+    const [s, p, h] = await Promise.all([
       fetch("/api/soumissions?stats=1").then((r) => r.json()),
       fetch("/api/projets?statut=actif").then((r) => r.json()),
+      fetch("/api/heures-sommaire?jours=7").then((r) => r.json()).catch(() => []),
     ]);
     setStats(s);
     setProjetsActifs(p);
+    setHeuresSemaine(h);
   };
 
   useEffect(() => { charger(); }, []);
@@ -114,6 +117,34 @@ export default function Home() {
                   )}
                 </a>
               ))}
+            </div>
+          </section>
+        )}
+
+        {/* HEURES PAR EMPLOYÉ — 7 derniers jours */}
+        {heuresSemaine.length > 0 && (
+          <section className="bg-white rounded-lg shadow p-4 md:p-5">
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="font-semibold text-slate-900">👷 Heures par employé · 7 derniers jours</h2>
+              <span className="text-xs text-slate-500">{heuresSemaine.reduce((s, e) => s + e.total_heures, 0).toFixed(1)} h cumulées</span>
+            </div>
+            <div className="space-y-2">
+              {heuresSemaine.map((e, i) => {
+                const maxH = Math.max(...heuresSemaine.map((x) => x.total_heures));
+                const pct = maxH > 0 ? (e.total_heures / maxH) * 100 : 0;
+                return (
+                  <div key={i} className="flex items-center gap-3">
+                    <div className="w-32 md:w-40 text-sm font-semibold truncate">{e.employe}</div>
+                    <div className="flex-1 h-7 bg-slate-100 rounded relative overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-emerald-500 to-teal-500" style={{ width: `${pct}%` }} />
+                      <div className="absolute inset-0 flex items-center justify-between px-2 text-xs font-semibold text-slate-900">
+                        <span>{e.total_heures.toFixed(1)} h · {e.n_jours} j</span>
+                        <span>{formatCAD(e.cout_total)}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}

@@ -367,6 +367,14 @@ export async function ajouterHeureProjet(h: HeureProjet): Promise<number> {
 export async function supprimerHeureProjet(id: number) {
   await run("DELETE FROM heures_projet WHERE id = ?", [id]);
 }
+export async function heuresParEmploye(depuis: string): Promise<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[]> {
+  return await all<any>(
+    `SELECT employe, SUM(heures) as total_heures, SUM(heures * taux_horaire) as cout_total, COUNT(DISTINCT date) as n_jours
+     FROM heures_projet WHERE date >= ? AND employe IS NOT NULL
+     GROUP BY employe ORDER BY total_heures DESC`,
+    [depuis]
+  );
+}
 
 // === FACTURES ===
 export interface FactureProjet {
@@ -453,11 +461,12 @@ export interface Employe {
   id?: number; nom: string; taux_horaire: number; das_pct?: number; actif?: number;
 }
 async function seedEmployes() {
-  const r = await one<{ n: number }>("SELECT COUNT(*) as n FROM employes");
+  // Migration idempotente : Frédéric n'est plus un employé suivi
+  await run("UPDATE employes SET actif = 0 WHERE nom = 'Frédéric'", []);
+  const r = await one<{ n: number }>("SELECT COUNT(*) as n FROM employes WHERE actif = 1");
   if ((r?.n || 0) > 0) return;
   const now = new Date().toISOString();
   const defaults = [
-    { nom: "Frédéric", taux: 90 },
     { nom: "Gabriel Quinchon", taux: 45 },
     { nom: "Maxime", taux: 30 },
     { nom: "Francis Quinchon", taux: 30 },
