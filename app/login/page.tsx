@@ -32,9 +32,9 @@ function LoginForm() {
     <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4">
       <div className="bg-white rounded-lg shadow-2xl max-w-sm w-full p-8 space-y-5">
         <div className="text-center">
-          <div className="text-5xl mb-2">🏗️</div>
+          <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-24 w-24 mx-auto mb-2" />
           <h1 className="text-2xl font-bold text-slate-900">Revêtement Viking</h1>
-          <p className="text-sm text-slate-500">Revêtement Viking Inc. · RBQ 5819-1099-01</p>
+          <p className="text-sm text-slate-500">Revêtement Viking Inc. · RBQ 5811-4299-01</p>
         </div>
         <form onSubmit={login} className="space-y-3">
           <div>

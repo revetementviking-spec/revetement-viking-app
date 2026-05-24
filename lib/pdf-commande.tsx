@@ -43,7 +43,7 @@ export function CommandeMateriauxPDF({ numeroSoumission, date, client, calcul }:
             <View style={styles.header}>
               <View>
                 <Text style={styles.h1}>BON DE COMMANDE</Text>
-                <Text style={styles.small}>Revêtement Viking Inc. · RBQ 5819-1099-01</Text>
+                <Text style={styles.small}>Revêtement Viking Inc. · RBQ 5811-4299-01</Text>
                 <Text style={styles.small}>info@entreprisesxpress.ca</Text>
               </View>
               <View style={{ textAlign: "right" }}>

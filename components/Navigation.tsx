@@ -10,12 +10,12 @@ interface NavLink {
 }
 
 const LINKS: NavLink[] = [
-  { href: "/", label: "Nouvelle", icon: "➕" },
-  { href: "/dashboard", label: "Tableau", icon: "📊" },
+  { href: "/", label: "Tableau", icon: "📊" },
+  { href: "/soumissions/nouveau", label: "Nouvelle", icon: "➕" },
   { href: "/projets", label: "Projets", icon: "🏗️" },
   { href: "/clients", label: "Clients", icon: "👥" },
   { href: "/soumissions", label: "Soum.", icon: "📋" },
-  { href: "/bibliotheque", label: "Biblio.", icon: "📚" },
+  { href: "/outils", label: "Outils", icon: "🔧" },
 ];
 
 interface Props {
@@ -64,6 +64,11 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
               )}
             </svg>
           </button>
+
+          {/* Logo Viking */}
+          <a href="/" className="flex-shrink-0 hidden sm:block" title="Tableau de bord">
+            <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-9 w-9 brightness-0 invert opacity-90" />
+          </a>
 
           {/* Titre */}
           <div className="flex-1 min-w-0">

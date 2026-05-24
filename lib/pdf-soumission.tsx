@@ -73,7 +73,7 @@ export function SoumissionPDF({ client, numeroSoumission, date, calcul }: Props)
         <View style={styles.header}>
           <View>
             <Text style={styles.h1}>Revêtement Viking Inc.</Text>
-            <Text style={styles.small}>RBQ 5819-1099-01</Text>
+            <Text style={styles.small}>RBQ 5811-4299-01</Text>
             <Text style={styles.small}>info@entreprisesxpress.ca</Text>
             <Text style={styles.small}>Revêtement extérieur — Soffite · Fascia · Solin · Parement</Text>
           </View>
@@ -178,7 +178,7 @@ export function SoumissionPDF({ client, numeroSoumission, date, calcul }: Props)
         </View>
 
         <Text style={styles.footer}>
-          Revêtement Viking Inc. · RBQ 5819-1099-01 · info@entreprisesxpress.ca
+          Revêtement Viking Inc. · RBQ 5811-4299-01 · info@entreprisesxpress.ca
         </Text>
       </Page>
     </Document>

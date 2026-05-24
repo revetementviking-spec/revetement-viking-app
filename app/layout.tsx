@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Revêtement Viking — Revêtement extérieur",
-  description: "Revêtement Viking Inc. · RBQ 5819-1099-01 · Soumissions automatisées de revêtement extérieur (soffite, fascia, solin, parement)",
+  description: "Revêtement Viking Inc. · RBQ 5811-4299-01 · Soumissions automatisées de revêtement extérieur (soffite, fascia, solin, parement)",
   applicationName: "Revêtement Viking",
   authors: [{ name: "Revêtement Viking Inc." }],
   manifest: "/manifest.json",

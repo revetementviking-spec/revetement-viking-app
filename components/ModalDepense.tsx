@@ -6,7 +6,7 @@ import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
-const CATEGORIES = ["matériaux", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
+const CATEGORIES = ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
 
 export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdInitial }: Props) {
   const today = new Date().toISOString().slice(0, 10);

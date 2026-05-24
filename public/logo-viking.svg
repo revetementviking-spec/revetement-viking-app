@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280" fill="none">
+  <g stroke="#1e3a5f" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" fill="none">
+    <!-- Mât et drapeau -->
+    <line x1="200" y1="40" x2="200" y2="180"/>
+    <path d="M200 50 L240 55 L235 70 L245 80 L200 78 Z" fill="#1e3a5f"/>
+    <!-- Voile -->
+    <path d="M205 70 L300 100 L300 175 L205 175 Z" fill="#1e3a5f"/>
+    <path d="M195 70 L130 100 L130 175 L195 175 Z" fill="none"/>
+    <!-- Coque -->
+    <path d="M40 180 L360 180 L340 240 L60 240 Z" fill="none"/>
+    <!-- Proue dragon (droite) -->
+    <path d="M360 180 Q385 175 390 160 L370 155 L390 145 L370 140 L385 130" stroke-width="5"/>
+    <!-- Poupe courbée (gauche) -->
+    <path d="M40 180 Q15 175 25 155 Q35 145 50 165" stroke-width="5"/>
+    <!-- Boucliers -->
+    <g stroke-width="3">
+      <rect x="75" y="205" width="18" height="22"/>
+      <rect x="100" y="205" width="18" height="22"/>
+      <rect x="125" y="205" width="18" height="22"/>
+      <rect x="150" y="205" width="18" height="22"/>
+      <rect x="175" y="205" width="18" height="22"/>
+      <rect x="200" y="205" width="18" height="22"/>
+      <rect x="225" y="205" width="18" height="22"/>
+      <rect x="250" y="205" width="18" height="22"/>
+      <rect x="275" y="205" width="18" height="22"/>
+      <rect x="300" y="205" width="18" height="22"/>
+    </g>
+    <!-- Lignes coque -->
+    <line x1="50" y1="190" x2="350" y2="190" stroke-width="2"/>
+    <line x1="58" y1="232" x2="342" y2="232" stroke-width="2"/>
+  </g>
+</svg>

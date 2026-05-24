@@ -10,7 +10,7 @@ import { MATERIAUX } from "@/data/materiaux";
 import { PRESETS } from "@/data/presets-soumission";
 import { jobsSimilaires } from "@/lib/db";
 
-const SYSTEME = `Tu es l'expert estimateur en revêtement extérieur d'Revêtement Viking Inc. (RBQ 5819-1099-01, taux 90$/h facturé client).
+const SYSTEME = `Tu es l'expert estimateur en revêtement extérieur d'Revêtement Viking Inc. (RBQ 5811-4299-01, taux 90$/h facturé client).
 
 Tu reçois :
 - Une extraction de mesures de plan/photo/Hover (surface parement, fascia LF, soffite SF, solin, coins, etc.)

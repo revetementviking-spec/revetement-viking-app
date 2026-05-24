@@ -86,6 +86,20 @@ export async function initDb() {
       date TEXT NOT NULL, montant REAL NOT NULL, fournisseur TEXT, description TEXT,
       categorie TEXT, date_saisie TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS employes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom TEXT NOT NULL UNIQUE, taux_horaire REAL NOT NULL,
+      das_pct REAL DEFAULT 0.15, actif INTEGER DEFAULT 1,
+      date_creation TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS outils (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom TEXT NOT NULL, categorie TEXT, etat TEXT DEFAULT 'bon',
+      localisation TEXT, numero_serie TEXT, prix_achat REAL,
+      date_achat TEXT, notes TEXT,
+      ajoute_par TEXT, date_ajout TEXT NOT NULL,
+      modifie_par TEXT, date_modif TEXT
+    )`,
     `CREATE TABLE IF NOT EXISTS bibliotheque_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, date_ajout TEXT NOT NULL,
       adresse TEXT, type_materiau TEXT,
@@ -432,6 +446,82 @@ export async function jobsSimilaires(parementPi2: number, typeMateriau?: string,
     `SELECT * FROM bibliotheque_jobs WHERE parement_pi2 BETWEEN ? AND ? ORDER BY ABS(parement_pi2 - ?) ASC LIMIT ?`,
     [min, max, parementPi2, limit]
   );
+}
+
+// === EMPLOYÉS ===
+export interface Employe {
+  id?: number; nom: string; taux_horaire: number; das_pct?: number; actif?: number;
+}
+async function seedEmployes() {
+  const r = await one<{ n: number }>("SELECT COUNT(*) as n FROM employes");
+  if ((r?.n || 0) > 0) return;
+  const now = new Date().toISOString();
+  const defaults = [
+    { nom: "Frédéric", taux: 90 },
+    { nom: "Gabriel Quinchon", taux: 45 },
+    { nom: "Maxime", taux: 30 },
+    { nom: "Francis Quinchon", taux: 30 },
+  ];
+  for (const e of defaults) {
+    await run("INSERT OR IGNORE INTO employes (nom, taux_horaire, das_pct, actif, date_creation) VALUES (?, ?, ?, 1, ?)", [e.nom, e.taux, 0.15, now]);
+  }
+}
+export async function listerEmployes(): Promise<Employe[]> {
+  await initDb(); await seedEmployes();
+  return await all<Employe>("SELECT * FROM employes WHERE actif = 1 ORDER BY nom ASC");
+}
+export async function ajouterEmploye(e: Employe): Promise<number> {
+  const r = await run(
+    "INSERT INTO employes (nom, taux_horaire, das_pct, actif, date_creation) VALUES (?, ?, ?, 1, ?)",
+    [e.nom, e.taux_horaire, e.das_pct ?? 0.15, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function modifierEmploye(id: number, e: Partial<Employe>) {
+  const champs = ['nom', 'taux_horaire', 'das_pct', 'actif'];
+  const definis = champs.filter(k => (e as any)[k] !== undefined);
+  if (!definis.length) return;
+  const sets = definis.map(k => `${k} = ?`).join(', ');
+  const valeurs = definis.map(k => (e as any)[k]);
+  await run(`UPDATE employes SET ${sets} WHERE id = ?`, [...valeurs, id]);
+}
+export async function supprimerEmploye(id: number) {
+  await run("UPDATE employes SET actif = 0 WHERE id = ?", [id]);
+}
+
+// === OUTILS ===
+export interface Outil {
+  id?: number; nom: string; categorie?: string; etat?: string;
+  localisation?: string; numero_serie?: string; prix_achat?: number;
+  date_achat?: string; notes?: string;
+  ajoute_par?: string; date_ajout?: string;
+  modifie_par?: string; date_modif?: string;
+}
+export async function listerOutils(): Promise<Outil[]> {
+  return await all<Outil>("SELECT * FROM outils ORDER BY date_ajout DESC");
+}
+export async function getOutil(id: number): Promise<Outil | null> {
+  return await one<Outil>("SELECT * FROM outils WHERE id = ?", [id]);
+}
+export async function ajouterOutil(o: Outil): Promise<number> {
+  const now = new Date().toISOString();
+  const r = await run(
+    `INSERT INTO outils (nom, categorie, etat, localisation, numero_serie, prix_achat, date_achat, notes, ajoute_par, date_ajout) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [o.nom, o.categorie || null, o.etat || 'bon', o.localisation || null, o.numero_serie || null,
+     o.prix_achat || null, o.date_achat || null, o.notes || null, o.ajoute_par || null, now]
+  );
+  return r.lastInsertRowid;
+}
+export async function modifierOutil(id: number, o: Partial<Outil>) {
+  const champs = ['nom', 'categorie', 'etat', 'localisation', 'numero_serie', 'prix_achat', 'date_achat', 'notes'];
+  const definis = champs.filter(k => (o as any)[k] !== undefined);
+  if (!definis.length) return;
+  const sets = definis.map(k => `${k} = ?`).join(', ') + ', modifie_par = ?, date_modif = ?';
+  const valeurs = [...definis.map(k => (o as any)[k]), o.modifie_par || null, new Date().toISOString()];
+  await run(`UPDATE outils SET ${sets} WHERE id = ?`, [...valeurs, id]);
+}
+export async function supprimerOutil(id: number) {
+  await run("DELETE FROM outils WHERE id = ?", [id]);
 }
 
 // Export factice pour compatibilité ascendante (certains anciens fichiers importaient `db`)

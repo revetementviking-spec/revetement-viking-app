@@ -5,7 +5,7 @@ import { MATERIAUX } from "@/data/materiaux";
 // Assistant conversationnel : prend l'état actuel de la soumission + une demande en langage naturel
 // Retourne des modifications structurées (ajout/modif/suppression de lignes)
 
-const SYSTEME = `Tu es l'expert en revêtement extérieur d'Revêtement Viking Inc. (Frédéric, RBQ 5819-1099-01).
+const SYSTEME = `Tu es l'expert en revêtement extérieur d'Revêtement Viking Inc. (Frédéric, RBQ 5811-4299-01).
 Tu aides Frédéric à monter une soumission rapide et précise pour soffite, fascia, solin et parement.
 
 CONTEXTE BUSINESS :

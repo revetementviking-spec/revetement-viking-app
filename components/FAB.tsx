@@ -43,7 +43,7 @@ export default function FAB({ onSuccess }: Props) {
               💸 Dépense
             </button>
             <a
-              href="/"
+              href="/soumissions/nouveau"
               className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded-full shadow-lg font-semibold text-sm animate-in slide-in-from-right duration-150"
             >
               📄 Soumission
