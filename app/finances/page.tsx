@@ -10,9 +10,11 @@ const MOIS = ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "
 export default function FinancesPage() {
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [data, setData] = useState<any>(null);
+  const [projets, setProjets] = useState<any[]>([]);
 
   useEffect(() => {
     fetch(`/api/finances?annee=${annee}`).then((r) => r.json()).then(setData);
+    fetch("/api/projets").then((r) => r.json()).then(setProjets);
   }, [annee]);
 
   if (!data) return (
@@ -31,6 +33,18 @@ export default function FinancesPage() {
 
   const max = Math.max(...data.mois.map((m: any) => Math.max(m.facture, m.depenses + m.mo)), 1);
 
+  // Totaux par projet
+  const totauxProjets = projets.reduce(
+    (s, p) => ({
+      contrat: s.contrat + (p.prix_contrat || p.budget_estime || 0),
+      facture: s.facture + (p.total_facture || 0),
+      paye: s.paye + (p.total_paye || 0),
+      cout: s.cout + (p.cout_total || 0),
+      marge: s.marge + (p.marge || 0),
+    }),
+    { contrat: 0, facture: 0, paye: 0, cout: 0, marge: 0 }
+  );
+
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="💰 Finances" soustitre={`Année ${annee}`} actions={
@@ -41,7 +55,73 @@ export default function FinancesPage() {
       } />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
-        {/* KPIs totaux année */}
+        {/* === REVENUS DES PROJETS (somme prix_contrat) === */}
+        <section className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-lg p-4 md:p-5">
+          <h2 className="font-bold text-emerald-900 mb-3">💰 Revenus des projets</h2>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            <KPI label="Valeur contrats" value={formatCAD(totauxProjets.contrat)} couleur="text-slate-900" />
+            <KPI label="Facturé" value={formatCAD(totauxProjets.facture)} couleur="text-blue-700" />
+            <KPI label="Encaissé" value={formatCAD(totauxProjets.paye)} couleur="text-emerald-700" />
+            <KPI label="Coûts totaux" value={formatCAD(totauxProjets.cout)} couleur="text-orange-700" />
+            <KPI label="Marge" value={formatCAD(totauxProjets.marge)} couleur={totauxProjets.marge >= 0 ? "text-emerald-700" : "text-red-700"} />
+          </div>
+
+          {projets.length === 0 ? (
+            <p className="text-sm text-slate-600 italic">Aucun projet enregistré.</p>
+          ) : (
+            <div className="bg-white rounded-lg overflow-x-auto">
+              <table className="w-full text-sm min-w-max">
+                <thead className="bg-slate-100 text-left">
+                  <tr>
+                    <th className="p-2">Projet</th>
+                    <th className="p-2">Statut</th>
+                    <th className="p-2 text-right">Prix contrat</th>
+                    <th className="p-2 text-right">Facturé</th>
+                    <th className="p-2 text-right">Payé</th>
+                    <th className="p-2 text-right">À recevoir</th>
+                    <th className="p-2 text-right">Coût total</th>
+                    <th className="p-2 text-right">Marge</th>
+                    <th className="p-2 text-right">%</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {projets.map((p) => {
+                    const revenu = p.prix_contrat || p.budget_estime || 0;
+                    const aRecevoir = (p.total_facture || 0) - (p.total_paye || 0);
+                    return (
+                      <tr key={p.id} className="border-t hover:bg-emerald-50">
+                        <td className="p-2"><a href={`/projets/${p.id}`} className="font-medium hover:underline">{p.nom}</a><div className="text-[10px] text-slate-500">{p.client_nom || "—"}</div></td>
+                        <td className="p-2 text-xs">{p.statut}</td>
+                        <td className="p-2 text-right font-bold">{formatCAD(revenu)}</td>
+                        <td className="p-2 text-right text-blue-700">{formatCAD(p.total_facture || 0)}</td>
+                        <td className="p-2 text-right text-emerald-700">{formatCAD(p.total_paye || 0)}</td>
+                        <td className={`p-2 text-right ${aRecevoir > 0 ? "text-amber-700 font-bold" : "text-slate-400"}`}>{aRecevoir > 0 ? formatCAD(aRecevoir) : "—"}</td>
+                        <td className="p-2 text-right text-orange-700">{formatCAD(p.cout_total || 0)}</td>
+                        <td className={`p-2 text-right font-bold ${p.marge < 0 ? "text-red-700" : "text-emerald-700"}`}>{formatCAD(p.marge || 0)}</td>
+                        <td className={`p-2 text-right font-bold text-xs ${p.marge < 0 ? "text-red-700" : "text-emerald-700"}`}>{(p.marge_pct || 0).toFixed(0)}%</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot className="bg-emerald-100 font-bold">
+                  <tr>
+                    <td className="p-2" colSpan={2}>TOTAL</td>
+                    <td className="p-2 text-right">{formatCAD(totauxProjets.contrat)}</td>
+                    <td className="p-2 text-right text-blue-700">{formatCAD(totauxProjets.facture)}</td>
+                    <td className="p-2 text-right text-emerald-700">{formatCAD(totauxProjets.paye)}</td>
+                    <td className="p-2 text-right text-amber-700">{formatCAD(totauxProjets.facture - totauxProjets.paye)}</td>
+                    <td className="p-2 text-right text-orange-700">{formatCAD(totauxProjets.cout)}</td>
+                    <td className={`p-2 text-right ${totauxProjets.marge < 0 ? "text-red-700" : "text-emerald-700"}`}>{formatCAD(totauxProjets.marge)}</td>
+                    <td className="p-2 text-right">{totauxProjets.contrat ? ((totauxProjets.marge / totauxProjets.contrat) * 100).toFixed(0) : 0}%</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* === FLUX MENSUEL (basé sur dates des factures/dépenses) === */}
+        <h2 className="text-lg font-bold text-slate-900">📅 Flux mensuel — {annee}</h2>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <KPI label="Facturé" value={formatCAD(totaux.facture)} couleur="text-blue-700" />
           <KPI label="Encaissé" value={formatCAD(totaux.paye)} couleur="text-emerald-700" />
