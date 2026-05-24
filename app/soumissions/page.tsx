@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
@@ -14,14 +14,15 @@ const STATUTS: Record<string, { label: string; couleur: string }> = {
   facturee: { label: "Facturée", couleur: "bg-purple-200 text-purple-900" },
 };
 
-export default function SoumissionsPageWrapper() {
-  return <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-slate-500">Chargement...</div>}><SoumissionsPage /></Suspense>;
-}
-
-function SoumissionsPage() {
-  const params = useSearchParams();
+export default function SoumissionsPage() {
   const router = useRouter();
-  const statutFiltre = params.get("statut");
+  const [statutFiltre, setStatutFiltre] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      setStatutFiltre(p.get("statut"));
+    }
+  }, []);
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();

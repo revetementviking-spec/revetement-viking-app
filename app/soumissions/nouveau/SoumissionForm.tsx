@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { MATERIAUX, LIBELLE_CATEGORIE, type Categorie } from "@/data/materiaux";
 import { TAUX_HORAIRE_VENTE, FRAIS_FORFAITAIRES, PARAMS_DEFAUT } from "@/data/main-oeuvre";
 import { calculerSoumission, formatCAD, type LigneSoumission, type FraisActif } from "@/lib/calculateur";
@@ -23,9 +22,14 @@ const CATEGORIES_ORDRE: Categorie[] = [
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
 
-export default function Page() {
-  const searchParams = useSearchParams();
-  const modifierNumero = searchParams.get("modifier");
+export default function SoumissionForm() {
+  const [modifierNumero, setModifierNumero] = useState<string | null>(null);
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search);
+      setModifierNumero(p.get("modifier"));
+    }
+  }, []);
   const { toast } = useToast();
 
   const [client, setClient] = useState({ nom: "", adresse: "", telephone: "", courriel: "", projet: "" });
