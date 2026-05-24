@@ -58,7 +58,8 @@ export default function ProjetDetail() {
 
   // Forms
   const today = new Date().toISOString().slice(0, 10);
-  const [hForm, setHForm] = useState({ date: today, heures: "", description: "", employe: "Frédéric", taux_horaire: "90" });
+  const [hForm, setHForm] = useState({ date: today, heures: "", description: "", employe: "", taux_horaire: "" });
+  const [employes, setEmployes] = useState<any[]>([]);
   const [fForm, setFForm] = useState({ numero: "", montant: "", date: today, description: "" });
   const [dForm, setDForm] = useState({ date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
 
@@ -75,16 +76,21 @@ export default function ProjetDetail() {
     setDepenses(d);
   };
 
-  useEffect(() => { charger(); }, [id]);
+  useEffect(() => {
+    charger();
+    fetch("/api/employes").then((r) => r.json()).then(setEmployes);
+  }, [id]);
 
   const ajouterHeures = async () => {
     if (!hForm.heures) { toast("Heures requises", "warning"); return; }
+    if (!hForm.employe) { toast("Sélectionne un employé", "warning"); return; }
+    if (!hForm.taux_horaire) { toast("Taux horaire manquant", "warning"); return; }
     const r = await fetch("/api/heures", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ projet_id: id, date: hForm.date, heures: +hForm.heures, description: hForm.description, employe: hForm.employe, taux_horaire: +hForm.taux_horaire }),
     });
     if ((await r.json()).ok) {
-      toast(`${hForm.heures} h ajoutées`, "success");
+      toast(`${hForm.heures} h ajoutées pour ${hForm.employe}`, "success");
       setHForm({ ...hForm, heures: "", description: "" });
       charger();
     }
@@ -215,11 +221,23 @@ export default function ProjetDetail() {
           <div className="space-y-3">
             <div className="bg-white rounded-lg shadow p-4">
               <h3 className="font-semibold mb-3">⏱️ Saisir des heures</h3>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <FieldDate label="Date" value={hForm.date} onChange={(v) => setHForm({ ...hForm, date: v })} />
                 <FieldNum label="Heures *" value={hForm.heures} onChange={(v) => setHForm({ ...hForm, heures: v })} step={0.5} />
-                <Field label="Employé" value={hForm.employe} onChange={(v) => setHForm({ ...hForm, employe: v })} />
-                <FieldNum label="Taux $/h" value={hForm.taux_horaire} onChange={(v) => setHForm({ ...hForm, taux_horaire: v })} />
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Employé *</label>
+                  <select
+                    value={hForm.employe}
+                    onChange={(e) => {
+                      const emp = employes.find((x) => x.nom === e.target.value);
+                      setHForm({ ...hForm, employe: e.target.value, taux_horaire: emp ? String(emp.taux_horaire) : hForm.taux_horaire });
+                    }}
+                    className="w-full px-3 py-2 border rounded text-sm bg-white"
+                  >
+                    <option value="">— Choisir —</option>
+                    {employes.map((e) => <option key={e.id} value={e.nom}>{e.nom}</option>)}
+                  </select>
+                </div>
                 <div className="flex items-end"><button onClick={ajouterHeures} className="w-full px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold">＋ Ajouter</button></div>
               </div>
               <div className="mt-2">
