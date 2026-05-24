@@ -23,7 +23,8 @@ export default function ProjetsPage() {
   const [triAsc, setTriAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creerOuvert, setCreerOuvert] = useState(false);
-  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", budget_estime: "", description: "" });
+  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "" });
+  const [facture, setFacture] = useState<{ data: string; type: string; nom: string } | null>(null);
   const { toast } = useToast();
 
   const charger = async () => {
@@ -38,21 +39,39 @@ export default function ProjetsPage() {
 
   const creer = async () => {
     if (!nouveau.nom.trim()) { toast("Nom du projet requis", "warning"); return; }
+    const prix = nouveau.prix_contrat ? +nouveau.prix_contrat : null;
     const r = await fetch("/api/projets", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ...nouveau,
-        budget_estime: nouveau.budget_estime ? +nouveau.budget_estime : null,
+        // Le prix de contrat sert AUSSI de budget initial pour les calculs de marge
+        budget_estime: prix,
+        prix_contrat: prix,
         date_debut: new Date().toISOString().slice(0, 10),
       }),
     });
     const d = await r.json();
     if (d.ok) {
+      // Si une facture a été jointe, la sauvegarder via PATCH
+      if (facture && d.id) {
+        await fetch("/api/projets", {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: d.id, facture_finale_data: facture.data, facture_finale_type: facture.type }),
+        });
+      }
       toast("Projet créé", "success");
       setCreerOuvert(false);
-      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", budget_estime: "", description: "" });
+      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "" });
+      setFacture(null);
       charger();
     }
+  };
+
+  const traiterFacture = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) { toast("Fichier > 5 MB", "warning"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setFacture({ data: reader.result as string, type: file.type, nom: file.name });
+    reader.readAsDataURL(file);
   };
 
   const projetsAffiches = (() => {
@@ -192,15 +211,45 @@ export default function ProjetsPage() {
 
       {/* Modal créer projet */}
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setCreerOuvert(false)}>
-          <div className="bg-white rounded-lg max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+          <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Nouveau projet</h3>
             <Input label="Nom du projet *" value={nouveau.nom} onChange={(v) => setNouveau({ ...nouveau, nom: v })} />
             <Input label="Client" value={nouveau.client_nom} onChange={(v) => setNouveau({ ...nouveau, client_nom: v })} placeholder="(crée automatiquement si nouveau)" />
             <Input label="Adresse chantier" value={nouveau.adresse_chantier} onChange={(v) => setNouveau({ ...nouveau, adresse_chantier: v })} />
-            <Input label="Budget estimé $" value={nouveau.budget_estime} onChange={(v) => setNouveau({ ...nouveau, budget_estime: v })} type="number" />
+            <Input label="💰 Prix total du contrat $ *" value={nouveau.prix_contrat} onChange={(v) => setNouveau({ ...nouveau, prix_contrat: v })} type="number" placeholder="Ex: 45000" />
+            <p className="text-[10px] text-slate-500 -mt-2">Ce prix devient la référence pour calculer la marge et la rentabilité du projet.</p>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Date de fin prévue</label>
+              <input type="date" value={nouveau.date_fin_prevue} onChange={(e) => setNouveau({ ...nouveau, date_fin_prevue: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+            </div>
             <Input label="Description" value={nouveau.description} onChange={(v) => setNouveau({ ...nouveau, description: v })} />
-            <div className="flex gap-2 justify-end pt-2">
+
+            {/* Facture finale optionnelle dès la création */}
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">📎 Facture (optionnel)</label>
+              {facture ? (
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded p-2">
+                  {facture.type.startsWith("image/") ? (
+                    <img src={facture.data} alt="Facture" className="w-12 h-12 object-cover rounded" />
+                  ) : (
+                    <div className="w-12 h-12 bg-slate-200 rounded flex items-center justify-center text-2xl">📄</div>
+                  )}
+                  <div className="flex-1 min-w-0 text-xs">
+                    <div className="font-semibold truncate">{facture.nom}</div>
+                    <div className="text-slate-500">{(facture.data.length * 0.75 / 1024).toFixed(0)} ko</div>
+                  </div>
+                  <button onClick={() => setFacture(null)} className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-sm">✕</button>
+                </div>
+              ) : (
+                <label className="cursor-pointer block bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded p-3 text-center transition text-sm font-semibold text-slate-700">
+                  📎 Joindre PDF ou photo de la facture
+                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFacture(e.target.files[0])} />
+                </label>
+              )}
+            </div>
+
+            <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
               <button onClick={creer} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold">Créer</button>
             </div>

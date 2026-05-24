@@ -368,7 +368,12 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
   const [edit, setEdit] = useState(false);
   const [prix, setPrix] = useState(projet.prix_contrat ? String(projet.prix_contrat) : "");
   const sauver = async () => {
-    await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, prix_contrat: prix ? +prix : null }) });
+    const valeur = prix ? +prix : null;
+    // Sync les deux champs pour que toutes les pages (liste, détail, finances) reflètent le changement
+    await fetch("/api/projets", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: projet.id, prix_contrat: valeur, budget_estime: valeur }),
+    });
     setEdit(false);
     onUpdate();
   };
