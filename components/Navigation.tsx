@@ -11,13 +11,14 @@ interface NavLink {
 
 const LINKS: NavLink[] = [
   { href: "/", label: "Tableau", icon: "📊" },
-  { href: "/soumissions/nouveau", label: "Nouvelle", icon: "➕" },
+  { href: "/soumissions/nouveau", label: "Soumission", icon: "➕" },
   { href: "/projets", label: "Projets", icon: "🏗️" },
-  { href: "/clients", label: "Clients", icon: "👥" },
-  { href: "/soumissions", label: "Soum.", icon: "📋" },
+  { href: "/clients", label: "CRM", icon: "👥" },
+  { href: "/contrats", label: "Contrats", icon: "📝" },
   { href: "/outils", label: "Outils", icon: "🔧" },
 ];
 const LINKS_SECONDAIRES: NavLink[] = [
+  { href: "/soumissions", label: "Liste soum.", icon: "📋" },
   { href: "/finances", label: "Finances", icon: "💰" },
   { href: "/rapports", label: "Rapports", icon: "📈" },
   { href: "/a-propos", label: "À propos", icon: "ℹ️" },

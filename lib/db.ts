@@ -35,9 +35,20 @@ async function execMany(sqls: string[]): Promise<void> {
   }
 }
 
+async function tryExec(sql: string): Promise<void> {
+  try { await getLibsqlClient().execute(sql); } catch (e: any) {
+    // Ignore "duplicate column" errors lors de migrations idempotentes
+    if (!/(duplicate column|already exists)/i.test(e?.message || "")) throw e;
+  }
+}
+
 export async function initDb() {
   if (_initialized) return;
   _initialized = true;
+  // Migrations idempotentes pour les anciennes installations
+  await tryExec("ALTER TABLE clients ADD COLUMN statut TEXT DEFAULT 'prospect'");
+  await tryExec("ALTER TABLE clients ADD COLUMN source TEXT");
+  await tryExec("ALTER TABLE clients ADD COLUMN tags TEXT");
   await execMany([
     `CREATE TABLE IF NOT EXISTS soumissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,8 +72,34 @@ export async function initDb() {
     `CREATE TABLE IF NOT EXISTS clients (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       nom TEXT NOT NULL, courriel TEXT, telephone TEXT, adresse TEXT, notes TEXT,
+      statut TEXT DEFAULT 'prospect', source TEXT, tags TEXT,
       date_creation TEXT NOT NULL
     )`,
+    `CREATE TABLE IF NOT EXISTS interactions_client (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL,
+      type TEXT NOT NULL, date TEXT NOT NULL, sujet TEXT, note TEXT,
+      fait_par TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS taches_client (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER,
+      projet_id INTEGER, titre TEXT NOT NULL, description TEXT,
+      date_due TEXT, priorite INTEGER DEFAULT 3,
+      statut TEXT DEFAULT 'a_faire', assigne_a TEXT,
+      date_creation TEXT NOT NULL, date_completion TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS contrats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT UNIQUE NOT NULL,
+      client_id INTEGER, projet_id INTEGER, soumission_numero TEXT,
+      titre TEXT NOT NULL, date_emission TEXT NOT NULL, date_debut_travaux TEXT,
+      date_fin_prevue TEXT, montant_avant_taxes REAL, taxes_pct REAL DEFAULT 14.975,
+      montant_total REAL, depot_pct REAL DEFAULT 30, depot_montant REAL,
+      conditions TEXT, garantie TEXT, statut TEXT DEFAULT 'brouillon',
+      signe_par_client INTEGER DEFAULT 0, date_signature TEXT,
+      payload_json TEXT, date_creation TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_inter_client ON interactions_client(client_id, date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_taches_statut ON taches_client(statut, date_due)`,
+    `CREATE INDEX IF NOT EXISTS idx_contrats_client ON contrats(client_id)`,
     `CREATE TABLE IF NOT EXISTS projets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER, nom TEXT NOT NULL, adresse_chantier TEXT, description TEXT,
@@ -250,6 +287,7 @@ export type { ClientType as Client };
 export interface ClientType {
   id?: number; nom: string; courriel?: string; telephone?: string;
   adresse?: string; notes?: string; date_creation?: string;
+  statut?: string; source?: string; tags?: string;
 }
 export async function listerClients(): Promise<ClientType[]> {
   return await all<ClientType>("SELECT * FROM clients ORDER BY nom ASC");
@@ -265,7 +303,7 @@ export async function ajouterClient(c: ClientType): Promise<number> {
   return r.lastInsertRowid;
 }
 export async function modifierClient(id: number, c: Partial<ClientType>) {
-  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes'];
+  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags'];
   const definis = champs.filter(k => (c as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');
@@ -280,6 +318,114 @@ export async function trouverOuCreerClient(nom: string, infos?: Partial<Client>)
   const existant = await one<{ id: number }>("SELECT id FROM clients WHERE LOWER(nom) = LOWER(?)", [nom.trim()]);
   if (existant) return existant.id;
   return await ajouterClient({ nom: nom.trim(), ...infos } as ClientType);
+}
+
+// === CRM : INTERACTIONS ===
+export interface Interaction {
+  id?: number; client_id: number; type: string; date: string;
+  sujet?: string; note?: string; fait_par?: string; date_saisie?: string;
+}
+export async function listerInteractions(client_id: number): Promise<Interaction[]> {
+  return await all<Interaction>("SELECT * FROM interactions_client WHERE client_id = ? ORDER BY date DESC, id DESC", [client_id]);
+}
+export async function ajouterInteraction(i: Interaction): Promise<number> {
+  const r = await run(
+    `INSERT INTO interactions_client (client_id, type, date, sujet, note, fait_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [i.client_id, i.type, i.date, i.sujet || null, i.note || null, i.fait_par || null, new Date().toISOString()]
+  );
+  // Mettre à jour notes ou pas — on garde la trace dans interactions
+  return r.lastInsertRowid;
+}
+export async function supprimerInteraction(id: number) {
+  await run("DELETE FROM interactions_client WHERE id = ?", [id]);
+}
+
+// === CRM : TÂCHES ===
+export interface Tache {
+  id?: number; client_id?: number; projet_id?: number;
+  titre: string; description?: string; date_due?: string;
+  priorite?: number; statut?: string; assigne_a?: string;
+  date_creation?: string; date_completion?: string;
+}
+export async function listerTaches(filtres?: { statut?: string; client_id?: number; projet_id?: number }): Promise<Tache[]> {
+  const conds: string[] = []; const args: any[] = [];
+  if (filtres?.statut) { conds.push("statut = ?"); args.push(filtres.statut); }
+  if (filtres?.client_id) { conds.push("client_id = ?"); args.push(filtres.client_id); }
+  if (filtres?.projet_id) { conds.push("projet_id = ?"); args.push(filtres.projet_id); }
+  const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  return await all<Tache>(`SELECT * FROM taches_client ${where} ORDER BY CASE statut WHEN 'a_faire' THEN 0 WHEN 'en_cours' THEN 1 ELSE 2 END, date_due ASC, priorite DESC`, args);
+}
+export async function ajouterTache(t: Tache): Promise<number> {
+  const r = await run(
+    `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [t.client_id || null, t.projet_id || null, t.titre, t.description || null,
+     t.date_due || null, t.priorite ?? 3, t.statut || 'a_faire', t.assigne_a || null, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function modifierTache(id: number, t: Partial<Tache>) {
+  const champs = ['titre', 'description', 'date_due', 'priorite', 'statut', 'assigne_a', 'date_completion'];
+  const definis = champs.filter(k => (t as any)[k] !== undefined);
+  if (!definis.length) return;
+  const sets = definis.map(k => `${k} = ?`).join(', ');
+  const valeurs = definis.map(k => (t as any)[k]);
+  await run(`UPDATE taches_client SET ${sets} WHERE id = ?`, [...valeurs, id]);
+}
+export async function supprimerTache(id: number) {
+  await run("DELETE FROM taches_client WHERE id = ?", [id]);
+}
+
+// === CONTRATS ===
+export interface Contrat {
+  id?: number; numero: string; client_id?: number; projet_id?: number;
+  soumission_numero?: string; titre: string; date_emission: string;
+  date_debut_travaux?: string; date_fin_prevue?: string;
+  montant_avant_taxes?: number; taxes_pct?: number; montant_total?: number;
+  depot_pct?: number; depot_montant?: number;
+  conditions?: string; garantie?: string; statut?: string;
+  signe_par_client?: number; date_signature?: string;
+  payload_json?: string;
+}
+export async function genererNumeroContrat(): Promise<string> {
+  const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const r = await one<{ n: number }>("SELECT COUNT(*) as n FROM contrats WHERE numero LIKE ?", [`VK-CTR-${ymd}-%`]);
+  return `VK-CTR-${ymd}-${String((r?.n || 0) + 1).padStart(3, "0")}`;
+}
+export async function listerContrats(statut?: string): Promise<any[]> {
+  let sql = `SELECT c.*, cl.nom as client_nom FROM contrats c LEFT JOIN clients cl ON cl.id = c.client_id`;
+  const args: any[] = [];
+  if (statut) { sql += ` WHERE c.statut = ?`; args.push(statut); }
+  sql += ` ORDER BY c.date_emission DESC LIMIT 200`;
+  return await all<any>(sql, args);
+}
+export async function getContrat(id: number): Promise<any> {
+  return await one<any>(`SELECT c.*, cl.nom as client_nom, cl.courriel as client_courriel, cl.adresse as client_adresse, cl.telephone as client_telephone FROM contrats c LEFT JOIN clients cl ON cl.id = c.client_id WHERE c.id = ?`, [id]);
+}
+export async function ajouterContrat(c: Contrat): Promise<{ id: number; numero: string }> {
+  const numero = c.numero || await genererNumeroContrat();
+  const r = await run(
+    `INSERT INTO contrats (numero, client_id, projet_id, soumission_numero, titre, date_emission, date_debut_travaux, date_fin_prevue, montant_avant_taxes, taxes_pct, montant_total, depot_pct, depot_montant, conditions, garantie, statut, payload_json, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [numero, c.client_id || null, c.projet_id || null, c.soumission_numero || null,
+     c.titre, c.date_emission, c.date_debut_travaux || null, c.date_fin_prevue || null,
+     c.montant_avant_taxes || null, c.taxes_pct ?? 14.975, c.montant_total || null,
+     c.depot_pct ?? 30, c.depot_montant || null, c.conditions || null,
+     c.garantie || null, c.statut || 'brouillon', c.payload_json || null, new Date().toISOString()]
+  );
+  return { id: r.lastInsertRowid, numero };
+}
+export async function modifierContrat(id: number, c: Partial<Contrat>) {
+  const champs = ['titre', 'date_emission', 'date_debut_travaux', 'date_fin_prevue',
+                  'montant_avant_taxes', 'taxes_pct', 'montant_total', 'depot_pct',
+                  'depot_montant', 'conditions', 'garantie', 'statut',
+                  'signe_par_client', 'date_signature', 'payload_json'];
+  const definis = champs.filter(k => (c as any)[k] !== undefined);
+  if (!definis.length) return;
+  const sets = definis.map(k => `${k} = ?`).join(', ');
+  const valeurs = definis.map(k => (c as any)[k]);
+  await run(`UPDATE contrats SET ${sets} WHERE id = ?`, [...valeurs, id]);
+}
+export async function supprimerContrat(id: number) {
+  await run("DELETE FROM contrats WHERE id = ?", [id]);
 }
 
 // === PROJETS ===

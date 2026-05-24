@@ -13,9 +13,14 @@ const STATUTS: Record<string, { label: string; couleur: string }> = {
   annule: { label: "Annulé", couleur: "bg-red-100 text-red-900" },
 };
 
+type TriMode = "recent" | "nom" | "marge_pct" | "budget" | "cout" | "marge_montant";
+
 export default function ProjetsPage() {
   const [projets, setProjets] = useState<any[]>([]);
   const [filtre, setFiltre] = useState<string>("");
+  const [recherche, setRecherche] = useState("");
+  const [tri, setTri] = useState<TriMode>("recent");
+  const [triAsc, setTriAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creerOuvert, setCreerOuvert] = useState(false);
   const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", budget_estime: "", description: "" });
@@ -50,6 +55,25 @@ export default function ProjetsPage() {
     }
   };
 
+  const projetsAffiches = (() => {
+    let list = [...projets];
+    if (recherche.trim()) {
+      const q = recherche.toLowerCase();
+      list = list.filter((p) => [p.nom, p.client_nom, p.adresse_chantier, p.description].filter(Boolean).some((x: string) => x.toLowerCase().includes(q)));
+    }
+    const cmp: Record<TriMode, (a: any, b: any) => number> = {
+      recent: (a, b) => (b.date_creation || "").localeCompare(a.date_creation || ""),
+      nom: (a, b) => (a.nom || "").localeCompare(b.nom || ""),
+      marge_pct: (a, b) => (b.marge_pct || 0) - (a.marge_pct || 0),
+      marge_montant: (a, b) => (b.marge || 0) - (a.marge || 0),
+      budget: (a, b) => (b.budget_estime || 0) - (a.budget_estime || 0),
+      cout: (a, b) => (b.cout_total || 0) - (a.cout_total || 0),
+    };
+    list.sort(cmp[tri]);
+    if (triAsc) list.reverse();
+    return list;
+  })();
+
   const stats = {
     actifs: projets.filter((p) => p.statut === 'actif').length,
     budget_total: projets.filter((p) => p.statut === 'actif').reduce((s, p) => s + (p.budget_estime || 0), 0),
@@ -80,18 +104,41 @@ export default function ProjetsPage() {
           <KPI label="Payé" value={formatCAD(stats.paye_total)} couleur="text-emerald-700" />
         </div>
 
-        {/* Filtres */}
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={() => setFiltre("")} className={`px-3 py-1 rounded text-sm ${!filtre ? "bg-slate-900 text-white" : "bg-white border"}`}>Tous</button>
-          {Object.entries(STATUTS).map(([k, v]) => (
-            <button key={k} onClick={() => setFiltre(k)} className={`px-3 py-1 rounded text-sm ${filtre === k ? "bg-slate-900 text-white" : v.couleur}`}>{v.label}</button>
-          ))}
+        {/* Recherche + tri + filtres */}
+        <div className="bg-white rounded-lg shadow p-3 space-y-2">
+          <div className="flex gap-2 flex-wrap items-center">
+            <input
+              type="search"
+              placeholder="🔍 Rechercher (nom, client, adresse, description)..."
+              value={recherche}
+              onChange={(e) => setRecherche(e.target.value)}
+              className="flex-1 min-w-48 px-3 py-2 border rounded text-sm"
+            />
+            <select value={tri} onChange={(e) => setTri(e.target.value as TriMode)} className="px-3 py-2 border rounded text-sm bg-white">
+              <option value="recent">Plus récent</option>
+              <option value="nom">Nom (A→Z)</option>
+              <option value="marge_pct">Marge %</option>
+              <option value="marge_montant">Marge $</option>
+              <option value="budget">Budget</option>
+              <option value="cout">Coût</option>
+            </select>
+            <button onClick={() => setTriAsc(!triAsc)} title={triAsc ? "Croissant" : "Décroissant"} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm">
+              {triAsc ? "↑" : "↓"}
+            </button>
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            <button onClick={() => setFiltre("")} className={`px-3 py-1 rounded text-sm ${!filtre ? "bg-slate-900 text-white" : "bg-white border"}`}>Tous</button>
+            {Object.entries(STATUTS).map(([k, v]) => (
+              <button key={k} onClick={() => setFiltre(k)} className={`px-3 py-1 rounded text-sm ${filtre === k ? "bg-slate-900 text-white" : v.couleur}`}>{v.label}</button>
+            ))}
+            <span className="ml-auto text-xs text-slate-500 self-center">{projetsAffiches.length} sur {projets.length}</span>
+          </div>
         </div>
 
         {/* Liste projets */}
         {loading ? (
           <div className="bg-white rounded-lg shadow p-6 text-center text-slate-500">Chargement...</div>
-        ) : projets.length === 0 ? (
+        ) : projetsAffiches.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-6xl mb-4">🏗️</div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucun projet</h3>
@@ -100,7 +147,7 @@ export default function ProjetsPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {projets.map((p) => (
+            {projetsAffiches.map((p) => (
               <a key={p.id} href={`/projets/${p.id}`} className="bg-white rounded-lg shadow hover:shadow-lg transition p-4 space-y-2">
                 <div className="flex justify-between items-start gap-2">
                   <div className="min-w-0 flex-1">
