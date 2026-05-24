@@ -7,6 +7,7 @@ import { useToast } from "@/components/Toasts";
 import ModalHeuresJour from "@/components/ModalHeuresJour";
 import ModalDepense from "@/components/ModalDepense";
 import FAB from "@/components/FAB";
+import Meteo from "@/components/Meteo";
 
 const STATUT_LABELS: Record<string, { label: string; couleur: string }> = {
   brouillon: { label: "Brouillon", couleur: "bg-slate-200 text-slate-800" },
@@ -68,6 +69,9 @@ export default function Home() {
       <Navigation titre="Revêtement Viking" soustitre="Tableau de bord · RBQ 5811-4299-01" />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
+
+        {/* 🌤️ MÉTÉO 7 JOURS */}
+        <Meteo />
 
         {/* ⚡ ACTIONS RAPIDES */}
         <section className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-lg p-4 md:p-5">
