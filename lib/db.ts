@@ -1,6 +1,6 @@
 // Base de données — fonctionne en local (file:) ou en cloud (Turso libsql:)
 // Si TURSO_URL est définie → utilise Turso, sinon SQLite local
-import { createClient, type Client, type ResultSet } from "@libsql/client";
+import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
 
@@ -9,10 +9,10 @@ const DB_PATH = path.join(DB_DIR, "soumissions.db");
 
 if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
 
-let _client: Client | null = null;
+let _client: LibsqlClient | null = null;
 let _initialized = false;
 
-function getLibsqlClient(): Client {
+function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
   const tursoUrl = process.env.TURSO_URL;
   const tursoToken = process.env.TURSO_AUTH_TOKEN;
