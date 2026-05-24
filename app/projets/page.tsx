@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+import FAB from "@/components/FAB";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
   actif: { label: "Actif", couleur: "bg-emerald-100 text-emerald-900" },
@@ -159,6 +160,7 @@ export default function ProjetsPage() {
           </div>
         </div>
       )}
+      <FAB onSuccess={charger} />
     </div>
   );
 }

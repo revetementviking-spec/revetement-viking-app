@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastsProvider } from "@/components/Toasts";
+import PWARegister from "@/components/PWARegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -18,8 +19,18 @@ export const metadata: Metadata = {
   description: "Revêtement Viking Inc. · RBQ 5819-1099-01 · Soumissions automatisées de revêtement extérieur (soffite, fascia, solin, parement)",
   applicationName: "Revêtement Viking",
   authors: [{ name: "Revêtement Viking Inc." }],
-  themeColor: "#0f172a",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    title: "Viking",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
+
+export const themeColor = "#0f172a";
 
 export const viewport = {
   width: "device-width",
@@ -39,6 +50,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <ToastsProvider>{children}</ToastsProvider>
+        <PWARegister />
       </body>
     </html>
   );

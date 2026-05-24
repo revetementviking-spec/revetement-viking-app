@@ -13,20 +13,97 @@
   --font-mono: var(--font-geist-mono);
 }
 
-/* App designed for light mode only - ignore OS dark preference */
 html {
   color-scheme: light !important;
+  -webkit-tap-highlight-color: transparent;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  /* Empêche le rubber-band scroll iOS */
+  overscroll-behavior-y: none;
+  /* Smooth scrolling */
+  -webkit-overflow-scrolling: touch;
 }
 
-/* Animation pour toasts */
+/* Pull-to-refresh natif désactivé sur mobile (PWA-like) */
+@media (display-mode: standalone) {
+  body { overscroll-behavior: none; }
+}
+
+/* Touch targets : min 44x44 pour iOS */
+button, [role="button"], input[type="submit"], a.button {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+/* Override pour les petits icon buttons spécifiques */
+button.icon-btn { min-height: auto; }
+
+/* Inputs : éviter le zoom auto iOS quand on tape (font-size ≥ 16px) */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="tel"],
+input[type="date"],
+input[type="password"],
+textarea,
+select {
+  font-size: 16px;
+}
+/* Réduire visuellement pour desktop sans déclencher zoom mobile */
+@media (min-width: 768px) {
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="tel"],
+  input[type="date"],
+  input[type="password"],
+  textarea,
+  select {
+    font-size: 14px;
+  }
+}
+
+/* === Animations toast et modal === */
 @keyframes slide-in-from-right {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
-.animate-in.slide-in-from-right { animation: slide-in-from-right 0.25s ease-out; }
+@keyframes slide-in-from-bottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes zoom-in-95 {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-in { animation-fill-mode: both; }
+.slide-in-from-right { animation: slide-in-from-right 0.25s ease-out; }
+.slide-in-from-bottom { animation: slide-in-from-bottom 0.25s ease-out; }
+.fade-in { animation: fade-in 0.15s ease-out; }
+.zoom-in-95 { animation: zoom-in-95 0.2s ease-out; }
+.duration-150 { animation-duration: 0.15s; }
+.duration-200 { animation-duration: 0.2s; }
+
+/* === Skeleton loader === */
+.skeleton {
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 4px;
+}
+
+/* === Safe area iOS notch === */
+.safe-top { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }

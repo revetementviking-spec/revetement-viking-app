@@ -6,6 +6,7 @@ import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import ModalHeuresJour from "@/components/ModalHeuresJour";
 import ModalDepense from "@/components/ModalDepense";
+import FAB from "@/components/FAB";
 
 const STATUT_LABELS: Record<string, { label: string; couleur: string }> = {
   brouillon: { label: "Brouillon", couleur: "bg-slate-200 text-slate-800" },
@@ -57,9 +58,15 @@ export default function Dashboard() {
   if (!stats) return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="📊 Tableau de bord" />
-      <div className="flex items-center justify-center p-12">
-        <div className="text-slate-400 animate-pulse">Chargement...</div>
-      </div>
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg shadow p-4"><div className="skeleton h-3 w-2/3 mb-2" /><div className="skeleton h-7 w-1/2" /></div>
+          <div className="bg-white rounded-lg shadow p-4"><div className="skeleton h-3 w-2/3 mb-2" /><div className="skeleton h-7 w-1/2" /></div>
+          <div className="bg-white rounded-lg shadow p-4"><div className="skeleton h-3 w-2/3 mb-2" /><div className="skeleton h-7 w-1/2" /></div>
+          <div className="bg-white rounded-lg shadow p-4"><div className="skeleton h-3 w-2/3 mb-2" /><div className="skeleton h-7 w-1/2" /></div>
+        </div>
+        <div className="bg-white rounded-lg shadow p-5"><div className="skeleton h-4 w-1/4 mb-3" /><div className="skeleton h-3 w-full" /></div>
+      </main>
     </div>
   );
 
@@ -229,6 +236,7 @@ export default function Dashboard() {
 
       <ModalHeuresJour ouvert={modalHeures} onClose={() => setModalHeures(false)} onSuccess={charger} />
       <ModalDepense ouvert={modalDepense} onClose={() => setModalDepense(false)} onSuccess={charger} />
+      <FAB onSuccess={charger} />
     </div>
   );
 }

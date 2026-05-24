@@ -8,9 +8,12 @@ import { calculerSoumission, formatCAD, type LigneSoumission, type FraisActif } 
 import { PRESETS, type PresetMateriau } from "@/data/presets-soumission";
 import { mapperHoverVersLignes, type HoverMesures } from "@/lib/hover-mapping";
 import { sauvegarderBrouillon, chargerBrouillon, effacerBrouillon } from "@/lib/autosave";
-import NotesVocales from "@/components/NotesVocales";
+import dynamic from "next/dynamic";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+
+// Lazy load — composant lourd avec SpeechRecognition + UI complète
+const NotesVocales = dynamic(() => import("@/components/NotesVocales"), { ssr: false });
 
 const CATEGORIES_ORDRE: Categorie[] = [
   "soffite", "fascia", "solin",
