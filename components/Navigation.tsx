@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
 interface NavLink {
@@ -17,6 +17,11 @@ const LINKS: NavLink[] = [
   { href: "/soumissions", label: "Soum.", icon: "📋" },
   { href: "/outils", label: "Outils", icon: "🔧" },
 ];
+const LINKS_SECONDAIRES: NavLink[] = [
+  { href: "/finances", label: "Finances", icon: "💰" },
+  { href: "/rapports", label: "Rapports", icon: "📈" },
+  { href: "/a-propos", label: "À propos", icon: "ℹ️" },
+];
 
 interface Props {
   titre: string;
@@ -30,7 +35,38 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
   const router = useRouter();
   const [menuOuvert, setMenuOuvert] = useState(false);
   const [actionsOuvertes, setActionsOuvertes] = useState(false);
+  const [rechercheQ, setRechercheQ] = useState("");
+  const [rechercheRes, setRechercheRes] = useState<any[]>([]);
+  const [rechercheOuvert, setRechercheOuvert] = useState(false);
+  const [dark, setDark] = useState(false);
   const peutRetour = pathname !== "/";
+
+  // Recherche debounced
+  useEffect(() => {
+    if (!rechercheQ.trim()) { setRechercheRes([]); return; }
+    const t = setTimeout(() => {
+      fetch(`/api/recherche?q=${encodeURIComponent(rechercheQ)}`).then((r) => r.json()).then(setRechercheRes);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [rechercheQ]);
+
+  // Dark mode persistance
+  useEffect(() => {
+    const saved = typeof window !== "undefined" && localStorage.getItem("vk-theme") === "dark";
+    setDark(saved);
+    if (saved) document.documentElement.classList.add("vk-dark");
+  }, []);
+  const toggleDark = () => {
+    const nv = !dark;
+    setDark(nv);
+    document.documentElement.classList.toggle("vk-dark", nv);
+    localStorage.setItem("vk-theme", nv ? "dark" : "light");
+  };
+
+  const lienResultat = (r: any) =>
+    r.type === "client" ? `/clients` :
+    r.type === "projet" ? `/projets/${r.id}` :
+    r.type === "soumission" ? `/soumissions/${r.id}` : "/";
 
   return (
     <>
@@ -67,7 +103,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
 
           {/* Logo Viking */}
           <a href="/" className="flex-shrink-0 hidden sm:block" title="Tableau de bord">
-            <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-9 w-9 brightness-0 invert opacity-90" />
+            <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-9 w-9 brightness-0 invert opacity-90 drakkar-animate" />
           </a>
 
           {/* Titre */}
@@ -78,6 +114,35 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
             </h1>
             {soustitre && <p className="text-xs text-slate-300 hidden md:block truncate">{soustitre}</p>}
           </div>
+
+          {/* Recherche globale */}
+          <div className="hidden md:block relative">
+            <input
+              type="search"
+              placeholder="🔍 Rechercher..."
+              value={rechercheQ}
+              onChange={(e) => { setRechercheQ(e.target.value); setRechercheOuvert(true); }}
+              onFocus={() => setRechercheOuvert(true)}
+              onBlur={() => setTimeout(() => setRechercheOuvert(false), 200)}
+              className="px-3 py-1.5 rounded bg-slate-800 text-white placeholder-slate-400 text-sm w-48 lg:w-64 border border-slate-700 focus:border-emerald-500 outline-none"
+            />
+            {rechercheOuvert && rechercheRes.length > 0 && (
+              <div className="absolute top-full right-0 mt-1 bg-white text-slate-900 rounded-lg shadow-xl border w-72 max-h-80 overflow-y-auto z-50">
+                {rechercheRes.map((r, i) => (
+                  <a key={i} href={lienResultat(r)} className="block px-3 py-2 hover:bg-slate-100 border-b last:border-b-0">
+                    <div className="text-xs text-emerald-700 uppercase font-bold">{r.type}</div>
+                    <div className="text-sm font-semibold truncate">{r.titre}</div>
+                    {r.sous && <div className="text-xs text-slate-500 truncate">{r.sous}</div>}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Dark mode toggle */}
+          <button onClick={toggleDark} className="p-2 rounded hover:bg-slate-700 transition flex-shrink-0 text-lg" title={dark ? "Mode clair" : "Mode sombre"}>
+            {dark ? "☀️" : "🌙"}
+          </button>
 
           {/* Liens desktop */}
           <nav className="hidden md:flex gap-1">
@@ -129,7 +194,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
         {menuOuvert && (
           <div className="md:hidden bg-slate-800 border-t border-slate-700">
             <nav className="px-2 py-2 flex flex-col gap-1">
-              {LINKS.map((l) => (
+              {[...LINKS, ...LINKS_SECONDAIRES].map((l) => (
                 <a
                   key={l.href}
                   href={l.href}

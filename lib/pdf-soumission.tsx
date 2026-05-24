@@ -1,4 +1,4 @@
-import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, pdf, Svg, Path } from "@react-pdf/renderer";
 import type { SoumissionCalculee } from "./calculateur";
 import { formatCAD } from "./calculateur";
 
@@ -71,11 +71,19 @@ export function SoumissionPDF({ client, numeroSoumission, date, calcul }: Props)
       <Page size="LETTER" style={styles.page}>
         {/* En-tête */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.h1}>Revêtement Viking Inc.</Text>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Svg width="46" height="34" viewBox="0 0 400 280">
+              <Path d="M40 180 L360 180 L340 240 L60 240 Z" stroke="#0f172a" strokeWidth={6} fill="none" />
+              <Path d="M200 40 L200 180" stroke="#0f172a" strokeWidth={6} />
+              <Path d="M205 70 L300 100 L300 175 L205 175 Z" fill="#0f172a" />
+              <Path d="M360 180 L390 165 L370 158 L390 148 L370 142 L385 132" stroke="#0f172a" strokeWidth={5} fill="none" />
+            </Svg>
+            <View>
+              <Text style={styles.h1}>Revêtement Viking Inc.</Text>
             <Text style={styles.small}>RBQ 5811-4299-01</Text>
             <Text style={styles.small}>info@entreprisesxpress.ca</Text>
             <Text style={styles.small}>Revêtement extérieur — Soffite · Fascia · Solin · Parement</Text>
+            </View>
           </View>
           <View style={{ textAlign: "right" }}>
             <Text style={styles.h1}>SOUMISSION</Text>

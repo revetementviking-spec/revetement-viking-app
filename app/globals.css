@@ -14,9 +14,29 @@
 }
 
 html {
-  color-scheme: light !important;
+  color-scheme: light;
   -webkit-tap-highlight-color: transparent;
 }
+html.vk-dark { color-scheme: dark; }
+html.vk-dark body { background: #0b1220; color: #e2e8f0; }
+html.vk-dark .bg-white { background-color: #1e293b !important; color: #e2e8f0; }
+html.vk-dark .bg-slate-50 { background-color: #0b1220 !important; }
+html.vk-dark .bg-slate-100 { background-color: #1e293b !important; }
+html.vk-dark .text-slate-900 { color: #f1f5f9 !important; }
+html.vk-dark .text-slate-800 { color: #e2e8f0 !important; }
+html.vk-dark .text-slate-700 { color: #cbd5e1 !important; }
+html.vk-dark .text-slate-600 { color: #cbd5e1 !important; }
+html.vk-dark .text-slate-500 { color: #94a3b8 !important; }
+html.vk-dark .border, html.vk-dark .border-2 { border-color: #334155 !important; }
+html.vk-dark input, html.vk-dark select, html.vk-dark textarea { background-color: #1e293b; color: #e2e8f0; border-color: #334155; }
+
+/* Splash animation drakkar */
+@keyframes drakkar-sail {
+  0% { transform: translateX(-20px) rotate(-2deg); opacity: 0; }
+  60% { opacity: 1; }
+  100% { transform: translateX(0) rotate(0); opacity: 1; }
+}
+.drakkar-animate { animation: drakkar-sail 0.8s ease-out; }
 
 body {
   background: var(--background);

@@ -81,6 +81,17 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     const valides = lignes.filter((l) => +l.heures > 0);
     if (valides.length === 0) { toast("Saisis au moins une ligne", "warning"); return; }
     if (empsActifs.length === 0) { toast("Sélectionne au moins un employé", "warning"); return; }
+    // Alerte budget dépassé
+    for (const l of valides) {
+      const p = projets.find((x) => x.id === l.projet_id);
+      if (p?.budget_estime > 0) {
+        const ajout = +l.heures * coutEmployes;
+        const nouveauCout = p.cout_total + ajout;
+        const pct = (nouveauCout / p.budget_estime) * 100;
+        if (pct > 100) toast(`⚠️ ${p.nom} : budget DÉPASSÉ (${pct.toFixed(0)}%)`, "error");
+        else if (pct > 90) toast(`⚠️ ${p.nom} : ${pct.toFixed(0)}% du budget`, "warning");
+      }
+    }
     setLoading(true);
     try {
       // Une entrée par employé × ligne (chaque employé fait ces heures sur ce projet)
@@ -123,6 +134,15 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     >
       <div className="mb-3">
         <label className="block text-xs font-medium text-slate-600 mb-1">Date</label>
+        <div className="flex gap-1 mb-2">
+          {[
+            { label: "Aujourd'hui", d: today },
+            { label: "Hier", d: new Date(Date.now() - 86400000).toISOString().slice(0, 10) },
+            { label: "Avant-hier", d: new Date(Date.now() - 2 * 86400000).toISOString().slice(0, 10) },
+          ].map((b) => (
+            <button key={b.label} type="button" onClick={() => setDate(b.d)} className={`flex-1 px-2 py-1.5 rounded text-xs font-semibold ${date === b.d ? "bg-emerald-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"}`}>{b.label}</button>
+          ))}
+        </div>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-3 py-3 border rounded-lg text-sm" />
       </div>
 

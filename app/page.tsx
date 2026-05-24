@@ -20,20 +20,31 @@ export default function Home() {
   const [stats, setStats] = useState<any>(null);
   const [projetsActifs, setProjetsActifs] = useState<any[]>([]);
   const [heuresSemaine, setHeuresSemaine] = useState<any[]>([]);
+  const [relances, setRelances] = useState<any[]>([]);
+  const [tourOuvert, setTourOuvert] = useState(false);
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
   const { toast } = useToast();
 
   const charger = async () => {
-    const [s, p, h] = await Promise.all([
+    const [s, p, h, r] = await Promise.all([
       fetch("/api/soumissions?stats=1").then((r) => r.json()),
       fetch("/api/projets?statut=actif").then((r) => r.json()),
       fetch("/api/heures-sommaire?jours=7").then((r) => r.json()).catch(() => []),
+      fetch("/api/relances").then((r) => r.json()).catch(() => []),
     ]);
     setStats(s);
     setProjetsActifs(p);
     setHeuresSemaine(h);
+    setRelances(r);
   };
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem("vk-tour-vu")) {
+      setTimeout(() => setTourOuvert(true), 800);
+    }
+  }, []);
+  const fermerTour = () => { setTourOuvert(false); localStorage.setItem("vk-tour-vu", "1"); };
 
   useEffect(() => { charger(); }, []);
 
@@ -121,6 +132,28 @@ export default function Home() {
           </section>
         )}
 
+        {/* RELANCES — soumissions envoyées > 7 jours sans réponse */}
+        {relances.length > 0 && (
+          <section className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4 md:p-5">
+            <h2 className="font-bold text-amber-900 mb-2">⏰ À relancer ({relances.length})</h2>
+            <p className="text-xs text-amber-800 mb-3">Soumissions envoyées depuis plus de 7 jours sans réponse.</p>
+            <div className="space-y-1">
+              {relances.slice(0, 5).map((s) => {
+                const jours = Math.floor((Date.now() - new Date(s.date_envoi).getTime()) / 86400000);
+                return (
+                  <a key={s.numero} href={`/soumissions/${s.numero}`} className="flex justify-between items-center bg-white hover:bg-amber-100 rounded px-3 py-2 transition border border-amber-200">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm truncate">{s.numero} · {s.client_nom}</div>
+                      <div className="text-xs text-amber-700">{jours} jours sans réponse</div>
+                    </div>
+                    <div className="text-sm font-bold text-slate-700">{formatCAD(s.total || 0)}</div>
+                  </a>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         {/* HEURES PAR EMPLOYÉ — 7 derniers jours */}
         {heuresSemaine.length > 0 && (
           <section className="bg-white rounded-lg shadow p-4 md:p-5">
@@ -175,6 +208,27 @@ export default function Home() {
       <ModalHeuresJour ouvert={modalHeures} onClose={() => setModalHeures(false)} onSuccess={charger} />
       <ModalDepense ouvert={modalDepense} onClose={() => setModalDepense(false)} onSuccess={charger} />
       <FAB onSuccess={charger} />
+
+      {/* Tour guidé première visite */}
+      {tourOuvert && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-4" onClick={fermerTour}>
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 space-y-3 animate-in zoom-in-95" onClick={(e) => e.stopPropagation()}>
+            <div className="text-center">
+              <img src="/logo-viking.svg" alt="Viking" className="h-20 w-20 mx-auto drakkar-animate" />
+              <h2 className="text-xl font-bold mt-2">Bienvenue dans Revêtement Viking</h2>
+            </div>
+            <ul className="text-sm space-y-2 text-slate-700">
+              <li><strong>⚡ Actions rapides</strong> — saisis heures, dépenses, soumissions en haut de cette page.</li>
+              <li><strong>🏗️ Projets</strong> — chaque projet affiche budget, coût, marge en temps réel.</li>
+              <li><strong>👷 Heures multi-employés</strong> — coche plusieurs employés, mêmes heures pour tous.</li>
+              <li><strong>💰 Finances</strong> — vue annuelle avec graphique mensuel.</li>
+              <li><strong>📈 Rapports</strong> — export CSV pour ta comptable.</li>
+              <li><strong>🔍 Recherche</strong> — clients, projets, soumissions instantanés en haut.</li>
+            </ul>
+            <button onClick={fermerTour} className="w-full mt-3 px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold">C'est parti !</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

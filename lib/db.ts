@@ -367,6 +367,45 @@ export async function ajouterHeureProjet(h: HeureProjet): Promise<number> {
 export async function supprimerHeureProjet(id: number) {
   await run("DELETE FROM heures_projet WHERE id = ?", [id]);
 }
+export async function heuresParProjetDate(projet_id: number): Promise<{ employe: string; date: string; heures: number; taux_horaire: number; description?: string }[]> {
+  return await all<any>(
+    `SELECT employe, date, heures, taux_horaire, description FROM heures_projet
+     WHERE projet_id = ? AND employe IS NOT NULL ORDER BY date DESC, employe ASC`,
+    [projet_id]
+  );
+}
+export async function soumissionsARelancer(): Promise<any[]> {
+  const seuil = new Date(Date.now() - 7 * 86400000).toISOString();
+  return await all<any>(
+    `SELECT * FROM soumissions WHERE statut = 'envoyee' AND date_envoi IS NOT NULL AND date_envoi < ?
+     ORDER BY date_envoi ASC LIMIT 20`, [seuil]
+  );
+}
+export async function rechercheGlobale(q: string): Promise<{ type: string; id: number | string; titre: string; sous: string }[]> {
+  if (!q.trim()) return [];
+  const like = `%${q.toLowerCase()}%`;
+  const out: any[] = [];
+  const clients = await all<any>(`SELECT id, nom, telephone FROM clients WHERE LOWER(nom) LIKE ? OR LOWER(courriel) LIKE ? OR telephone LIKE ? LIMIT 5`, [like, like, like]);
+  for (const c of clients) out.push({ type: "client", id: c.id, titre: c.nom, sous: c.telephone || "" });
+  const projets = await all<any>(`SELECT id, nom, adresse_chantier FROM projets WHERE LOWER(nom) LIKE ? OR LOWER(adresse_chantier) LIKE ? LIMIT 5`, [like, like]);
+  for (const p of projets) out.push({ type: "projet", id: p.id, titre: p.nom, sous: p.adresse_chantier || "" });
+  const soums = await all<any>(`SELECT numero, client_nom, total FROM soumissions WHERE LOWER(numero) LIKE ? OR LOWER(client_nom) LIKE ? LIMIT 5`, [like, like]);
+  for (const s of soums) out.push({ type: "soumission", id: s.numero, titre: s.numero, sous: s.client_nom || "" });
+  return out;
+}
+export async function finances(annee: number): Promise<any> {
+  const mois: any[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const debut = `${annee}-${String(m).padStart(2, "0")}-01`;
+    const finM = new Date(annee, m, 1).toISOString().slice(0, 10);
+    const facture = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM factures_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
+    const paye = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM factures_projet WHERE payee = 1 AND date_paiement >= ? AND date_paiement < ?`, [debut, finM]))?.v || 0;
+    const depenses = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM depenses_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
+    const mo = (await one<any>(`SELECT COALESCE(SUM(heures * taux_horaire), 0) as v FROM heures_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
+    mois.push({ mois: m, facture, paye, depenses, mo, marge: facture - depenses - mo });
+  }
+  return { annee, mois };
+}
 export async function heuresParEmploye(depuis: string): Promise<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[]> {
   return await all<any>(
     `SELECT employe, SUM(heures) as total_heures, SUM(heures * taux_horaire) as cout_total, COUNT(DISTINCT date) as n_jours

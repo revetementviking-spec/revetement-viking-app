@@ -13,7 +13,36 @@ const STATUTS_LABEL: Record<string, string> = {
   annule: "Annulé",
 };
 
-const CAT_DEPENSES = ["matériaux", "location équipement", "sous-traitant", "transport", "permis", "autre"];
+const CAT_DEPENSES = ["matériaux", "outils", "location équipement", "sous-traitant", "transport", "permis", "essence", "autre"];
+
+async function telechargerFeuilleTemps(projet: any) {
+  const r = await fetch(`/api/rapports?projet_id=${projet.id}`);
+  const lignes = await r.json();
+  const { genererFeuilleTempsBlob } = await import("@/lib/pdf-feuille-temps");
+  const blob = await genererFeuilleTempsBlob({ projet, lignes });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `Feuille-temps-${projet.nom.replace(/[^a-z0-9]/gi, "_")}.pdf`; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function envoyerFactureEmail(projet: any, facture: any) {
+  const sujet = `Facture ${facture.numero || ""} - ${projet.nom}`;
+  const corps = `Bonjour ${projet.client_nom || ""},
+
+Voici la facture pour les travaux ${projet.nom}${projet.adresse_chantier ? ` au ${projet.adresse_chantier}` : ""}.
+
+Montant : ${facture.montant} $
+Date : ${facture.date}
+${facture.description ? "Description : " + facture.description + "\n" : ""}
+Merci de votre confiance.
+
+Cordialement,
+Revêtement Viking Inc.
+RBQ 5811-4299-01
+info@entreprisesxpress.ca`;
+  window.location.href = `mailto:?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+}
 
 export default function ProjetDetail() {
   const params = useParams();
@@ -130,8 +159,10 @@ export default function ProjetDetail() {
               {Object.entries(STATUTS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
             {projet.soumission_numero && (
-              <a href={`/?modifier=${projet.soumission_numero}`} className="text-xs px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded font-semibold">📄 Voir soumission {projet.soumission_numero}</a>
+              <a href={`/soumissions/nouveau?modifier=${projet.soumission_numero}`} className="text-xs px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded font-semibold">📄 Voir soumission {projet.soumission_numero}</a>
             )}
+            <button onClick={() => telechargerFeuilleTemps(projet)} className="text-xs px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded font-semibold">⏱️ Feuille de temps PDF</button>
+            <a href={`/api/rapports?projet_id=${id}&format=csv`} className="text-xs px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded font-semibold">📊 Export CSV</a>
           </div>
           {projet.date_debut && <span className="text-xs text-slate-500">Démarré : {new Date(projet.date_debut).toLocaleDateString("fr-CA")}</span>}
         </div>
@@ -254,6 +285,7 @@ export default function ProjetDetail() {
                       <div className="flex flex-col items-end gap-1">
                         <div className="font-bold text-blue-700">{formatCAD(f.montant)}</div>
                         <div className="flex gap-1">
+                          <button onClick={() => envoyerFactureEmail(projet, f)} className="text-xs text-blue-600 hover:underline">✉️ Envoyer</button>
                           {!f.payee && <button onClick={() => marquerPayee(f.id)} className="text-xs text-emerald-600 hover:underline">Payée</button>}
                           <button onClick={() => supprimer("factures", f.id)} className="text-xs text-red-600 hover:underline">✕</button>
                         </div>
