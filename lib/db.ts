@@ -132,6 +132,13 @@ export async function initDb() {
       UNIQUE(employe, debut, fin)
     )`,
     `CREATE INDEX IF NOT EXISTS idx_paies_emp ON paies_periodes(employe, debut DESC)`,
+    `CREATE TABLE IF NOT EXISTS photos_chantier (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      projet_id INTEGER NOT NULL, date TEXT NOT NULL,
+      employes TEXT, photo_data TEXT NOT NULL, photo_type TEXT,
+      description TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_photos_projet ON photos_chantier(projet_id, date DESC)`,
     `CREATE TABLE IF NOT EXISTS projets (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       client_id INTEGER, nom TEXT NOT NULL, adresse_chantier TEXT, description TEXT,
@@ -666,6 +673,35 @@ export async function ajouterDepenseProjet(d: DepenseProjet): Promise<number> {
 }
 export async function supprimerDepenseProjet(id: number) {
   await run("DELETE FROM depenses_projet WHERE id = ?", [id]);
+}
+
+// === PHOTOS CHANTIER ===
+export interface PhotoChantier {
+  id?: number; projet_id: number; date: string;
+  employes?: string; photo_data: string; photo_type?: string;
+  description?: string; date_saisie?: string;
+}
+export async function listerPhotosChantier(projet_id?: number, options: { sansData?: boolean } = {}): Promise<any[]> {
+  const cols = options.sansData
+    ? "id, projet_id, date, employes, photo_type, description, date_saisie"
+    : "*";
+  if (projet_id) {
+    return await all<any>(`SELECT ${cols} FROM photos_chantier WHERE projet_id = ? ORDER BY date DESC, id DESC`, [projet_id]);
+  }
+  return await all<any>(`SELECT ${cols} FROM photos_chantier ORDER BY date DESC, id DESC LIMIT 200`);
+}
+export async function getPhotoChantier(id: number): Promise<PhotoChantier | null> {
+  return await one<PhotoChantier>("SELECT * FROM photos_chantier WHERE id = ?", [id]);
+}
+export async function ajouterPhotoChantier(p: PhotoChantier): Promise<number> {
+  const r = await run(
+    `INSERT INTO photos_chantier (projet_id, date, employes, photo_data, photo_type, description, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [p.projet_id, p.date, p.employes || null, p.photo_data, p.photo_type || null, p.description || null, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function supprimerPhotoChantier(id: number) {
+  await run("DELETE FROM photos_chantier WHERE id = ?", [id]);
 }
 
 // === BIBLIOTHÈQUE ===

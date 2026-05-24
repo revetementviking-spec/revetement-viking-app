@@ -54,7 +54,8 @@ export default function ProjetDetail() {
   const [heures, setHeures] = useState<any[]>([]);
   const [factures, setFactures] = useState<any[]>([]);
   const [depenses, setDepenses] = useState<any[]>([]);
-  const [onglet, setOnglet] = useState<"heures" | "factures" | "depenses">("heures");
+  const [photos, setPhotos] = useState<any[]>([]);
+  const [onglet, setOnglet] = useState<"heures" | "factures" | "depenses" | "photos">("heures");
 
   // Forms
   const today = new Date().toISOString().slice(0, 10);
@@ -68,16 +69,18 @@ export default function ProjetDetail() {
   const [dForm, setDForm] = useState({ date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
 
   const charger = async () => {
-    const [p, h, f, d] = await Promise.all([
+    const [p, h, f, d, ph] = await Promise.all([
       fetch(`/api/projets?id=${id}`).then((r) => r.json()),
       fetch(`/api/heures?projet_id=${id}`).then((r) => r.json()),
       fetch(`/api/factures?projet_id=${id}`).then((r) => r.json()),
       fetch(`/api/depenses?projet_id=${id}`).then((r) => r.json()),
+      fetch(`/api/photos?projet_id=${id}`).then((r) => r.json()).catch(() => []),
     ]);
     setProjet(p);
     setHeures(h);
     setFactures(f);
     setDepenses(d);
+    setPhotos(ph);
   };
 
   useEffect(() => {
@@ -239,13 +242,59 @@ export default function ProjetDetail() {
 
 
         {/* Onglets */}
-        <div className="flex gap-2 border-b">
-          {(["heures", "factures", "depenses"] as const).map((o) => (
-            <button key={o} onClick={() => setOnglet(o)} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === o ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
-              {o === "heures" ? `⏱️ Heures (${heures.length})` : o === "factures" ? `🧾 Factures (${factures.length})` : `💸 Dépenses (${depenses.length})`}
+        <div className="flex gap-2 border-b overflow-x-auto">
+          {(["heures", "factures", "depenses", "photos"] as const).map((o) => (
+            <button key={o} onClick={() => setOnglet(o)} className={`px-4 py-2 text-sm font-semibold border-b-2 transition whitespace-nowrap ${onglet === o ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+              {o === "heures" ? `⏱️ Heures (${heures.length})` : o === "factures" ? `🧾 Factures (${factures.length})` : o === "depenses" ? `💸 Dépenses (${depenses.length})` : `📸 Photos (${photos.length})`}
             </button>
           ))}
         </div>
+
+        {/* ONGLET PHOTOS */}
+        {onglet === "photos" && (
+          <div className="bg-white rounded-lg shadow p-4">
+            {photos.length === 0 ? (
+              <p className="text-center text-slate-500 text-sm py-12">Aucune photo. Les photos ajoutées lors de la saisie d'heures apparaîtront ici, groupées par jour.</p>
+            ) : (
+              <div className="space-y-4">
+                {Object.entries(
+                  photos.reduce((acc: any, p: any) => {
+                    const k = p.date;
+                    if (!acc[k]) acc[k] = [];
+                    acc[k].push(p);
+                    return acc;
+                  }, {})
+                )
+                  .sort(([a], [b]) => b.localeCompare(a))
+                  .map(([dateJour, items]: any) => (
+                    <div key={dateJour}>
+                      <h3 className="font-bold text-sm text-slate-700 mb-2 sticky top-0 bg-white py-1">📅 {dateJour} <span className="text-xs font-normal text-slate-500">· {items[0].employes || "—"} · {items.length} photo(s)</span></h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                        {items.map((p: any) => (
+                          <div key={p.id} className="relative group">
+                            <button
+                              onClick={() => {
+                                const w = window.open();
+                                if (w) w.document.write(`<img src="${p.photo_data}" style="max-width:100%" />`);
+                              }}
+                              className="block w-full"
+                            >
+                              <img src={p.photo_data} alt={p.description || ""} className="w-full aspect-square object-cover rounded border hover:opacity-90" />
+                            </button>
+                            <button
+                              onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); charger(); } }}
+                              className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                            >✕</button>
+                            {p.description && <div className="text-[10px] text-slate-600 truncate mt-1">{p.description}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ONGLET HEURES */}
         {onglet === "heures" && (

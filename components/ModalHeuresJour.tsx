@@ -6,7 +6,7 @@ import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; }
-interface LigneJour { projet_id: number; heures: string; description: string; }
+interface LigneJour { projet_id: number; heures: string; description: string; photos: { data: string; type: string; nom: string }[]; }
 interface Employe { id: number; nom: string; taux_horaire: number; das_pct: number; }
 
 export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
@@ -26,7 +26,9 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     const d: Employe[] = await r.json();
     setEmployes(d);
     if (empSelectionnes.size === 0 && d.length > 0) {
-      setEmpSelectionnes(new Set([d[0].id]));
+      // Préselectionner Gabriel si présent, sinon le premier de la liste
+      const gabriel = d.find((e) => /gabriel/i.test(e.nom));
+      setEmpSelectionnes(new Set([gabriel ? gabriel.id : d[0].id]));
     }
   };
 
@@ -36,10 +38,23 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     fetch("/api/projets?statut=actif").then((r) => r.json()).then((d) => {
       setProjets(d);
       if (d.length > 0 && lignes.length === 0) {
-        setLignes([{ projet_id: d[0].id, heures: "", description: "" }]);
+        setLignes([{ projet_id: d[0].id, heures: "", description: "", photos: [] }]);
       }
     });
   }, [ouvert]);
+
+  const ajouterPhoto = async (ligneIdx: number, file: File) => {
+    if (file.size > 5 * 1024 * 1024) { toast("Photo > 5 MB", "warning"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      setLignes((prev) => prev.map((l, i) => i === ligneIdx ? { ...l, photos: [...l.photos, { data: reader.result as string, type: file.type, nom: file.name }] } : l));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const retirerPhoto = (ligneIdx: number, photoIdx: number) => {
+    setLignes((prev) => prev.map((l, i) => i === ligneIdx ? { ...l, photos: l.photos.filter((_, j) => j !== photoIdx) } : l));
+  };
 
   const toggleEmp = (id: number) => {
     setEmpSelectionnes((prev) => {
@@ -67,7 +82,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     }
   };
 
-  const ajouterLigne = () => setLignes([...lignes, { projet_id: projets[0]?.id || 0, heures: "", description: "" }]);
+  const ajouterLigne = () => setLignes([...lignes, { projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [] }]);
   const supprimerLigne = (i: number) => setLignes(lignes.filter((_, idx) => idx !== i));
   const modifier = (i: number, patch: Partial<LigneJour>) => setLignes(lignes.map((l, idx) => idx === i ? { ...l, ...patch } : l));
 
@@ -108,8 +123,26 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
         }
       }
       await Promise.all(inserts);
-      toast(`✓ ${totalHeures} h × ${empsActifs.length} employé(s) (${formatCAD(totalCout)})`, "success");
-      setLignes([{ projet_id: projets[0]?.id || 0, heures: "", description: "" }]);
+
+      // Sauvegarder les photos par projet × ligne
+      const nomsEmps = empsActifs.map((e) => e.nom).join(", ");
+      const photosInserts: Promise<any>[] = [];
+      for (const l of valides) {
+        for (const p of l.photos) {
+          photosInserts.push(fetch("/api/photos", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              projet_id: l.projet_id, date, employes: nomsEmps,
+              photo_data: p.data, photo_type: p.type, description: l.description || p.nom,
+            }),
+          }));
+        }
+      }
+      const totalPhotos = valides.reduce((s, l) => s + l.photos.length, 0);
+      if (photosInserts.length > 0) await Promise.all(photosInserts);
+
+      toast(`✓ ${totalHeures} h × ${empsActifs.length} employé(s)${totalPhotos > 0 ? ` + ${totalPhotos} photo(s)` : ""} (${formatCAD(totalCout)})`, "success");
+      setLignes([{ projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [] }]);
       onSuccess?.();
       onClose();
     } finally { setLoading(false); }
@@ -205,6 +238,34 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
                     </div>
                   </div>
                   <input type="text" value={l.description} onChange={(e) => modifier(i, { description: e.target.value })} placeholder="Description (optionnel)" className="w-full px-3 py-2 border rounded text-xs bg-white" />
+
+                  {/* 📸 Photos du jour pour CE projet */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-semibold text-slate-600">📸 Photos du jour ({l.photos.length})</label>
+                      <div className="flex gap-1">
+                        <label className="cursor-pointer text-[10px] bg-blue-100 hover:bg-blue-200 text-blue-800 px-2 py-1 rounded font-semibold">
+                          📷 Photo
+                          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && ajouterPhoto(i, e.target.files[0])} />
+                        </label>
+                        <label className="cursor-pointer text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-800 px-2 py-1 rounded font-semibold">
+                          📁 Galerie
+                          <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => { const files = Array.from(e.target.files || []); files.forEach((f) => ajouterPhoto(i, f)); }} />
+                        </label>
+                      </div>
+                    </div>
+                    {l.photos.length > 0 && (
+                      <div className="flex gap-1 flex-wrap">
+                        {l.photos.map((p, pi) => (
+                          <div key={pi} className="relative w-14 h-14">
+                            <img src={p.data} alt={p.nom} className="w-14 h-14 object-cover rounded border" />
+                            <button onClick={() => retirerPhoto(i, pi)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center shadow">✕</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   {proj && (+l.heures > 0) && empsActifs.length > 0 && (
                     <div className="text-xs text-slate-600 flex justify-between">
                       <span>Reste budget: {formatCAD((proj.budget_estime || 0) - proj.cout_total)}</span>
