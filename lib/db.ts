@@ -474,11 +474,14 @@ export interface ProjetAvecTotaux extends Projet {
 }
 
 function calculerTotaux(r: any): ProjetAvecTotaux {
+  // Le prix de contrat (signé) prime sur le budget estimé (interne)
+  const revenu = r.prix_contrat || r.budget_estime || 0;
   const cout_total = (r.cout_main_oeuvre || 0) + (r.total_depenses || 0);
-  const marge = (r.budget_estime || 0) - cout_total;
-  const marge_pct = r.budget_estime ? (marge / r.budget_estime) * 100 : 0;
-  const pct_budget_consomme = r.budget_estime ? Math.min(100, (cout_total / r.budget_estime) * 100) : 0;
-  return { ...r, cout_total, marge, marge_pct, pct_budget_consomme };
+  const marge = revenu - cout_total;
+  const marge_pct = revenu ? (marge / revenu) * 100 : 0;
+  const pct_budget_consomme = revenu ? Math.min(100, (cout_total / revenu) * 100) : 0;
+  // On expose aussi le revenu actif pour affichage clair
+  return { ...r, cout_total, marge, marge_pct, pct_budget_consomme, revenu };
 }
 
 const PROJ_SQL = `SELECT p.*, c.nom as client_nom,

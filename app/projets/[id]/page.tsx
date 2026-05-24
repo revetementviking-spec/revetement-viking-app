@@ -141,7 +141,7 @@ export default function ProjetDetail() {
     </div>
   );
 
-  const restantBudget = (projet.budget_estime || 0) - projet.cout_total;
+  const restantBudget = (projet.revenu || projet.budget_estime || 0) - projet.cout_total;
   const aFacturer = projet.budget_estime - projet.total_facture;
   const aRecevoir = projet.total_facture - projet.total_paye;
 
@@ -171,10 +171,10 @@ export default function ProjetDetail() {
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-lg p-5 shadow-lg">
           <h2 className="text-sm font-semibold text-slate-300 uppercase mb-3">💰 Rentabilité temps réel</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label="Budget initial" value={formatCAD(projet.budget_estime || 0)} />
-            <Stat label="Coût réel" value={formatCAD(projet.cout_total)} couleur={projet.cout_total > projet.budget_estime ? "text-red-300" : "text-amber-200"} />
+            <Stat label={projet.prix_contrat ? "Prix contrat" : "Budget initial"} value={formatCAD(projet.revenu || 0)} sub={projet.prix_contrat && projet.budget_estime && projet.prix_contrat !== projet.budget_estime ? `Budget est. : ${formatCAD(projet.budget_estime)}` : ""} />
+            <Stat label="Coût réel" value={formatCAD(projet.cout_total)} couleur={projet.cout_total > (projet.revenu || 0) ? "text-red-300" : "text-amber-200"} />
             <Stat label="Marge brute" value={formatCAD(projet.marge)} couleur={projet.marge < 0 ? "text-red-300" : "text-emerald-300"} sub={`${projet.marge_pct.toFixed(0)}%`} />
-            <Stat label="Restant budget" value={formatCAD(restantBudget)} couleur={restantBudget < 0 ? "text-red-300" : "text-slate-200"} />
+            <Stat label="Restant" value={formatCAD((projet.revenu || 0) - projet.cout_total)} couleur={(projet.revenu || 0) - projet.cout_total < 0 ? "text-red-300" : "text-slate-200"} />
           </div>
 
           {projet.budget_estime > 0 && (
