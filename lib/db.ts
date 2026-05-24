@@ -49,6 +49,8 @@ export async function initDb() {
   await tryExec("ALTER TABLE clients ADD COLUMN statut TEXT DEFAULT 'prospect'");
   await tryExec("ALTER TABLE clients ADD COLUMN source TEXT");
   await tryExec("ALTER TABLE clients ADD COLUMN tags TEXT");
+  await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_data TEXT");
+  await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_type TEXT");
   await execMany([
     `CREATE TABLE IF NOT EXISTS soumissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -587,14 +589,15 @@ export async function supprimerFactureProjet(id: number) {
 export interface DepenseProjet {
   id?: number; projet_id: number; date: string; montant: number;
   fournisseur?: string; description?: string; categorie?: string;
+  recu_data?: string; recu_type?: string;
 }
 export async function listerDepensesProjet(projet_id: number) {
   return await all<DepenseProjet>("SELECT * FROM depenses_projet WHERE projet_id = ? ORDER BY date DESC", [projet_id]);
 }
 export async function ajouterDepenseProjet(d: DepenseProjet): Promise<number> {
   const r = await run(
-    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [d.projet_id, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, new Date().toISOString()]
+    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [d.projet_id, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, d.recu_data || null, d.recu_type || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }

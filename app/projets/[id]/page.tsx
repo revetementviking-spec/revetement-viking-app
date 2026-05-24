@@ -332,6 +332,15 @@ export default function ProjetDetail() {
                           <span className="font-semibold">{new Date(d.date).toLocaleDateString("fr-CA")}</span>
                           {d.fournisseur && <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{d.fournisseur}</span>}
                           {d.categorie && <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded">{d.categorie}</span>}
+                          {d.recu_data && (
+                            <button onClick={() => {
+                              const w = window.open();
+                              if (w) {
+                                if (d.recu_type?.startsWith("image/")) w.document.write(`<img src="${d.recu_data}" style="max-width:100%" />`);
+                                else w.location.href = d.recu_data;
+                              }
+                            }} className="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded hover:bg-emerald-200">📎 Reçu</button>
+                          )}
                         </div>
                         {d.description && <div className="text-xs text-slate-600 mt-0.5 truncate">{d.description}</div>}
                       </div>

@@ -12,8 +12,16 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
   const today = new Date().toISOString().slice(0, 10);
   const [projets, setProjets] = useState<any[]>([]);
   const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
+  const [recu, setRecu] = useState<{ data: string; type: string; nom: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  const traiterFichier = async (file: File) => {
+    if (file.size > 5 * 1024 * 1024) { toast("Fichier > 5 MB. Réduis la taille.", "warning"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setRecu({ data: reader.result as string, type: file.type, nom: file.name });
+    reader.readAsDataURL(file);
+  };
 
   useEffect(() => {
     if (!ouvert) return;
@@ -32,11 +40,12 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
     try {
       const r = await fetch("/api/depenses", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, montant: +form.montant }),
+        body: JSON.stringify({ ...form, montant: +form.montant, recu_data: recu?.data || null, recu_type: recu?.type || null }),
       });
       if ((await r.json()).ok) {
-        toast(`✓ Dépense ${formatCAD(+form.montant)} ajoutée`, "success");
+        toast(`✓ Dépense ${formatCAD(+form.montant)} ajoutée${recu ? " (reçu joint)" : ""}`, "success");
         setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
+        setRecu(null);
         onSuccess?.();
         onClose();
       }
@@ -108,6 +117,38 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
             <input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Détails..." className="w-full px-3 py-3 border rounded-lg text-sm" />
+          </div>
+
+          {/* Reçu : photo caméra ou fichier galerie/PDF */}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">📎 Reçu (optionnel)</label>
+            {recu ? (
+              <div className="border-2 border-emerald-300 bg-emerald-50 rounded-lg p-2 flex items-center gap-2">
+                {recu.type.startsWith("image/") ? (
+                  <img src={recu.data} alt="Reçu" className="w-16 h-16 object-cover rounded" />
+                ) : (
+                  <div className="w-16 h-16 bg-slate-200 rounded flex items-center justify-center text-2xl">📄</div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-semibold truncate">{recu.nom}</div>
+                  <div className="text-[10px] text-slate-500">{(recu.data.length * 0.75 / 1024).toFixed(0)} ko</div>
+                </div>
+                <button onClick={() => setRecu(null)} className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-sm">✕</button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <label className="cursor-pointer bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded-lg p-3 text-center transition">
+                  <div className="text-2xl mb-1">📷</div>
+                  <div className="text-xs font-semibold text-slate-700">Prendre photo</div>
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                </label>
+                <label className="cursor-pointer bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded-lg p-3 text-center transition">
+                  <div className="text-2xl mb-1">📁</div>
+                  <div className="text-xs font-semibold text-slate-700">Galerie / PDF</div>
+                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                </label>
+              </div>
+            )}
           </div>
         </div>
       )}
