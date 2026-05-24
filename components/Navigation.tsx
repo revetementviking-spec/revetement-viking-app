@@ -14,14 +14,14 @@ const LINKS: NavLink[] = [
   { href: "/soumissions/nouveau", label: "Soumission", icon: "➕" },
   { href: "/projets", label: "Projets", icon: "🏗️" },
   { href: "/clients", label: "CRM", icon: "👥" },
-  { href: "/contrats", label: "Contrats", icon: "📝" },
+  { href: "/finances/paye", label: "Paie", icon: "💵" },
   { href: "/finances", label: "Finances", icon: "💰" },
 ];
 const LINKS_SECONDAIRES: NavLink[] = [
+  { href: "/contrats", label: "Contrats", icon: "📝" },
   { href: "/soumissions", label: "Liste soum.", icon: "📋" },
   { href: "/heures", label: "Heures", icon: "⏱️" },
   { href: "/employes", label: "Employés", icon: "👷" },
-  { href: "/finances/paye", label: "Paye", icon: "💵" },
   { href: "/rapports", label: "Rapports", icon: "📈" },
   { href: "/a-propos", label: "À propos", icon: "ℹ️" },
 ];

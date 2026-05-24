@@ -74,7 +74,7 @@ export default function PayePage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navigation titre="💵 Paye" soustitre="Bi-hebdomadaire · DAS 15% · heures sup ×1.5" />
+      <Navigation titre="💵 Paie" soustitre="Suivi bi-hebdomadaire · DAS 15% · heures sup ×1.5" />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         {/* KPIs */}

@@ -98,7 +98,7 @@ export default function Home() {
             <a href="/clients" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">👥 CRM</a>
             <a href="/contrats" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">📝 Contrats</a>
             <a href="/finances" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">💰 Finances</a>
-            <a href="/finances/paye" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">💵 Paye</a>
+            <a href="/finances/paye" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">💵 Paie</a>
             <a href="/soumissions" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">📋 Soumissions</a>
           </div>
         </section>
