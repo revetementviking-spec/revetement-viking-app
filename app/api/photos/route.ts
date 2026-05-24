@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listerPhotosChantier, getPhotoChantier, ajouterPhotoChantier, supprimerPhotoChantier, getProjet } from "@/lib/db";
-import { driveEstConfigure, trouverOuCreerSousDossier, uploaderFichier } from "@/lib/drive";
+import { driveEstActif, trouverOuCreerSousDossier, uploaderFichier } from "@/lib/drive";
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -18,8 +18,9 @@ export async function POST(req: NextRequest) {
   }
   const id = await ajouterPhotoChantier(b);
 
-  // Push Drive en arrière-plan si configuré
-  if (driveEstConfigure()) {
+  // Push Drive en arrière-plan si actif
+  const driveActif = await driveEstActif();
+  if (driveActif) {
     (async () => {
       try {
         const projet = await getProjet(+b.projet_id);
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
     })();
   }
 
-  return NextResponse.json({ ok: true, id, drive_sync: driveEstConfigure() });
+  return NextResponse.json({ ok: true, id, drive_sync: driveActif });
 }
 
 export async function DELETE(req: NextRequest) {

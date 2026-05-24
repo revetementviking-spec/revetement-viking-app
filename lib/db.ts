@@ -70,6 +70,13 @@ export async function initDb() {
   await tryExec("ALTER TABLE employes ADD COLUMN specimen_cheque_data TEXT");
   await tryExec("ALTER TABLE employes ADD COLUMN specimen_cheque_type TEXT");
   await tryExec("ALTER TABLE employes ADD COLUMN notes TEXT");
+  await tryExec(`CREATE TABLE IF NOT EXISTS oauth_tokens (
+    id INTEGER PRIMARY KEY,
+    provider TEXT UNIQUE NOT NULL,
+    access_token TEXT, refresh_token TEXT,
+    expires_at INTEGER, scope TEXT,
+    user_email TEXT, date_creation TEXT
+  )`);
   await execMany([
     `CREATE TABLE IF NOT EXISTS soumissions (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -982,6 +989,35 @@ export async function modifierOutil(id: number, o: Partial<Outil>) {
 }
 export async function supprimerOutil(id: number) {
   await run("DELETE FROM outils WHERE id = ?", [id]);
+}
+
+// === OAUTH TOKENS ===
+export interface OAuthTokens {
+  provider: string;
+  access_token?: string; refresh_token?: string;
+  expires_at?: number; scope?: string; user_email?: string;
+}
+export async function getOAuthTokens(provider: string): Promise<OAuthTokens | null> {
+  await initDb();
+  return await one<OAuthTokens>("SELECT * FROM oauth_tokens WHERE provider = ?", [provider]);
+}
+export async function saveOAuthTokens(t: OAuthTokens): Promise<void> {
+  await initDb();
+  const existant = await one<{ id: number }>("SELECT id FROM oauth_tokens WHERE provider = ?", [t.provider]);
+  if (existant) {
+    await run(
+      `UPDATE oauth_tokens SET access_token = ?, refresh_token = COALESCE(?, refresh_token), expires_at = ?, scope = ?, user_email = ? WHERE provider = ?`,
+      [t.access_token || null, t.refresh_token || null, t.expires_at || null, t.scope || null, t.user_email || null, t.provider]
+    );
+  } else {
+    await run(
+      `INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at, scope, user_email, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [t.provider, t.access_token || null, t.refresh_token || null, t.expires_at || null, t.scope || null, t.user_email || null, new Date().toISOString()]
+    );
+  }
+}
+export async function deleteOAuthTokens(provider: string): Promise<void> {
+  await run("DELETE FROM oauth_tokens WHERE provider = ?", [provider]);
 }
 
 // Export factice pour compatibilité ascendante (certains anciens fichiers importaient `db`)
