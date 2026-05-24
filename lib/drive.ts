@@ -27,6 +27,45 @@ function getFolderId(): string | null {
   return process.env.GOOGLE_DRIVE_FOLDER_ID || null;
 }
 
+const ROOT_FOLDER_NAME = process.env.GOOGLE_DRIVE_ROOT_NAME || "Viking";
+let _cachedRootOAuth: string | null = null;
+
+/** En mode OAuth user, trouve/crée le dossier "Viking" à la racine de My Drive.
+ *  En mode SA, retourne GOOGLE_DRIVE_FOLDER_ID. */
+async function getRootFolderId(mode: "oauth_user" | "service_account"): Promise<string> {
+  if (mode === "service_account") {
+    const id = getFolderId();
+    if (!id) throw new Error("GOOGLE_DRIVE_FOLDER_ID manquant");
+    return id;
+  }
+  if (_cachedRootOAuth) return _cachedRootOAuth;
+  const q = `name='${ROOT_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`;
+  const r = await driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
+  if (r.files && r.files.length > 0) { _cachedRootOAuth = r.files[0].id; return _cachedRootOAuth!; }
+  const c = await driveFetch("/files", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: ROOT_FOLDER_NAME, mimeType: "application/vnd.google-apps.folder", parents: ["root"] }),
+  });
+  _cachedRootOAuth = c.id;
+  return c.id;
+}
+
+async function getCurrentMode(): Promise<"oauth_user" | "service_account" | null> {
+  if (getOAuthClientCreds()) {
+    const t = await getOAuthTokens("google_drive");
+    if (t?.refresh_token) return "oauth_user";
+  }
+  if (driveSAConfigure()) return "service_account";
+  return null;
+}
+
+async function resolveRootFolder(): Promise<string> {
+  const mode = await getCurrentMode();
+  if (!mode) throw new Error("Aucune auth Drive");
+  return await getRootFolderId(mode);
+}
+
 function getOAuthClientCreds(): { id: string; secret: string; redirect: string } | null {
   const id = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const secret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -44,13 +83,12 @@ export function driveSAConfigure(): boolean {
 }
 
 export async function driveEstActif(): Promise<boolean> {
-  if (!getFolderId()) return false;
-  // OAuth user connecté ?
+  // OAuth user connecté ? (pas besoin de folder env var — auto-créé "Viking" à la racine)
   if (getOAuthClientCreds()) {
     const t = await getOAuthTokens("google_drive");
     if (t?.refresh_token) return true;
   }
-  // SA fallback ?
+  // SA fallback (nécessite folder env var)
   return driveSAConfigure();
 }
 
@@ -175,7 +213,7 @@ async function driveFetch(path: string, opts: RequestInit = {}, baseUrl: string 
 }
 
 export async function trouverOuCreerSousDossier(nom: string, parent?: string): Promise<string> {
-  const parentId = parent || getFolderId();
+  const parentId = parent || await resolveRootFolder();
   if (!parentId) throw new Error("Pas de dossier parent");
   const nomEscape = nom.replace(/'/g, "\\'");
   const q = `name='${nomEscape}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`;
@@ -195,7 +233,7 @@ export async function uploaderFichier(params: {
   dossierId?: string;
   description?: string;
 }): Promise<{ id: string; webViewLink: string }> {
-  const dossier = params.dossierId || getFolderId();
+  const dossier = params.dossierId || await resolveRootFolder();
   if (!dossier) throw new Error("Dossier non spécifié");
   const match = params.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) throw new Error("dataUrl invalide");
@@ -227,8 +265,6 @@ export async function uploaderFichier(params: {
 }
 
 export async function testerConnexion(): Promise<{ ok: boolean; mode?: string; folder?: string; email?: string; message?: string }> {
-  const folderId = getFolderId();
-  if (!folderId) return { ok: false, message: "GOOGLE_DRIVE_FOLDER_ID manquant" };
   const oauthCreds = getOAuthClientCreds();
   const oauthTokens = oauthCreds ? await getOAuthTokens("google_drive") : null;
   const mode = oauthTokens?.refresh_token ? "oauth_user" : (driveSAConfigure() ? "service_account" : null);
@@ -237,6 +273,7 @@ export async function testerConnexion(): Promise<{ ok: boolean; mode?: string; f
     message: oauthCreds ? "OAuth Client configuré — connecte ton Drive maintenant" : "Aucune auth configurée"
   };
   try {
+    const folderId = await getRootFolderId(mode);
     const info = await driveFetch(`/files/${folderId}?fields=id,name,webViewLink`);
     return { ok: true, mode, folder: info.name, email: oauthTokens?.user_email || getSA()?.client_email };
   } catch (e: any) {
@@ -245,7 +282,7 @@ export async function testerConnexion(): Promise<{ ok: boolean; mode?: string; f
 }
 
 export async function listerDossier(dossierId?: string): Promise<any[]> {
-  const id = dossierId || getFolderId();
+  const id = dossierId || await resolveRootFolder().catch(() => null);
   if (!id) return [];
   const r = await driveFetch(`/files?q='${id}' in parents and trashed=false&fields=files(id,name,mimeType,modifiedTime,webViewLink,size)&pageSize=50&orderBy=modifiedTime desc`);
   return r.files || [];
