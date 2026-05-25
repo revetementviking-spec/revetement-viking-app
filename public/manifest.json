@@ -32,20 +32,26 @@
   "shortcuts": [
     {
       "name": "Nouvelle soumission",
-      "short_name": "Nouvelle",
-      "url": "/",
+      "short_name": "Soumission",
+      "url": "/soumissions/nouveau",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Projets",
+      "name": "Saisir heures",
+      "short_name": "Heures",
+      "url": "/heures",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Mes projets",
       "short_name": "Projets",
       "url": "/projets",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     },
     {
-      "name": "Tableau de bord",
-      "short_name": "Tableau",
-      "url": "/dashboard",
+      "name": "CRM",
+      "short_name": "CRM",
+      "url": "/clients",
       "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
     }
   ]
