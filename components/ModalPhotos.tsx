@@ -20,9 +20,12 @@ export default function ModalPhotos({ ouvert, onClose, onSuccess, projetIdInitia
 
   useEffect(() => {
     if (!ouvert) return;
-    fetch("/api/projets?statut=actif").then((r) => r.json()).then((d) => {
-      setProjets(d);
-      if (!projet_id && d.length > 0) setProjetId(projetIdInitial || d[0].id);
+    fetch("/api/projets").then((r) => r.json()).then((tous: any[]) => {
+      const dispo = (Array.isArray(tous) ? tous : [])
+        .filter((p) => p.statut !== "complete" && p.statut !== "annule")
+        .sort((a, b) => (a.statut === "actif" ? -1 : 1) - (b.statut === "actif" ? -1 : 1));
+      setProjets(dispo);
+      if (!projet_id && dispo.length > 0) setProjetId(projetIdInitial || dispo[0].id);
     });
   }, [ouvert]);
 

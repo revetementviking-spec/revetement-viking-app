@@ -31,9 +31,12 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
 
   useEffect(() => {
     if (!ouvert) return;
-    fetch("/api/projets?statut=actif").then((r) => r.json()).then((d) => {
-      setProjets(d);
-      if (d.length > 0 && !form.projet_id) setForm((f) => ({ ...f, projet_id: projetIdInitial || 0 }));
+    fetch("/api/projets").then((r) => r.json()).then((tous: any[]) => {
+      const dispo = (Array.isArray(tous) ? tous : [])
+        .filter((p) => p.statut !== "complete" && p.statut !== "annule")
+        .sort((a, b) => (a.statut === "actif" ? -1 : 1) - (b.statut === "actif" ? -1 : 1));
+      setProjets(dispo);
+      if (dispo.length > 0 && !form.projet_id) setForm((f) => ({ ...f, projet_id: projetIdInitial || 0 }));
     });
     fetch("/api/depenses?fournisseurs=1").then((r) => r.json()).then((d) => {
       if (Array.isArray(d)) setFournisseursConnus(d);

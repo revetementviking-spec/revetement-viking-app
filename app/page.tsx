@@ -24,7 +24,7 @@ function Salutation() {
   const date = new Date().toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   return (
     <div className="flex items-baseline justify-between gap-3 flex-wrap">
-      <h1 className="text-2xl md:text-3xl font-bold text-slate-900">{salut}, Frédéric</h1>
+      <h1 className="text-2xl md:text-3xl font-bold text-slate-900">{salut}, Gabriel</h1>
       <p className="text-sm text-slate-500 capitalize">{date}</p>
     </div>
   );

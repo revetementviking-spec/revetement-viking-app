@@ -51,10 +51,15 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
   useEffect(() => {
     if (!ouvert) return;
     chargerEmployes();
-    fetch("/api/projets?statut=actif").then((r) => r.json()).then((d) => {
-      setProjets(d);
-      if (d.length > 0 && lignes.length === 0) {
-        setLignes([{ projet_id: d[0].id, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
+    // On charge TOUS les projets (pas seulement 'actif') puis on garde ceux
+    // qui ne sont ni complétés ni annulés. Trie actif en premier.
+    fetch("/api/projets").then((r) => r.json()).then((tous: any[]) => {
+      const dispo = (Array.isArray(tous) ? tous : [])
+        .filter((p) => p.statut !== "complete" && p.statut !== "annule")
+        .sort((a, b) => (a.statut === "actif" ? -1 : 1) - (b.statut === "actif" ? -1 : 1));
+      setProjets(dispo);
+      if (dispo.length > 0 && lignes.length === 0) {
+        setLignes([{ projet_id: dispo[0].id, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
       }
     });
   }, [ouvert]);
@@ -241,7 +246,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
 
       {projets.length === 0 ? (
         <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
-          ⚠️ Aucun projet actif. <a href="/projets" className="font-bold underline">Crée un projet</a>.
+          ⚠️ Aucun projet disponible. Vérifie tes projets dans <a href="/projets" className="font-bold underline">la liste</a> — si un projet existe mais n'apparaît pas ici, son statut est peut-être "complete" ou "annulé".
         </div>
       ) : (
         <>
@@ -255,7 +260,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
                     <div className="flex-1">
                       <label className="block text-xs font-medium text-slate-600 mb-1">Projet</label>
                       <select value={l.projet_id} onChange={(e) => modifier(i, { projet_id: +e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm bg-white">
-                        {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}</option>)}
+                        {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` · ${p.client_nom}` : ""}{p.statut && p.statut !== "actif" ? ` [${p.statut}]` : ""}</option>)}
                       </select>
                     </div>
                     {lignes.length > 1 && (
