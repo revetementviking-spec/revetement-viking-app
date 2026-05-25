@@ -52,9 +52,22 @@ export default function ClientsPage() {
 
   const supprimer = async (id: number) => {
     if (!confirm("Supprimer ce client ?")) return;
+    // Capture une copie pour pouvoir annuler (re-créer côté serveur si Undo)
+    const sauvegarde = clients.find((c) => c.id === id);
     const r = await fetch(`/api/clients?id=${id}`, { method: "DELETE" });
     if (!r.ok) { toast("Erreur suppression", "error"); return; }
-    toast("Client supprimé", "success");
+    toast("Client supprimé", "success", {
+      action: sauvegarde ? {
+        label: "Annuler",
+        onClick: async () => {
+          try {
+            await fetch("/api/clients", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sauvegarde) });
+            toast("Client restauré", "success");
+            charger();
+          } catch { toast("Restauration échouée", "error"); }
+        }
+      } : undefined
+    });
     charger();
   };
 

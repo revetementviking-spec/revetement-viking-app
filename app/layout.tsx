@@ -30,6 +30,25 @@ export const metadata: Metadata = {
   formatDetection: {
     telephone: false,
   },
+  metadataBase: new URL("https://app.revetementviking.com"),
+  openGraph: {
+    type: "website",
+    locale: "fr_CA",
+    siteName: "Revêtement Viking",
+    title: "Revêtement Viking — Soumissions et gestion de chantiers",
+    description: "App de gestion pour Revêtement Viking Inc. · RBQ 5811-4299-01 · soumissions automatisées, suivi projets, paie, CRM.",
+    images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "Revêtement Viking" }],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Revêtement Viking",
+    description: "Revêtement extérieur — soffite, fascia, parement",
+    images: ["/icon-512.png"],
+  },
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export const themeColor = "#0f172a";

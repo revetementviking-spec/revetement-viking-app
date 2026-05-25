@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 interface Props {
   ouvert: boolean;
@@ -17,12 +17,24 @@ export default function BottomSheet({
   ouvert, onClose, titre, soustitre, couleurHeader = "from-slate-800 to-slate-900",
   children, footer, taille = "auto",
 }: Props) {
+  const contenuRef = useRef<HTMLDivElement | null>(null);
+
   useEffect(() => {
     if (!ouvert) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
+    // Auto-focus du premier champ texte/select visible (après mount)
+    const t = setTimeout(() => {
+      const root = contenuRef.current;
+      if (!root) return;
+      const cible = root.querySelector<HTMLElement>(
+        'input:not([type="hidden"]):not([disabled]):not([type="checkbox"]):not([type="radio"]):not([type="file"]), select:not([disabled]), textarea:not([disabled])'
+      );
+      cible?.focus();
+    }, 80);
     return () => {
+      clearTimeout(t);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
@@ -64,7 +76,7 @@ export default function BottomSheet({
           </div>
         )}
 
-        <div className="overflow-y-auto flex-1 p-4">
+        <div ref={contenuRef} className="overflow-y-auto flex-1 p-4">
           {children}
         </div>
 
