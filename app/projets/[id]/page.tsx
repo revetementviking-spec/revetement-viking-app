@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+import MeteoChantier from "@/components/MeteoChantier";
 
 const STATUTS_LABEL: Record<string, string> = {
   actif: "Actif",
@@ -176,6 +177,9 @@ export default function ProjetDetail() {
               )}
               {projet.date_debut && <div className="text-xs text-slate-600 mt-2">📅 Démarré le {new Date(projet.date_debut).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
               {projet.date_fin_prevue && <div className="text-xs text-slate-600">🏁 Fin prévue : {new Date(projet.date_fin_prevue).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
+              {projet.adresse_chantier && (
+                <div className="mt-3"><MeteoChantier adresse={projet.adresse_chantier} /></div>
+              )}
             </div>
 
             {/* Client */}

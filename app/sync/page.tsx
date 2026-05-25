@@ -74,6 +74,7 @@ function SyncContent() {
                   ⚠️ {drive.erreurs_photos} photo(s) n'ont pas pu être synchronisées dans Drive. Vérifie la connexion ou réessaye plus tard.
                 </div>
               )}
+              <BackupBouton />
               {drive.mode === "oauth_user" && (
                 <button onClick={deconnecterDrive} className="text-xs text-red-600 hover:underline">Déconnecter Drive</button>
               )}
@@ -150,6 +151,37 @@ function SyncContent() {
           </table>
         </section>
       </main>
+    </div>
+  );
+}
+
+function BackupBouton() {
+  const [loading, setLoading] = useState(false);
+  const [dernier, setDernier] = useState<{ nom: string; counts: any } | null>(null);
+  const { toast } = useToast();
+  const lancer = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch("/api/backup", { method: "POST" });
+      const d = await r.json();
+      if (d.ok) {
+        setDernier({ nom: d.nom, counts: d.tailles });
+        toast(`✓ Backup créé : ${d.nom}`, "success");
+      } else {
+        toast("Erreur backup : " + (d.error || "inconnue"), "error");
+      }
+    } finally { setLoading(false); }
+  };
+  return (
+    <div className="bg-white rounded p-2 border border-emerald-200">
+      <button onClick={lancer} disabled={loading} className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-semibold disabled:opacity-50">
+        {loading ? "⏳ Backup en cours..." : "💾 Sauvegarder DB → Drive maintenant"}
+      </button>
+      {dernier && (
+        <div className="text-xs text-slate-600 mt-1">
+          ✓ <code className="bg-slate-100 px-1 rounded">{dernier.nom}</code> · {dernier.counts.soumissions} soum · {dernier.counts.projets} projets · {dernier.counts.clients} clients
+        </div>
+      )}
     </div>
   );
 }

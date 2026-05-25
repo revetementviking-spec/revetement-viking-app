@@ -27,6 +27,10 @@ export async function middleware(req: NextRequest) {
   if (path === "/login" || path.startsWith("/_next") || path.startsWith("/api/login") || path === "/favicon.ico") {
     return NextResponse.next();
   }
+  // Endpoint backup déclenché par cron Vercel (GET seulement, sans cookie)
+  if (path === "/api/backup" && req.method === "GET") {
+    return NextResponse.next();
+  }
 
   const cookie = req.cookies.get(COOKIE_NAME);
   const expectedToken = await signToken(password);
