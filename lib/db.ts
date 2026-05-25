@@ -307,9 +307,13 @@ export async function rendementsMoyens(): Promise<Record<string, { qty: number; 
   return out;
 }
 
+// Colonnes "lites" — exclut payload_json (peut peser 50-200 KB / ligne).
+// Utilisé pour les listes et les stats. Récupérer payload_json via charger(numero).
+const SOUM_COLS_LITES = "id, numero, date_creation, date_modif, client_nom, client_adresse, client_telephone, client_courriel, projet, statut, total, heures_estimees, heures_reelles, date_envoi, date_acceptation, date_refus, date_facturation";
+
 export async function lister(statut?: Statut): Promise<SoumissionDB[]> {
-  if (statut) return await all<SoumissionDB>("SELECT * FROM soumissions WHERE statut=? ORDER BY date_creation DESC LIMIT 500", [statut]);
-  return await all<SoumissionDB>("SELECT * FROM soumissions ORDER BY date_creation DESC LIMIT 500");
+  if (statut) return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions WHERE statut=? ORDER BY date_creation DESC LIMIT 500`, [statut]);
+  return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions ORDER BY date_creation DESC LIMIT 500`);
 }
 export async function charger(numero: string): Promise<SoumissionDB | null> {
   return await one<SoumissionDB>("SELECT * FROM soumissions WHERE numero = ?", [numero]);
@@ -319,21 +323,29 @@ export async function supprimer(numero: string) {
 }
 
 export async function statistiques() {
-  const allRows = await lister();
+  // Tout en SQL pur — pas de chargement de payload_json
   const moisCourant = new Date().toISOString().slice(0, 7);
-  const moisCe = allRows.filter((s) => s.date_creation.startsWith(moisCourant));
+  const parStatutRows = await all<{ statut: string; n: number; total: number }>(
+    `SELECT statut, COUNT(*) as n, COALESCE(SUM(total), 0) as total FROM soumissions GROUP BY statut`
+  );
   const compteParStatut: Record<string, number> = {};
   const totalParStatut: Record<string, number> = {};
-  for (const s of allRows) {
-    compteParStatut[s.statut] = (compteParStatut[s.statut] || 0) + 1;
-    totalParStatut[s.statut] = (totalParStatut[s.statut] || 0) + (s.total || 0);
+  let total_soumissions = 0;
+  for (const r of parStatutRows) {
+    compteParStatut[r.statut] = r.n;
+    totalParStatut[r.statut] = r.total;
+    total_soumissions += r.n;
   }
-  const envoyees = allRows.filter((s) => ["envoyee", "acceptee", "refusee", "facturee"].includes(s.statut)).length;
-  const acceptees = allRows.filter((s) => ["acceptee", "facturee"].includes(s.statut)).length;
+  const moisCeRow = await one<{ n: number; total: number }>(
+    `SELECT COUNT(*) as n, COALESCE(SUM(total), 0) as total FROM soumissions WHERE date_creation LIKE ?`,
+    [`${moisCourant}%`]
+  );
+  const envoyees = (compteParStatut["envoyee"] || 0) + (compteParStatut["acceptee"] || 0) + (compteParStatut["refusee"] || 0) + (compteParStatut["facturee"] || 0);
+  const acceptees = (compteParStatut["acceptee"] || 0) + (compteParStatut["facturee"] || 0);
   return {
-    total_soumissions: allRows.length,
-    mois_courant: moisCe.length,
-    total_mois_courant: moisCe.reduce((s, x) => s + (x.total || 0), 0),
+    total_soumissions,
+    mois_courant: moisCeRow?.n || 0,
+    total_mois_courant: moisCeRow?.total || 0,
     compte_par_statut: compteParStatut, total_par_statut: totalParStatut,
     taux_conversion: envoyees > 0 ? acceptees / envoyees : 0,
     pipeline: totalParStatut["envoyee"] || 0,
@@ -516,7 +528,13 @@ function calculerTotaux(r: any): ProjetAvecTotaux {
   return { ...r, cout_total, marge, marge_pct, pct_budget_consomme, revenu };
 }
 
-const PROJ_SQL = `SELECT p.*, c.nom as client_nom,
+// Colonnes projets sans facture_finale_data (blob potentiel de plusieurs MB).
+// La liste retourne juste un flag a_facture_finale.
+const PROJ_SQL = `SELECT p.id, p.client_id, p.nom, p.adresse_chantier, p.description, p.statut,
+  p.date_debut, p.date_fin_prevue, p.date_fin_reelle, p.budget_estime, p.heures_estimees,
+  p.prix_contrat, p.facture_finale_type, (p.facture_finale_data IS NOT NULL) as a_facture_finale,
+  p.soumission_numero, p.asana_gid, p.created_at,
+  c.nom as client_nom,
   COALESCE((SELECT SUM(heures) FROM heures_projet WHERE projet_id = p.id), 0) as total_heures,
   COALESCE((SELECT SUM(heures * taux_horaire) FROM heures_projet WHERE projet_id = p.id), 0) as cout_main_oeuvre,
   COALESCE((SELECT SUM(montant) FROM depenses_projet WHERE projet_id = p.id), 0) as total_depenses,
@@ -533,7 +551,9 @@ export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]
   return rows.map(calculerTotaux);
 }
 export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
-  const r = await one<any>(`${PROJ_SQL} WHERE p.id = ?`, [id]);
+  // Pour le détail projet on charge le blob facture_finale_data
+  const PROJ_FULL = PROJ_SQL.replace("(p.facture_finale_data IS NOT NULL) as a_facture_finale", "p.facture_finale_data, (p.facture_finale_data IS NOT NULL) as a_facture_finale");
+  const r = await one<any>(`${PROJ_FULL} WHERE p.id = ?`, [id]);
   return r ? calculerTotaux(r) : null;
 }
 export async function ajouterProjet(p: Projet): Promise<number> {
