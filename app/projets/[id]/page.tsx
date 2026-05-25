@@ -174,8 +174,8 @@ export default function ProjetDetail() {
               {projet.adresse_chantier && (
                 <a href={`https://maps.google.com/?q=${encodeURIComponent(projet.adresse_chantier)}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">📍 Ouvrir dans Google Maps →</a>
               )}
-              {projet.date_debut && <div className="text-xs text-slate-600 mt-2">📅 Démarré le {new Date(projet.date_debut).toLocaleDateString("fr-CA")}</div>}
-              {projet.date_fin_prevue && <div className="text-xs text-slate-600">🏁 Fin prévue : {projet.date_fin_prevue}</div>}
+              {projet.date_debut && <div className="text-xs text-slate-600 mt-2">📅 Démarré le {new Date(projet.date_debut).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
+              {projet.date_fin_prevue && <div className="text-xs text-slate-600">🏁 Fin prévue : {new Date(projet.date_fin_prevue).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
             </div>
 
             {/* Client */}
@@ -725,7 +725,7 @@ function Field({ label, value, onChange, placeholder }: { label: string; value: 
   return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" /></div>;
 }
 function FieldNum({ label, value, onChange, step = 1 }: { label: string; value: string; onChange: (v: string) => void; step?: number }) {
-  return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="number" step={step} value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded text-sm text-right" /></div>;
+  return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="number" min="0" step={step} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "-") e.preventDefault(); }} inputMode="decimal" className="w-full px-3 py-2 border rounded text-sm text-right" /></div>;
 }
 function FieldDate({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded text-sm" /></div>;

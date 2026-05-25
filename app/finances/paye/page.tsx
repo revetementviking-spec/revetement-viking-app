@@ -27,8 +27,9 @@ export default function PayePage() {
   const togglePaye = async (p: any) => {
     const nouveau = !p.paye;
     if (nouveau) {
-      const date = prompt("Date du paiement (YYYY-MM-DD)?", new Date().toISOString().slice(0, 10));
-      if (!date) return;
+      const date = new Date().toISOString().slice(0, 10);
+      const lisible = new Date().toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" });
+      if (!confirm(`Marquer la paye de ${p.employe} comme payée aujourd'hui (${lisible}) ?`)) return;
       await fetch("/api/paies", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, paye: true, date_paiement: date }) });
       toast(`✓ Paye marquée payée — ${p.employe}`, "success");
     } else {
@@ -133,11 +134,11 @@ export default function PayePage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="font-bold text-slate-900">{p.employe}</h3>
                       <span className={`text-xs px-2 py-0.5 rounded font-semibold ${p.paye ? "bg-emerald-100 text-emerald-900" : "bg-red-100 text-red-900"}`}>
-                        {p.paye ? `✓ Payé ${p.date_paiement || ""}` : "À payer"}
+                        {p.paye ? `✓ Payé ${p.date_paiement ? new Date(p.date_paiement).toLocaleDateString("fr-CA", { day: "numeric", month: "short" }) : ""}` : "À payer"}
                       </span>
                     </div>
                     <div className="text-xs text-slate-500 mt-0.5">
-                      Période : <strong>{p.debut}</strong> → <strong>{p.fin}</strong>
+                      Période : <strong>{new Date(p.debut).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</strong> → <strong>{new Date(p.fin).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</strong>
                     </div>
                   </div>
                   <div className="flex gap-1">

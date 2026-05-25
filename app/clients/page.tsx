@@ -52,7 +52,9 @@ export default function ClientsPage() {
 
   const supprimer = async (id: number) => {
     if (!confirm("Supprimer ce client ?")) return;
-    await fetch(`/api/clients?id=${id}`, { method: "DELETE" });
+    const r = await fetch(`/api/clients?id=${id}`, { method: "DELETE" });
+    if (!r.ok) { toast("Erreur suppression", "error"); return; }
+    toast("Client supprimé", "success");
     charger();
   };
 
