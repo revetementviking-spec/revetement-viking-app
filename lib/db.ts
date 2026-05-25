@@ -551,7 +551,7 @@ function calculerTotaux(r: any): ProjetAvecTotaux {
 const PROJ_SQL = `SELECT p.id, p.client_id, p.nom, p.adresse_chantier, p.description, p.statut,
   p.date_debut, p.date_fin_prevue, p.date_fin_reelle, p.budget_estime, p.heures_estimees,
   p.prix_contrat, p.facture_finale_type, (p.facture_finale_data IS NOT NULL) as a_facture_finale,
-  p.soumission_numero, p.asana_gid, p.created_at,
+  p.soumission_numero, p.date_creation,
   c.nom as client_nom,
   COALESCE((SELECT SUM(heures) FROM heures_projet WHERE projet_id = p.id), 0) as total_heures,
   COALESCE((SELECT SUM(heures * taux_horaire) FROM heures_projet WHERE projet_id = p.id), 0) as cout_main_oeuvre,
