@@ -44,7 +44,14 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  return NextResponse.next();
+  const res = NextResponse.next();
+  // Security headers — niveau OWASP
+  res.headers.set("X-Frame-Options", "SAMEORIGIN");
+  res.headers.set("X-Content-Type-Options", "nosniff");
+  res.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.headers.set("Permissions-Policy", "geolocation=(self), microphone=(), camera=(self), payment=()");
+  res.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  return res;
 }
 
 export const config = {

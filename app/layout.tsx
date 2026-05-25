@@ -5,6 +5,7 @@ import { ToastsProvider } from "@/components/Toasts";
 import PWARegister from "@/components/PWARegister";
 import PanneauRaccourcis from "@/components/PanneauRaccourcis";
 import BarreChargementRoute from "@/components/BarreChargementRoute";
+import IndicateurHorsLigne from "@/components/IndicateurHorsLigne";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -69,11 +70,18 @@ export default function RootLayout({
       lang="fr-CA"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <head>
+        {/* Préconnexions DNS pour APIs externes — gain ~100-300ms sur première requête */}
+        <link rel="preconnect" href="https://api.open-meteo.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://geocoding-api.open-meteo.com" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://www.googleapis.com" />
+      </head>
       <body className="min-h-full flex flex-col">
         <a href="#contenu-principal" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[200] focus:bg-emerald-600 focus:text-white focus:px-3 focus:py-2 focus:rounded focus:font-semibold">
           Aller au contenu principal
         </a>
         <ToastsProvider>
+          <IndicateurHorsLigne />
           <BarreChargementRoute />
           <div id="contenu-principal">{children}</div>
           <PanneauRaccourcis />
