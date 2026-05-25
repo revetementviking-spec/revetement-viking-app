@@ -4,8 +4,19 @@ import { useEffect } from "react";
 
 export default function ErrorPage({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
   useEffect(() => {
-    // Log côté client pour debug (visible dans console + Vercel logs si on l'envoie)
     console.error("[Viking Error Boundary]", error);
+    // Envoi vers Sentry-light maison
+    fetch("/api/log-erreur", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: error.message,
+        stack: error.stack,
+        digest: error.digest,
+        path: typeof window !== "undefined" ? window.location.pathname : null,
+        userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+      }),
+    }).catch(() => {});
   }, [error]);
 
   return (

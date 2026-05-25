@@ -39,6 +39,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
   const pathname = usePathname();
   const router = useRouter();
   const [menuOuvert, setMenuOuvert] = useState(false);
+  const [notifs, setNotifs] = useState<{ total: number; relances: number; drive_erreurs: number; taches_ouvertes: number }>({ total: 0, relances: 0, drive_erreurs: 0, taches_ouvertes: 0 });
   const [actionsOuvertes, setActionsOuvertes] = useState(false);
   const [rechercheQ, setRechercheQ] = useState("");
   const [rechercheRes, setRechercheRes] = useState<any[]>([]);
@@ -54,6 +55,14 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
     }, 250);
     return () => clearTimeout(t);
   }, [rechercheQ]);
+
+  // Polling notifications (30s)
+  useEffect(() => {
+    const charger = () => fetch("/api/notifications").then((r) => r.json()).then(setNotifs).catch(() => {});
+    charger();
+    const id = setInterval(charger, 30000);
+    return () => clearInterval(id);
+  }, []);
 
   // Ctrl/Cmd+K → focus recherche globale
   useEffect(() => {
@@ -107,9 +116,14 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
           {/* Hamburger mobile */}
           <button
             onClick={() => setMenuOuvert(!menuOuvert)}
-            className="p-2 rounded hover:bg-slate-700 transition md:hidden flex-shrink-0"
-            aria-label="Menu"
+            className="p-2 rounded hover:bg-slate-700 transition md:hidden flex-shrink-0 relative"
+            aria-label={notifs.total > 0 ? `Menu (${notifs.total} notifications)` : "Menu"}
           >
+            {notifs.total > 0 && (
+              <span className="absolute top-0.5 right-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[16px] h-[16px] flex items-center justify-center px-1 leading-none">
+                {notifs.total > 9 ? "9+" : notifs.total}
+              </span>
+            )}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               {menuOuvert ? (
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
