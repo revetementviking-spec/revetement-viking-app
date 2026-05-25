@@ -86,7 +86,7 @@ export default function HeuresPage() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navigation titre="⏱️ Gestion des heures" soustitre={`${heures.length} entrée(s) · ${totalHeures.toFixed(1)} h`} />
+      <Navigation titre="⏱️ Horaire" soustitre={`${heures.length} entrée(s) · ${totalHeures.toFixed(1)} h · cliquer ✏️ pour modifier`} />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         {/* Filtres */}

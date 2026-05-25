@@ -98,7 +98,8 @@ export default function Home() {
               <div className="text-[10px] md:text-xs text-slate-600">{projetsActifs.length} actif(s)</div>
             </a>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-3">
+            <a href="/heures" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">⏱️ Horaire</a>
             <a href="/clients" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">👥 CRM</a>
             <a href="/contrats" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">📝 Contrats</a>
             <a href="/finances" className="text-center bg-white/70 hover:bg-white border border-slate-200 rounded p-2 text-xs font-semibold text-slate-700">💰 Finances</a>

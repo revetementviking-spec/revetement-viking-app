@@ -188,7 +188,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
       ouvert={ouvert}
       onClose={onClose}
       titre="⏱️ Saisir mes heures"
-      soustitre="Multi-employés, multi-projets"
+      soustitre="Multi-employés, multi-projets · pour modifier d'anciennes heures → onglet Horaire"
       couleurHeader="from-emerald-600 to-teal-600"
       footer={
         <>
