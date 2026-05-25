@@ -18,6 +18,18 @@ const STATUT_LABELS: Record<string, { label: string; couleur: string }> = {
   facturee: { label: "Facturée", couleur: "bg-purple-200 text-purple-900" },
 };
 
+function Salutation() {
+  const h = new Date().getHours();
+  const salut = h < 5 ? "🌙 Bonne nuit" : h < 12 ? "☀️ Bonjour" : h < 17 ? "👋 Bon après-midi" : h < 21 ? "🌆 Bonsoir" : "🌙 Bonne soirée";
+  const date = new Date().toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  return (
+    <div className="flex items-baseline justify-between gap-3 flex-wrap">
+      <h1 className="text-2xl md:text-3xl font-bold text-slate-900">{salut}, Frédéric</h1>
+      <p className="text-sm text-slate-500 capitalize">{date}</p>
+    </div>
+  );
+}
+
 export default function Home() {
   const [stats, setStats] = useState<any>(null);
   const [projetsActifs, setProjetsActifs] = useState<any[]>([]);
@@ -64,6 +76,9 @@ export default function Home() {
       <Navigation titre="Revêtement Viking" soustitre="Tableau de bord · RBQ 5811-4299-01" />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4 md:space-y-6">
+
+        {/* 👋 SALUTATION DU JOUR */}
+        <Salutation />
 
         {/* 🌤️ MÉTÉO 7 JOURS */}
         <Meteo />
