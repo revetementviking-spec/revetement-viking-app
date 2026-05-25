@@ -21,7 +21,7 @@ export default function DepensesPage() {
 
   const charger = async () => {
     const [d, p] = await Promise.all([
-      fetch("/api/depenses").then((r) => r.json()),
+      fetch("/api/depenses?data=0").then((r) => r.json()),
       fetch("/api/projets").then((r) => r.json()),
     ]);
     setDepenses(d);
@@ -48,7 +48,7 @@ export default function DepensesPage() {
   }, [depenses, recherche, filtreCat, filtreProj, depuis, jusqu]);
 
   const total = filtrees.reduce((s, d) => s + (d.montant || 0), 0);
-  const totalAvecRecu = filtrees.filter((d) => d.recu_data).reduce((s, d) => s + d.montant, 0);
+  const totalAvecRecu = filtrees.filter((d) => (d as any).a_recu || d.recu_data).reduce((s, d) => s + d.montant, 0);
 
   // Totaux par catégorie pour QB
   const parCat = filtrees.reduce((acc: any, d) => {
@@ -67,7 +67,7 @@ export default function DepensesPage() {
 
   const exportCSV = () => {
     const csv = ["Date,Fournisseur,Catégorie,Description,Projet,Montant,Reçu"]
-      .concat(filtrees.map((d) => `"${d.date}","${(d.fournisseur || "").replace(/"/g, "'")}","${d.categorie || ""}","${(d.description || "").replace(/"/g, "'")}","${projNom(d.projet_id).replace(/"/g, "'")}",${d.montant.toFixed(2)},${d.recu_data ? "Oui" : "Non"}`))
+      .concat(filtrees.map((d) => `"${d.date}","${(d.fournisseur || "").replace(/"/g, "'")}","${d.categorie || ""}","${(d.description || "").replace(/"/g, "'")}","${projNom(d.projet_id).replace(/"/g, "'")}",${d.montant.toFixed(2)},${(d as any).a_recu || d.recu_data ? "Oui" : "Non"}`))
       .join("\n");
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
@@ -84,7 +84,7 @@ export default function DepensesPage() {
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KPI label="Total filtré" value={formatCAD(total)} couleur="text-orange-700" />
-          <KPI label="Avec reçu" value={formatCAD(totalAvecRecu)} couleur="text-emerald-700" sub={`${filtrees.filter((d) => d.recu_data).length} sur ${filtrees.length}`} />
+          <KPI label="Avec reçu" value={formatCAD(totalAvecRecu)} couleur="text-emerald-700" sub={`${filtrees.filter((d) => (d as any).a_recu || d.recu_data).length} sur ${filtrees.length}`} />
           <KPI label="Sans reçu" value={formatCAD(total - totalAvecRecu)} couleur="text-amber-700" sub="à régulariser" />
           <KPI label="Nb entrées" value={`${filtrees.length}`} />
         </div>
@@ -169,14 +169,13 @@ export default function DepensesPage() {
                     </td>
                     <td className="p-2 text-right font-bold text-orange-700 whitespace-nowrap">{formatCAD(d.montant)}</td>
                     <td className="p-2 text-center">
-                      {d.recu_data ? (
-                        <button onClick={() => {
-                          const w = window.open();
-                          if (w) {
-                            if (d.recu_type?.startsWith("image/")) w.document.write(`<img src="${d.recu_data}" style="max-width:100%" />`);
-                            else w.location.href = d.recu_data;
-                          }
-                        }} className="text-emerald-700 hover:underline text-xs">📎 Voir</button>
+                      {(d as any).a_recu || d.recu_data ? (
+                        <a
+                          href={`/api/depenses/${d.id}/recu`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-emerald-700 hover:underline text-xs"
+                        >📎 Voir</a>
                       ) : (
                         <span className="text-slate-300">—</span>
                       )}

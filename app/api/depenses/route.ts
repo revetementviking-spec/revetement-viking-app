@@ -7,9 +7,10 @@ function ipDe(req: NextRequest) { return req.headers.get("x-forwarded-for")?.spl
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
   if (sp.get("fournisseurs") === "1") return NextResponse.json(await fournisseursConnus());
+  const sansData = sp.get("data") === "0";
   const projet_id = sp.get("projet_id");
-  if (projet_id === null) return NextResponse.json(await listerToutesDepenses());
-  return NextResponse.json(await listerDepensesProjet(projet_id ? +projet_id : null));
+  if (projet_id === null) return NextResponse.json(await listerToutesDepenses({ sansData }));
+  return NextResponse.json(await listerDepensesProjet(projet_id ? +projet_id : null, { sansData }));
 }
 
 export async function POST(req: NextRequest) {

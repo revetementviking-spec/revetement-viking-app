@@ -675,12 +675,16 @@ export interface DepenseProjet {
   fournisseur?: string; description?: string; categorie?: string;
   recu_data?: string; recu_type?: string;
 }
-export async function listerDepensesProjet(projet_id: number | null) {
-  if (projet_id === null) return await all<DepenseProjet>("SELECT * FROM depenses_projet WHERE projet_id IS NULL ORDER BY date DESC");
-  return await all<DepenseProjet>("SELECT * FROM depenses_projet WHERE projet_id = ? ORDER BY date DESC", [projet_id]);
+// Colonnes sans le blob recu_data (perf : envoie juste un flag a_recu)
+const DEPENSES_COLS_LITES = "id, projet_id, date, montant, fournisseur, description, categorie, recu_type, (recu_data IS NOT NULL) as a_recu";
+export async function listerDepensesProjet(projet_id: number | null, options: { sansData?: boolean } = {}) {
+  const cols = options.sansData ? DEPENSES_COLS_LITES : "*";
+  if (projet_id === null) return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id IS NULL ORDER BY date DESC`);
+  return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id = ? ORDER BY date DESC`, [projet_id]);
 }
-export async function listerToutesDepenses() {
-  return await all<DepenseProjet>("SELECT * FROM depenses_projet ORDER BY date DESC LIMIT 500");
+export async function listerToutesDepenses(options: { sansData?: boolean } = {}) {
+  const cols = options.sansData ? DEPENSES_COLS_LITES : "*";
+  return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet ORDER BY date DESC LIMIT 500`);
 }
 export async function fournisseursConnus(): Promise<string[]> {
   const rows = await all<{ fournisseur: string }>("SELECT DISTINCT fournisseur FROM depenses_projet WHERE fournisseur IS NOT NULL AND fournisseur != '' ORDER BY fournisseur ASC");

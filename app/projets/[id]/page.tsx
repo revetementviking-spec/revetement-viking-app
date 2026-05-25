@@ -75,7 +75,7 @@ export default function ProjetDetail() {
       fetch(`/api/heures?projet_id=${id}`).then((r) => r.json()),
       fetch(`/api/factures?projet_id=${id}`).then((r) => r.json()),
       fetch(`/api/depenses?projet_id=${id}`).then((r) => r.json()),
-      fetch(`/api/photos?projet_id=${id}`).then((r) => r.json()).catch(() => []),
+      fetch(`/api/photos?projet_id=${id}&data=0`).then((r) => r.json()).catch(() => []),
     ]);
     setProjet(p);
     setHeures(h);
@@ -278,15 +278,20 @@ export default function ProjetDetail() {
                       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {items.map((p: any) => (
                           <div key={p.id} className="relative group">
-                            <button
-                              onClick={() => {
-                                const w = window.open();
-                                if (w) w.document.write(`<img src="${p.photo_data}" style="max-width:100%" />`);
-                              }}
+                            <a
+                              href={`/api/photos/${p.id}`}
+                              target="_blank"
+                              rel="noreferrer"
                               className="block w-full"
                             >
-                              <img src={p.photo_data} alt={p.description || ""} className="w-full aspect-square object-cover rounded border hover:opacity-90" />
-                            </button>
+                              <img
+                                src={`/api/photos/${p.id}`}
+                                alt={p.description || ""}
+                                loading="lazy"
+                                decoding="async"
+                                className="w-full aspect-square object-cover rounded border hover:opacity-90"
+                              />
+                            </a>
                             <button
                               onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); charger(); } }}
                               className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
