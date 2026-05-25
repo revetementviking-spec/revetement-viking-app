@@ -45,6 +45,8 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               autoFocus
               required
+              autoComplete="current-password"
+              name="password"
               className="w-full px-3 py-3 border-2 border-slate-200 focus:border-emerald-500 rounded text-base"
             />
           </div>

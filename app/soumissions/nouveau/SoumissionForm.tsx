@@ -155,6 +155,9 @@ export default function SoumissionForm() {
     return () => clearTimeout(t);
   }, [client, lignes, fraisActifs, fraisGestion, appliquerTaxes, hoverExtraction, numeroSoumission]);
 
+  // === RACCOURCIS CLAVIER (Ctrl/Cmd+S : sauvegarder) ===
+  const sauverRef = useRef<() => void>(() => {});
+
   // === PRESET ===
   const appliquerPreset = (preset: PresetMateriau) => {
     setPresetSelectionne(preset.id);
@@ -438,6 +441,19 @@ export default function SoumissionForm() {
       toast(`Sauvegardée : ${d.numero}`, "success");
     } finally { setChargementSave(false); }
   };
+
+  // Enregistre la dernière version de sauvegarder + écoute Ctrl/Cmd+S
+  useEffect(() => { sauverRef.current = sauvegarder; });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        sauverRef.current?.();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const telechargerPDF = async (): Promise<{ numero: string; blob: Blob } | null> => {
     if (!client.nom) { toast('Entre au moins le nom du client.', 'warning'); return null; }
