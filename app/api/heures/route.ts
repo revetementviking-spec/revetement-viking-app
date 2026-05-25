@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listerHeuresProjet, ajouterHeureProjet, supprimerHeureProjet, modifierHeureProjet, listerToutesHeures } from "@/lib/db";
+import { journaliser } from "@/lib/audit";
+
+function ipDe(req: NextRequest) { return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined; }
 
 export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams;
@@ -19,6 +22,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "projet_id, date et heures requis" }, { status: 400 });
   }
   const id = await ajouterHeureProjet(body);
+  await journaliser("heures.ajoutees", {
+    ref_type: "heures", ref_id: id,
+    description: `${body.employe || "?"} · ${body.heures}h · projet ${body.projet_id} · ${body.date}`,
+    ip: ipDe(req),
+  });
   return NextResponse.json({ ok: true, id });
 }
 

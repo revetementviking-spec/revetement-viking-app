@@ -39,6 +39,29 @@ export interface ActiviteOpts {
   user_agent?: string;
 }
 
+// Compteur en mémoire pour déclencher la purge périodique sans I/O à chaque appel
+let _depuisDernierePurge = 0;
+const PURGE_CHAQUE = 500; // tous les 500 inserts, on tente une purge
+
+async function purgerSiNecessaire(): Promise<void> {
+  if (_depuisDernierePurge++ < PURGE_CHAQUE) return;
+  _depuisDernierePurge = 0;
+  try {
+    const c = db();
+    // 1. Supprime les entrées de plus de 90 jours
+    const seuil = new Date(Date.now() - 90 * 86400_000).toISOString();
+    await c.execute({ sql: `DELETE FROM journal_activite WHERE date < ?`, args: [seuil] });
+    // 2. Si > 10 000 lignes, garde uniquement les 10 000 plus récentes
+    const r = await c.execute("SELECT COUNT(*) as n FROM journal_activite");
+    const n = Number((r.rows[0] as any).n || 0);
+    if (n > 10000) {
+      await c.execute(`DELETE FROM journal_activite WHERE id NOT IN (SELECT id FROM journal_activite ORDER BY id DESC LIMIT 10000)`);
+    }
+  } catch (e) {
+    console.warn("[audit purge]", (e as Error).message);
+  }
+}
+
 /** Log une activité — fire-and-forget, ne throw jamais. */
 export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): Promise<void> {
   try {
@@ -58,6 +81,8 @@ export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): 
         opts.user_agent ? opts.user_agent.slice(0, 200) : null,
       ],
     });
+    // Purge périodique non bloquante
+    purgerSiNecessaire().catch(() => {});
   } catch (e) {
     console.warn("[audit] échec journalisation:", (e as Error).message);
   }
