@@ -55,6 +55,19 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
     return () => clearTimeout(t);
   }, [rechercheQ]);
 
+  // Ctrl/Cmd+K → focus recherche globale
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        const el = document.getElementById("vk-search-input") as HTMLInputElement | null;
+        if (el) { el.focus(); el.select(); }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Dark mode persistance
   useEffect(() => {
     const saved = typeof window !== "undefined" && localStorage.getItem("vk-theme") === "dark";
@@ -123,8 +136,9 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
           {/* Recherche globale */}
           <div className="hidden md:block relative">
             <input
+              id="vk-search-input"
               type="search"
-              placeholder="🔍 Rechercher..."
+              placeholder="🔍 Rechercher... (Ctrl+K)"
               value={rechercheQ}
               onChange={(e) => { setRechercheQ(e.target.value); setRechercheOuvert(true); }}
               onFocus={() => setRechercheOuvert(true)}
