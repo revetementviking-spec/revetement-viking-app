@@ -64,6 +64,13 @@ export default function ProjetDetail() {
   const [employes, setEmployes] = useState<any[]>([]);
   const [hFiltreEmp, setHFiltreEmp] = useState("");
   const [hTri, setHTri] = useState<"date_desc" | "date_asc" | "heures_desc" | "heures_asc" | "employe">("date_desc");
+  // === Vue semaine pour onglet heures (style horaire global) ===
+  const [vueH, setVueH] = useState<"semaine" | "liste">("semaine");
+  const [semaineDebutH, setSemaineDebutH] = useState<Date>(() => {
+    const d = new Date(); const jour = d.getDay(); const diff = jour === 0 ? -6 : 1 - jour;
+    d.setDate(d.getDate() + diff); d.setHours(0, 0, 0, 0); return d;
+  });
+  const [selectionH, setSelectionH] = useState<Set<number>>(new Set());
   const [hRecherche, setHRecherche] = useState("");
   const [hPeriode, setHPeriode] = useState<string>(""); // "" = toutes, ou "YYYY-MM-DD|YYYY-MM-DD"
   const [fForm, setFForm] = useState({ numero: "", montant: "", date: today, description: "" });
@@ -336,8 +343,202 @@ export default function ProjetDetail() {
               </div>
             </div>
 
-            {/* Filtres / tri sur heures */}
-            {heures.length > 0 && (() => {
+            {/* === VUE SEMAINE / LISTE — Style Excel/Gantt === */}
+            {(() => {
+              const JOURS_C = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+              const lundi = new Date(semaineDebutH);
+              const dim = new Date(lundi); dim.setDate(lundi.getDate() + 6);
+              const debutISO = lundi.toISOString().slice(0, 10);
+              const finISO = dim.toISOString().slice(0, 10);
+              const fmtCt = (d: Date) => d.toLocaleDateString("fr-CA", { day: "numeric", month: "short" });
+
+              const reculer = () => { const d = new Date(semaineDebutH); d.setDate(d.getDate() - 7); setSemaineDebutH(d); };
+              const avancer = () => { const d = new Date(semaineDebutH); d.setDate(d.getDate() + 7); setSemaineDebutH(d); };
+              const cetteSem = () => {
+                const d = new Date(); const j = d.getDay(); const diff = j === 0 ? -6 : 1 - j;
+                d.setDate(d.getDate() + diff); d.setHours(0, 0, 0, 0); setSemaineDebutH(d);
+              };
+
+              const heuresSemaine = heures.filter((h: any) => h.date >= debutISO && h.date <= finISO);
+              const employesPresents = Array.from(new Set(heuresSemaine.map((h: any) => h.employe || "—"))).sort();
+
+              const grille: Record<string, Array<{ total: number; cout: number; lignes: any[] }>> = {};
+              employesPresents.forEach((e) => grille[e] = Array.from({ length: 7 }, () => ({ total: 0, cout: 0, lignes: [] })));
+              heuresSemaine.forEach((h: any) => {
+                const d = new Date(h.date);
+                const idx = Math.floor((d.getTime() - lundi.getTime()) / 86400000);
+                if (idx >= 0 && idx < 7) {
+                  const e = h.employe || "—";
+                  grille[e][idx].total += h.heures || 0;
+                  grille[e][idx].cout += (h.heures || 0) * (h.taux_horaire || 0);
+                  grille[e][idx].lignes.push(h);
+                }
+              });
+
+              const totauxJ = Array.from({ length: 7 }, () => ({ heures: 0, cout: 0 }));
+              employesPresents.forEach((e) => grille[e].forEach((c, i) => { totauxJ[i].heures += c.total; totauxJ[i].cout += c.cout; }));
+              const totalSem = totauxJ.reduce((s, t) => ({ heures: s.heures + t.heures, cout: s.cout + t.cout }), { heures: 0, cout: 0 });
+
+              const toggleSel = (id: number) => { const ns = new Set(selectionH); ns.has(id) ? ns.delete(id) : ns.add(id); setSelectionH(ns); };
+              const supprimerSel = async () => {
+                if (selectionH.size === 0) return;
+                if (!confirm(`Supprimer ${selectionH.size} entrée(s) sélectionnée(s) ?`)) return;
+                await Promise.all(Array.from(selectionH).map((id) => fetch(`/api/heures?id=${id}`, { method: "DELETE" })));
+                toast(`${selectionH.size} entrée(s) supprimée(s)`, "success");
+                setSelectionH(new Set());
+                charger();
+              };
+
+              return (
+                <>
+                  {/* Navigation semaine + toggle vue */}
+                  <div className="bg-white rounded-lg shadow p-3 flex flex-wrap items-center gap-2">
+                    <button onClick={reculer} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded font-bold" aria-label="Semaine précédente">←</button>
+                    <button onClick={cetteSem} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold">Aujourd'hui</button>
+                    <button onClick={avancer} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded font-bold" aria-label="Semaine suivante">→</button>
+                    <div className="font-bold ml-2">Du {fmtCt(lundi)} au {fmtCt(dim)}</div>
+                    <input type="date" value={debutISO} onChange={(e) => {
+                      const d = new Date(e.target.value); if (isNaN(d.getTime())) return;
+                      const j = d.getDay(); const diff = j === 0 ? -6 : 1 - j;
+                      d.setDate(d.getDate() + diff); d.setHours(0, 0, 0, 0); setSemaineDebutH(d);
+                    }} className="px-2 py-1 border rounded text-sm" title="Aller à une semaine" />
+                    <div className="ml-auto flex gap-1 bg-slate-100 rounded p-1">
+                      <button onClick={() => setVueH("semaine")} className={`px-3 py-1 rounded text-xs font-semibold ${vueH === "semaine" ? "bg-white shadow" : "text-slate-600"}`}>📅 Grille</button>
+                      <button onClick={() => setVueH("liste")} className={`px-3 py-1 rounded text-xs font-semibold ${vueH === "liste" ? "bg-white shadow" : "text-slate-600"}`}>📋 Liste</button>
+                    </div>
+                  </div>
+
+                  {selectionH.size > 0 && (
+                    <div className="bg-blue-50 border border-blue-200 rounded p-2 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-blue-900">{selectionH.size} entrée(s) sélectionnée(s)</span>
+                      <div className="flex gap-2">
+                        <button onClick={() => setSelectionH(new Set())} className="text-xs text-slate-600 hover:underline">Désélectionner</button>
+                        <button onClick={supprimerSel} className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded text-xs font-bold">🗑 Supprimer</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* === VUE GRILLE === */}
+                  {vueH === "semaine" && (
+                    <div className="bg-white rounded-lg shadow overflow-x-auto">
+                      <table className="w-full text-sm min-w-max">
+                        <thead>
+                          <tr className="bg-slate-900 text-white text-xs">
+                            <th className="p-2 text-left sticky left-0 bg-slate-900 z-10 min-w-[120px]">Employé</th>
+                            {JOURS_C.map((j, i) => {
+                              const jd = new Date(lundi); jd.setDate(jd.getDate() + i);
+                              const auj = jd.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+                              return (
+                                <th key={j} className={`p-2 text-center min-w-[100px] ${auj ? "bg-emerald-700" : ""}`}>
+                                  <div className="font-bold">{j}</div>
+                                  <div className="text-[10px] opacity-80">{jd.getDate()}/{jd.getMonth() + 1}</div>
+                                </th>
+                              );
+                            })}
+                            <th className="p-2 text-right min-w-[90px] bg-slate-800">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {employesPresents.length === 0 ? (
+                            <tr><td colSpan={9} className="p-8 text-center text-slate-500 text-sm">Aucune heure cette semaine sur ce projet.</td></tr>
+                          ) : employesPresents.map((emp) => {
+                            const totE = grille[emp].reduce((s, c) => s + c.total, 0);
+                            const coutE = grille[emp].reduce((s, c) => s + c.cout, 0);
+                            return (
+                              <tr key={emp} className="border-t hover:bg-slate-50">
+                                <td className="p-2 font-bold sticky left-0 bg-white z-10">{emp}</td>
+                                {grille[emp].map((c, i) => (
+                                  <td key={i} className="p-2 text-center align-top">
+                                    {c.total > 0 ? (
+                                      <>
+                                        <div className="font-bold text-emerald-700">{c.total.toFixed(1)} h</div>
+                                        <div className="text-[10px] text-slate-500">{formatCAD(c.cout)}</div>
+                                        {c.lignes.length > 1 && <div className="text-[9px] text-slate-400">{c.lignes.length} entrées</div>}
+                                      </>
+                                    ) : <div className="text-slate-300">—</div>}
+                                  </td>
+                                ))}
+                                <td className="p-2 text-right bg-slate-50">
+                                  <div className="font-bold">{totE.toFixed(1)} h</div>
+                                  <div className="text-[10px] text-emerald-700">{formatCAD(coutE)}</div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-slate-100 font-bold border-t-2 border-slate-300">
+                            <td className="p-2 sticky left-0 bg-slate-100 z-10">TOTAL</td>
+                            {totauxJ.map((t, i) => (
+                              <td key={i} className="p-2 text-center">
+                                <div>{t.heures.toFixed(1)} h</div>
+                                <div className="text-[10px] text-slate-600">{formatCAD(t.cout)}</div>
+                              </td>
+                            ))}
+                            <td className="p-2 text-right bg-emerald-100">
+                              <div className="text-emerald-900">{totalSem.heures.toFixed(1)} h</div>
+                              <div className="text-xs text-emerald-700">{formatCAD(totalSem.cout)}</div>
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* === VUE LISTE === */}
+                  {vueH === "liste" && (
+                    <div className="bg-white rounded-lg shadow overflow-x-auto">
+                      {heuresSemaine.length === 0 ? (
+                        <p className="p-6 text-center text-slate-500 text-sm">Aucune heure cette semaine sur ce projet.</p>
+                      ) : (
+                        <table className="w-full text-sm min-w-max">
+                          <thead className="bg-slate-100 text-xs uppercase">
+                            <tr>
+                              <th className="p-2 w-10">
+                                <input type="checkbox"
+                                  checked={selectionH.size === heuresSemaine.length && heuresSemaine.length > 0}
+                                  onChange={() => setSelectionH(selectionH.size === heuresSemaine.length ? new Set() : new Set(heuresSemaine.map((h: any) => h.id)))}
+                                />
+                              </th>
+                              <th className="p-2 text-left">Date</th>
+                              <th className="p-2 text-left">Employé</th>
+                              <th className="p-2 text-right">Heures</th>
+                              <th className="p-2 text-right">$/h</th>
+                              <th className="p-2 text-right">Coût</th>
+                              <th className="p-2 text-left">Description</th>
+                              <th className="p-2 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {heuresSemaine.sort((a: any, b: any) => b.date.localeCompare(a.date)).map((h: any) => {
+                              const sel = selectionH.has(h.id);
+                              const jourCt = JOURS_C[(new Date(h.date).getDay() + 6) % 7];
+                              return (
+                                <tr key={h.id} className={`border-t hover:bg-slate-50 vk-lazy-render ${sel ? "bg-blue-50" : ""}`}>
+                                  <td className="p-2"><input type="checkbox" checked={sel} onChange={() => toggleSel(h.id)} /></td>
+                                  <td className="p-2 whitespace-nowrap"><span className="text-slate-400 text-[10px] mr-1">{jourCt}</span>{h.date}</td>
+                                  <td className="p-2 font-medium">{h.employe || "—"}</td>
+                                  <td className="p-2 text-right font-bold">{(h.heures || 0).toFixed(1)} h</td>
+                                  <td className="p-2 text-right text-slate-600">{(h.taux_horaire || 0).toFixed(2)} $</td>
+                                  <td className="p-2 text-right font-bold text-emerald-700">{formatCAD((h.heures || 0) * (h.taux_horaire || 0))}</td>
+                                  <td className="p-2 text-xs text-slate-600 truncate max-w-xs">{h.description || ""}</td>
+                                  <td className="p-2 text-right">
+                                    <button onClick={() => supprimer("heures", h.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* Ancien filtres bi-hebdo conservé pour rétrocompat — masqué par défaut */}
+            {false && heures.length > 0 && (() => {
               // Calcul des périodes bi-hebdo (mêmes ancres que le module Paye : dimanche 2026-01-04)
               const ancre = new Date("2026-01-04T12:00:00");
               const periodeDe = (dateStr: string) => {
@@ -402,6 +603,8 @@ export default function ProjetDetail() {
               );
             })()}
 
+            {/* Ancien rendu liste détaillé — désactivé : remplacé par vue grille/liste ci-dessus */}
+            {false && (
             <div className="bg-white rounded-lg shadow overflow-hidden">
               {heures.length === 0 ? (
                 <p className="p-6 text-center text-slate-500 text-sm">Aucune heure saisie</p>
@@ -446,6 +649,7 @@ export default function ProjetDetail() {
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
 
