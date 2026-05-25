@@ -73,6 +73,18 @@ export async function initDb() {
   // Drive sync status sur photos
   await tryExec("ALTER TABLE photos_chantier ADD COLUMN drive_file_id TEXT");
   await tryExec("ALTER TABLE photos_chantier ADD COLUMN drive_sync_error TEXT");
+  // Audit trail / journal activité (Big Four-grade)
+  await tryExec(`CREATE TABLE IF NOT EXISTS journal_activite (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,
+    type TEXT NOT NULL,
+    ref_type TEXT, ref_id TEXT,
+    description TEXT,
+    avant TEXT, apres TEXT,
+    ip TEXT, user_agent TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_date ON journal_activite(date DESC)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_type ON journal_activite(type)");
   await tryExec(`CREATE TABLE IF NOT EXISTS oauth_tokens (
     id INTEGER PRIMARY KEY,
     provider TEXT UNIQUE NOT NULL,

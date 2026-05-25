@@ -25,6 +25,7 @@ const LINKS_SECONDAIRES: NavLink[] = [
   { href: "/employes", label: "Employés", icon: "👷" },
   { href: "/sync", label: "Synchros", icon: "🔄" },
   { href: "/rapports", label: "Rapports", icon: "📈" },
+  { href: "/admin/journal", label: "Journal", icon: "📜" },
   { href: "/admin/diagnostic", label: "Diagnostic", icon: "🛠️" },
   { href: "/a-propos", label: "À propos", icon: "ℹ️" },
 ];

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { journaliser } from "@/lib/audit";
 
 async function signToken(secret: string): Promise<string> {
   const enc = new TextEncoder();
@@ -19,9 +20,13 @@ export async function POST(req: NextRequest) {
   if (!expected) {
     return NextResponse.json({ ok: true });
   }
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
+  const ua = req.headers.get("user-agent") || undefined;
   if (password !== expected) {
+    await journaliser("auth.login_echec", { description: "Mauvais mot de passe", ip, user_agent: ua });
     return NextResponse.json({ error: "Mot de passe incorrect" }, { status: 401 });
   }
+  await journaliser("auth.login_ok", { description: "Connexion réussie", ip, user_agent: ua });
   const res = NextResponse.json({ ok: true });
   res.cookies.set("xpress_auth", await signToken(expected), {
     httpOnly: true,
