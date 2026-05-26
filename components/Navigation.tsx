@@ -274,8 +274,6 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
         ))}
       </nav>
 
-      {/* Spacer pour ne pas que le contenu soit caché par la bottom nav mobile (inclut safe-area iOS) */}
-      <div className="md:hidden" aria-hidden style={{ height: "calc(4.5rem + env(safe-area-inset-bottom))" }} />
     </>
   );
 }

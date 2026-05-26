@@ -238,3 +238,18 @@ img {
   outline-offset: 2px;
   border-radius: 4px;
 }
+
+/* === RÉSERVE L'ESPACE DE LA BOTTOM-NAV MOBILE ===
+ * La nav est fixed bottom-0 (visible uniquement <md). Au lieu d'un spacer
+ * en haut du DOM qui ne servait à rien, on ajoute un padding-bottom au
+ * body sur mobile. Le contenu scroll normalement et le dernier élément
+ * arrive AU-DESSUS de la nav sans être caché.
+ *
+ * 4.5rem = ~72px (hauteur bottom-nav)
+ * + env(safe-area-inset-bottom) = encoche iPhone X+ / barre gestuelle Android
+ */
+@media (max-width: 767px) {
+  body {
+    padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
+  }
+}
