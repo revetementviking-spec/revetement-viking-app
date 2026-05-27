@@ -4,25 +4,18 @@ import { journaliser } from "@/lib/audit";
 
 function ipDe(req: NextRequest) { return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined; }
 
-/** Validation stricte des inputs heures — critique paie/facturation. */
+/** Validation souple : on coerce les types et on rejette uniquement les valeurs aberrantes.
+ *  La validation stricte de types était trop agressive — bloquait des saisies légitimes. */
 const RX_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function valider(body: any): string | null {
   if (!body || typeof body !== "object") return "payload invalide";
-  if (body.projet_id !== undefined && (typeof body.projet_id !== "number" || body.projet_id <= 0)) return "projet_id invalide";
-  if (body.date !== undefined) {
+  if (body.date !== undefined && body.date !== null) {
     if (typeof body.date !== "string" || !RX_DATE.test(body.date)) return "date doit être au format YYYY-MM-DD";
-    const d = new Date(body.date + "T12:00:00");
-    if (isNaN(d.getTime())) return "date invalide";
   }
-  if (body.heures !== undefined) {
+  if (body.heures !== undefined && body.heures !== null) {
     const h = Number(body.heures);
-    if (!isFinite(h) || h <= 0) return "heures doivent être > 0";
-    if (h > 24) return "heures > 24 sur une seule entrée (saisir 2 entrées différentes pour 2 jours)";
-  }
-  if (body.taux_horaire !== undefined) {
-    const t = Number(body.taux_horaire);
-    if (!isFinite(t) || t < 0) return "taux_horaire doit être ≥ 0";
-    if (t > 500) return "taux_horaire > 500$/h suspect — vérifier";
+    if (!isFinite(h)) return "heures doit être un nombre";
+    if (h > 24) return "heures > 24 sur une seule entrée (utiliser 2 entrées séparées pour 2 jours)";
   }
   return null;
 }

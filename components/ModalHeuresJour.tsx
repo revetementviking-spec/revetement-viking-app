@@ -158,7 +158,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     setLoading(true);
     try {
       // Une entrée par employé × ligne (chaque employé fait ces heures sur ce projet)
-      const inserts: Promise<any>[] = [];
+      const erreurs: string[] = [];
       for (const emp of empsActifs) {
         for (const l of valides) {
           const descBase = l.description || "";
@@ -167,16 +167,28 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
             : "";
           const desc = [descBase, trace].filter(Boolean).join(" · ");
           const dateLigne = l.date || date;
-          inserts.push(fetch("/api/heures", {
-            method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              projet_id: l.projet_id, date: dateLigne, heures: l.heures_effectives,
-              description: desc, employe: emp.nom, taux_horaire: emp.taux_horaire,
-            }),
-          }));
+          try {
+            const r = await fetch("/api/heures", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                projet_id: Number(l.projet_id), date: dateLigne, heures: Number(l.heures_effectives),
+                description: desc, employe: emp.nom, taux_horaire: Number(emp.taux_horaire) || 0,
+              }),
+            });
+            if (!r.ok) {
+              const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+              erreurs.push(`${emp.nom} · ${l.heures_effectives}h · ${dateLigne} : ${d.error || "inconnu"}`);
+            }
+          } catch (e: any) {
+            erreurs.push(`${emp.nom} · ${dateLigne} : ${e.message || "réseau"}`);
+          }
         }
       }
-      await Promise.all(inserts);
+      if (erreurs.length > 0) {
+        toast(`❌ ${erreurs.length} erreur(s) à la saisie :\n${erreurs.slice(0, 3).join("\n")}${erreurs.length > 3 ? `\n+${erreurs.length - 3} autres` : ""}`, "error");
+        setLoading(false);
+        return;
+      }
 
       // Sauvegarder les photos par projet × ligne
       const nomsEmps = empsActifs.map((e) => e.nom).join(", ");
