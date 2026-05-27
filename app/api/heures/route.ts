@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   const err = valider(body);
   if (err) return NextResponse.json({ error: err }, { status: 400 });
   const id = await ajouterHeureProjet(body);
-  await journaliser("heures.ajoutees", {
+  journaliser("heures.ajoutees", {
     ref_type: "heures", ref_id: id,
     description: `${body.employe || "?"} · ${body.heures}h · projet ${body.projet_id} · ${body.date}`,
     apres: { projet_id: body.projet_id, date: body.date, heures: body.heures, employe: body.employe, taux_horaire: body.taux_horaire },
@@ -58,7 +58,7 @@ export async function PATCH(req: NextRequest) {
   if (!avant) return NextResponse.json({ error: "entrée introuvable" }, { status: 404 });
   await modifierHeureProjet(+body.id, body);
   const apres = await getHeureProjet(+body.id);
-  await journaliser("heures.ajoutees", {
+  journaliser("heures.ajoutees", {
     ref_type: "heures", ref_id: body.id,
     description: `MODIF · ${avant.employe || "?"} · ${avant.heures}h → ${apres?.heures}h sur ${apres?.date}`,
     avant: { date: avant.date, heures: avant.heures, employe: avant.employe, projet_id: avant.projet_id, taux_horaire: avant.taux_horaire, description: avant.description },
@@ -74,7 +74,7 @@ export async function DELETE(req: NextRequest) {
   // Snapshot avant suppression pour traçabilité paie/audit
   const avant = await getHeureProjet(+id);
   await supprimerHeureProjet(+id);
-  await journaliser("heures.ajoutees", {
+  journaliser("heures.ajoutees", {
     ref_type: "heures", ref_id: id,
     description: `SUPPRESSION · ${avant?.employe || "?"} · ${avant?.heures}h sur ${avant?.date}`,
     avant: avant ? { date: avant.date, heures: avant.heures, employe: avant.employe, projet_id: avant.projet_id, taux_horaire: avant.taux_horaire } : null,
