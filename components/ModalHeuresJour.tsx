@@ -11,6 +11,14 @@ interface LigneJour {
   projet_id: number; heures: string; description: string;
   photos: { data: string; type: string; nom: string }[];
   heure_debut: string; heure_fin: string; dejeuner_retire: boolean;
+  /** Date spécifique à cette ligne (override la date globale si renseignée) */
+  date?: string;
+}
+
+/** Date d'aujourd'hui en LOCAL (pas UTC) — sinon décale après 20h en EDT/EST */
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 /** Calcule heures entre debut et fin (format HH:MM), minus pause dîner 30 min si activé */
@@ -26,7 +34,7 @@ function calculerHeures(debut: string, fin: string, dejeunerRetire: boolean): nu
 interface Employe { id: number; nom: string; taux_horaire: number; das_pct: number; }
 
 export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocal();
   const [date, setDate] = useState(today);
   const [employes, setEmployes] = useState<Employe[]>([]);
   const [empSelectionnes, setEmpSelectionnes] = useState<Set<number>>(new Set());
@@ -126,6 +134,16 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
       .filter((l) => l.heures_effectives > 0);
     if (valides.length === 0) { toast("Saisis au moins une ligne avec heures (manuel ou début/fin)", "warning"); return; }
     if (empsActifs.length === 0) { toast("Sélectionne au moins un employé", "warning"); return; }
+    // Garde-fou : total heures par employé > 16h sur cette date → confirmation explicite
+    const totalParEmpJour = valides.reduce((s, l) => s + l.heures_effectives, 0);
+    if (totalParEmpJour > 16) {
+      if (!confirm(`⚠️ Cela enregistre ${totalParEmpJour.toFixed(1)} heures par employé sur le ${date}.\n\nC'est plus que ce qu'une personne peut travailler dans une journée (>16h). Es-tu sûr ? Si tu voulais saisir plusieurs jours, change la date entre chaque saisie.`)) return;
+    }
+    // Détecte si on a coché plusieurs employés ET plusieurs lignes (multiplie le total)
+    if (empsActifs.length > 1 && valides.length > 1) {
+      const totalReel = empsActifs.length * totalParEmpJour;
+      if (!confirm(`Tu vas créer ${empsActifs.length * valides.length} entrées (${empsActifs.length} employé(s) × ${valides.length} ligne(s)) = ${totalReel.toFixed(1)} h totales sur le ${date}.\n\nConfirmer ?`)) return;
+    }
     // Alerte budget dépassé
     for (const l of valides) {
       const p = projets.find((x) => x.id === l.projet_id);
@@ -148,10 +166,11 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
             ? `${l.heure_debut}→${l.heure_fin}${l.dejeuner_retire ? " (-30min dîner)" : ""}`
             : "";
           const desc = [descBase, trace].filter(Boolean).join(" · ");
+          const dateLigne = l.date || date;
           inserts.push(fetch("/api/heures", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projet_id: l.projet_id, date, heures: l.heures_effectives,
+              projet_id: l.projet_id, date: dateLigne, heures: l.heures_effectives,
               description: desc, employe: emp.nom, taux_horaire: emp.taux_horaire,
             }),
           }));
@@ -167,7 +186,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
           photosInserts.push(fetch("/api/photos", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              projet_id: l.projet_id, date, employes: nomsEmps,
+              projet_id: l.projet_id, date: l.date || date, employes: nomsEmps,
               photo_data: p.data, photo_type: p.type, description: l.description || p.nom,
             }),
           }));
@@ -262,6 +281,10 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
                       <select value={l.projet_id} onChange={(e) => modifier(i, { projet_id: +e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm bg-white">
                         {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` · ${p.client_nom}` : ""}{p.statut && p.statut !== "actif" ? ` [${p.statut}]` : ""}</option>)}
                       </select>
+                    </div>
+                    <div className="w-36">
+                      <label className="block text-xs font-medium text-slate-600 mb-1">Date {l.date && l.date !== date && <span className="text-amber-600">⚠</span>}</label>
+                      <input type="date" value={l.date || date} onChange={(e) => modifier(i, { date: e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm" title="Date spécifique à cette ligne (par défaut = date globale en haut)" />
                     </div>
                     {lignes.length > 1 && (
                       <button onClick={() => supprimerLigne(i)} className="w-12 h-12 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-base flex-shrink-0">✕</button>
