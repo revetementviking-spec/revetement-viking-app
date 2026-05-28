@@ -39,6 +39,28 @@ export default function PayePage() {
     charger();
   };
 
+  const telechargerTalon = async (p: any) => {
+    try {
+      const { genererTalonPaieBlob } = await import("@/lib/pdf-talon-paie");
+      const blob = await genererTalonPaieBlob({
+        employe: p.employe, debut: p.debut, fin: p.fin,
+        heures_normales: p.heures_normales || 0, heures_sup: p.heures_sup || 0,
+        taux_horaire: p.taux_horaire || 0, das_pct: p.das_pct || 0.15,
+        montant_brut: p.montant_brut || 0, das_montant: p.das_montant || 0,
+        montant_net: p.montant_net || 0, date_paiement: p.date_paiement,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `talon-paie-${p.employe.replace(/\s+/g, "-")}-${p.debut}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(`✓ Talon de paie généré — ${p.employe}`, "success");
+    } catch (e: any) {
+      toast("Erreur génération talon : " + (e.message || ""), "error");
+    }
+  };
+
   const supprimer = async (p: any) => {
     if (!confirm(`Supprimer la période de paye de ${p.employe} (${p.debut} → ${p.fin}) ?`)) return;
     await fetch(`/api/paies?id=${p.id}`, { method: "DELETE" });
@@ -142,6 +164,7 @@ export default function PayePage() {
                     </div>
                   </div>
                   <div className="flex gap-1">
+                    <button onClick={() => telechargerTalon(p)} className="px-3 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded text-sm font-semibold" title="Talon de paie PDF">📄 Talon</button>
                     <button
                       onClick={() => togglePaye(p)}
                       className={`px-4 py-2 rounded font-bold text-sm ${p.paye ? "bg-slate-200 hover:bg-slate-300 text-slate-700" : "bg-emerald-600 hover:bg-emerald-500 text-white"}`}
