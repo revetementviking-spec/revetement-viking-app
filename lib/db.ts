@@ -277,18 +277,23 @@ export async function sauvegarder(payload: {
   const numero = payload.numero || await genererNumero();
   const now = new Date().toISOString();
   const existing = await one("SELECT id FROM soumissions WHERE numero = ?", [numero]);
-  const json = JSON.stringify(payload.data);
+  const json = JSON.stringify(payload.data ?? {});
   const heures = payload.heuresEstimees ?? 0;
+  const c = payload.client || {};
+  // Coercition undefined → null (Turso refuse undefined : "Unsupported type of value")
+  const nom = c.nom ?? null, adresse = c.adresse ?? null, tel = c.telephone ?? null,
+    courriel = c.courriel ?? null, projet = c.projet ?? payload?.data?.projet ?? null;
+  const total = payload.total ?? 0;
 
   if (existing) {
     await run(
       `UPDATE soumissions SET date_modif=?, client_nom=?, client_adresse=?, client_telephone=?, client_courriel=?, projet=?, total=?, heures_estimees=?, payload_json=? WHERE numero=?`,
-      [now, payload.client.nom, payload.client.adresse, payload.client.telephone, payload.client.courriel, payload.client.projet, payload.total, heures, json, numero]
+      [now, nom, adresse, tel, courriel, projet, total, heures, json, numero]
     );
   } else {
     await run(
       `INSERT INTO soumissions (numero, date_creation, date_modif, client_nom, client_adresse, client_telephone, client_courriel, projet, total, heures_estimees, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [numero, now, now, payload.client.nom, payload.client.adresse, payload.client.telephone, payload.client.courriel, payload.client.projet, payload.total, heures, json]
+      [numero, now, now, nom, adresse, tel, courriel, projet, total, heures, json]
     );
   }
   return numero;
