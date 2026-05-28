@@ -76,12 +76,13 @@ export default function ProjetDetail() {
   const [dForm, setDForm] = useState({ date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
 
   const charger = async () => {
+    const noStore = { cache: "no-store" as RequestCache };
     const [p, h, f, d, ph] = await Promise.all([
-      fetch(`/api/projets?id=${id}`).then((r) => r.json()),
-      fetch(`/api/heures?projet_id=${id}`).then((r) => r.json()),
-      fetch(`/api/factures?projet_id=${id}`).then((r) => r.json()),
-      fetch(`/api/depenses?projet_id=${id}`).then((r) => r.json()),
-      fetch(`/api/photos?projet_id=${id}&data=0`).then((r) => r.json()).catch(() => []),
+      fetch(`/api/projets?id=${id}`, noStore).then((r) => r.json()),
+      fetch(`/api/heures?projet_id=${id}`, noStore).then((r) => r.json()),
+      fetch(`/api/factures?projet_id=${id}`, noStore).then((r) => r.json()),
+      fetch(`/api/depenses?projet_id=${id}`, noStore).then((r) => r.json()),
+      fetch(`/api/photos?projet_id=${id}&data=0`, noStore).then((r) => r.json()).catch(() => []),
     ]);
     setProjet(p);
     setHeures(h);

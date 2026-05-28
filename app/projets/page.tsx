@@ -30,7 +30,7 @@ export default function ProjetsPage() {
   const charger = async () => {
     setLoading(true);
     const url = filtre ? `/api/projets?statut=${filtre}` : "/api/projets";
-    const r = await fetch(url);
+    const r = await fetch(url, { cache: "no-store" });
     setProjets(await r.json());
     setLoading(false);
   };

@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { listerProjets, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
 import { aujourdhuiMontreal } from "@/lib/date";
 
-function ok(data: any, init?: ResponseInit) { return NextResponse.json(data, init); }
+function ok(data: any, init?: ResponseInit) {
+  // no-store : les chiffres (marge, coûts) doivent toujours être frais après
+  // ajout d'heures/dépenses. Pas de cache navigateur ni CDN.
+  return NextResponse.json(data, { ...init, headers: { "Cache-Control": "no-store, max-age=0", ...(init?.headers || {}) } });
+}
 function fail(e: any, status = 500) {
   console.error("[/api/projets]", e);
   return NextResponse.json({ error: e?.message || "Erreur serveur" }, { status });
