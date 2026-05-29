@@ -29,9 +29,10 @@ export default function FinancesPage() {
   const totaux = data.mois.reduce((s: any, m: any) => ({
     facture: s.facture + m.facture, paye: s.paye + m.paye,
     depenses: s.depenses + m.depenses, mo: s.mo + m.mo, marge: s.marge + m.marge,
-  }), { facture: 0, paye: 0, depenses: 0, mo: 0, marge: 0 });
+    revenu: s.revenu + (m.revenu || 0),
+  }), { facture: 0, paye: 0, depenses: 0, mo: 0, marge: 0, revenu: 0 });
 
-  const max = Math.max(...data.mois.map((m: any) => Math.max(m.facture, m.paye, m.depenses + m.mo)), 1);
+  const max = Math.max(...data.mois.map((m: any) => Math.max(m.revenu || 0, m.depenses + m.mo)), 1);
 
   // Totaux par projet
   const totauxProjets = projets.reduce(
@@ -123,11 +124,11 @@ export default function FinancesPage() {
         {/* === FLUX MENSUEL (basé sur dates des factures/dépenses) === */}
         <h2 className="text-lg font-bold text-slate-900">📅 Flux mensuel — {annee}</h2>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <KPI label="Revenus encaissés" value={formatCAD(totaux.paye)} couleur="text-emerald-700" />
-          <KPI label="Facturé (à recevoir)" value={formatCAD(totaux.facture - totaux.paye)} couleur="text-blue-700" />
+          <KPI label="Revenus projets" value={formatCAD(totaux.revenu)} couleur="text-emerald-700" sub="contrats + factures" />
           <KPI label="Dépenses" value={formatCAD(totaux.depenses)} couleur="text-orange-700" />
           <KPI label="Main-d'œuvre" value={formatCAD(totaux.mo)} couleur="text-amber-700" />
-          <KPI label="Marge nette" value={formatCAD(totaux.marge)} couleur={totaux.marge >= 0 ? "text-emerald-700" : "text-red-700"} />
+          <KPI label="Encaissé" value={formatCAD(totaux.paye)} couleur="text-blue-700" sub="payé reçu" />
+          <KPI label="Net (reste)" value={formatCAD(totaux.marge)} couleur={totaux.marge >= 0 ? "text-emerald-700" : "text-red-700"} />
         </div>
 
         {/* Graphique mensuel */}
@@ -139,25 +140,23 @@ export default function FinancesPage() {
                 <div className="flex justify-between text-xs">
                   <span className="font-bold w-12">{MOIS[m.mois]}</span>
                   <span className={m.marge >= 0 ? "text-emerald-700 font-bold" : "text-red-700 font-bold"}>
-                    Marge {formatCAD(m.marge)}
+                    Net {formatCAD(m.marge)}
                   </span>
                 </div>
                 <div className="flex gap-1 h-6">
-                  <div className="bg-emerald-500 rounded" style={{ width: `${(m.paye / max) * 100}%`, minWidth: m.paye > 0 ? 4 : 0 }} title={`Revenus encaissés ${formatCAD(m.paye)}`} />
-                  <div className="bg-blue-500 rounded" style={{ width: `${(m.facture / max) * 100}%`, minWidth: m.facture > 0 ? 4 : 0 }} title={`Facturé ${formatCAD(m.facture)}`} />
+                  <div className="bg-emerald-500 rounded" style={{ width: `${((m.revenu || 0) / max) * 100}%`, minWidth: (m.revenu || 0) > 0 ? 4 : 0 }} title={`Revenus projets ${formatCAD(m.revenu || 0)}`} />
                   <div className="bg-orange-400 rounded" style={{ width: `${(m.depenses / max) * 100}%`, minWidth: m.depenses > 0 ? 4 : 0 }} title={`Dépenses ${formatCAD(m.depenses)}`} />
                   <div className="bg-amber-400 rounded" style={{ width: `${(m.mo / max) * 100}%`, minWidth: m.mo > 0 ? 4 : 0 }} title={`MO ${formatCAD(m.mo)}`} />
                 </div>
                 <div className="flex justify-between text-[10px] text-slate-500 px-12">
-                  <span>Revenus encaissés : <strong className="text-emerald-700">{formatCAD(m.paye)}</strong></span>
+                  <span>Revenus : <strong className="text-emerald-700">{formatCAD(m.revenu || 0)}</strong>{m.facture === 0 && (m.revenu || 0) > 0 ? " (contrat)" : ""}</span>
                   <span>Coûts : <strong className="text-orange-700">{formatCAD(m.depenses + m.mo)}</strong></span>
                 </div>
               </div>
             ))}
           </div>
           <div className="flex gap-3 text-xs mt-3 flex-wrap">
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-emerald-500 rounded" /> Revenus encaissés</span>
-            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-blue-500 rounded" /> Facturé (à recevoir)</span>
+            <span className="flex items-center gap-1"><span className="w-3 h-3 bg-emerald-500 rounded" /> Revenus projets (contrat ou facturé)</span>
             <span className="flex items-center gap-1"><span className="w-3 h-3 bg-orange-400 rounded" /> Dépenses</span>
             <span className="flex items-center gap-1"><span className="w-3 h-3 bg-amber-400 rounded" /> Main-d'œuvre</span>
           </div>

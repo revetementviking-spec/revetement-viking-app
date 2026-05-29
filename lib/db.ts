@@ -705,7 +705,11 @@ export async function finances(annee: number): Promise<any> {
     const paye = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM factures_projet WHERE payee = 1 AND date_paiement >= ? AND date_paiement < ?`, [debut, finM]))?.v || 0;
     const depenses = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM depenses_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
     const mo = (await one<any>(`SELECT COALESCE(SUM(heures * taux_horaire), 0) as v FROM heures_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
-    mois.push({ mois: m, facture, paye, depenses, mo, marge: facture - depenses - mo });
+    // Revenu de contrat reconnu : valeur des projets démarrés ce mois (prix_contrat sinon budget_estime)
+    const contrats = (await one<any>(`SELECT COALESCE(SUM(COALESCE(prix_contrat, budget_estime, 0)), 0) as v FROM projets WHERE date_debut >= ? AND date_debut < ?`, [debut, finM]))?.v || 0;
+    // Revenu reconnu = facturation réelle si elle existe, sinon valeur des contrats démarrés
+    const revenu = facture > 0 ? facture : contrats;
+    mois.push({ mois: m, facture, paye, depenses, mo, contrats, revenu, marge: revenu - depenses - mo });
   }
   return { annee, mois };
 }
