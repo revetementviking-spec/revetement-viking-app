@@ -141,7 +141,17 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
 
     try {
       const { genererContratBlob } = await import("@/lib/pdf-contrat");
+      // Numéro auto = numéro du projet lié, sinon généré
+      let numero = "";
+      if (form.projet_lien_id) {
+        try {
+          const pr = await fetch(`/api/projets?id=${form.projet_lien_id}`, { cache: "no-store" }).then((r) => r.json());
+          if (pr?.numero) numero = pr.numero;
+        } catch {}
+      }
+      if (!numero) numero = `C-${new Date().getFullYear()}-${String(client.id).padStart(3, "0")}`;
       const data = {
+        numero,
         charge_projet: moiUtilisateur || "Francis Quinchon",
         client_nom: form.nom,
         client_adresse: form.adresse,
@@ -165,7 +175,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
       });
       const r = await fetch("/api/contrats-pipeline", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: client.id, data_json: data, pdf_brouillon: pdf64 }),
+        body: JSON.stringify({ client_id: client.id, numero: data.numero, data_json: data, pdf_brouillon: pdf64 }),
       });
       const d = await r.json();
       if (!d.ok) { toast("Erreur sauvegarde", "error"); return; }
@@ -195,25 +205,29 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     try { await navigator.clipboard.writeText(lien); toast("📋 Lien copié", "success"); } catch { toast("Copie impossible", "error"); }
   };
 
-  const envoyerContratParMail = (c: any) => {
-    if (!form.courriel) { toast("Aucun courriel client pour cette fiche", "warning"); return; }
-    const lien = `${window.location.origin}/contrat/${c.token}`;
-    const sujet = `Contrat à signer — Revêtement Viking Inc. (${c.numero})`;
-    const corps = `Bonjour ${form.nom},
-
-Vous trouverez ci-dessous le lien sécurisé pour consulter et signer votre contrat de rénovation :
-
-${lien}
-
-Merci de prendre le temps de le lire attentivement avant de le signer. Une copie signée vous sera renvoyée automatiquement.
-
-Cordialement,
-
-Revêtement Viking Inc.
-revetementviking@gmail.com
-(438) 493-2041`;
-    window.location.href = `mailto:${form.courriel}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
-    fetch("/api/contrats-pipeline", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action: "envoye" }) }).then(rechargerContrats);
+  const envoyerContratParMail = async (c: any) => {
+    if (!form.courriel) { toast("Aucun courriel client pour cette fiche — ajoute-le dans les coordonnées", "warning"); return; }
+    if (!confirm(`Envoyer le contrat ${c.numero} à ${form.courriel} pour signature ?`)) return;
+    const r = await fetch(`/api/contrats-pipeline/${c.id}/envoyer`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: form.courriel }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      toast(`📧 Contrat envoyé à ${form.courriel}`, "success");
+      rechargerContrats();
+    } else if (d.raison === "email_non_configure") {
+      // Repli mailto si service mail pas configuré
+      const lien = `${window.location.origin}/contrat/${c.token}`;
+      const sujet = `Contrat à signer — Revêtement Viking Inc. (${c.numero})`;
+      const corps = `Bonjour ${form.nom},\n\nVoici le lien sécurisé pour signer votre contrat de rénovation :\n\n${lien}\n\nCordialement,\nRevêtement Viking Inc.`;
+      window.location.href = `mailto:${form.courriel}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+      await fetch("/api/contrats-pipeline", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action: "envoye" }) });
+      toast("📧 Client mail ouvert (envoi serveur non configuré)", "info");
+      rechargerContrats();
+    } else {
+      toast(`Échec envoi : ${d.error || "erreur inconnue"}`, "error");
+    }
   };
 
   const supprimerContrat = async (id: number) => {
@@ -397,39 +411,48 @@ revetementviking@gmail.com
             />
           </section>
 
-          {/* CONTRATS générés (avec lien de signature) */}
+          {/* CONTRATS générés (avec preuve de transmission style DocuSign) */}
           {contrats.length > 0 && (
             <section>
               <label className="block text-xs font-medium text-slate-600 mb-1">📝 Contrats ({contrats.length})</label>
-              <ul className="space-y-1.5">
-                {contrats.map((co) => (
-                  <li key={co.id} className={`bg-white border rounded p-2 text-xs ${co.statut === "signe" ? "border-emerald-300" : "border-slate-200"}`}>
-                    <div className="flex justify-between items-start gap-2">
+              <ul className="space-y-2">
+                {contrats.map((co) => {
+                  const fmt = (d: string) => new Date(d).toLocaleString("fr-CA", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+                  return (
+                  <li key={co.id} className={`bg-white border-2 rounded p-2.5 text-xs ${co.statut === "signe" ? "border-emerald-400" : co.date_vue ? "border-amber-300" : co.statut === "envoye" ? "border-blue-300" : "border-slate-200"}`}>
+                    <div className="flex justify-between items-start gap-2 mb-2">
                       <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-slate-900">{co.numero}</div>
-                        <div className="text-[10px] text-slate-500">
-                          {co.statut === "signe"
-                            ? <>✅ Signé par <strong>{co.signature_nom}</strong> le {new Date(co.signature_date).toLocaleDateString("fr-CA")}</>
-                            : co.statut === "envoye"
-                              ? <>📧 Envoyé le {co.date_envoye ? new Date(co.date_envoye).toLocaleDateString("fr-CA") : "—"}</>
-                              : <>📄 Brouillon créé le {new Date(co.date_creation).toLocaleDateString("fr-CA")}</>
-                          }
-                        </div>
+                        <div className="font-bold text-slate-900 text-sm">📄 {co.numero}</div>
+                        <div className="text-[10px] text-slate-500">Créé par {co.cree_par || "—"}</div>
                       </div>
                       <div className="flex gap-1 flex-wrap">
-                        <a href={`/api/contrats-pipeline/${co.token}/pdf${co.statut === "signe" ? "?signe=1" : ""}`} target="_blank" rel="noreferrer" className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-bold">📄 PDF</a>
+                        <a href={`/api/contrats-pipeline/${co.token}/pdf${co.statut === "signe" ? "?signe=1" : ""}`} target="_blank" rel="noreferrer" className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-bold">👁 Aperçu</a>
                         <button onClick={() => copierLienContrat(co.token)} className="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-[10px] font-bold">🔗 Lien</button>
                         {co.statut !== "signe" && (
-                          <>
-                            <button onClick={() => ouvrirContratPublic(co.token)} className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded text-[10px] font-bold" title="Ouvrir la page publique de signature">👁 Voir</button>
-                            <button onClick={() => envoyerContratParMail(co)} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold" title="Envoyer le lien au client par mail">📧 Mail</button>
-                          </>
+                          <button onClick={() => envoyerContratParMail(co)} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold" title="Envoyer le contrat par courriel pour signature">📧 Envoyer pour signature</button>
                         )}
                         <button onClick={() => supprimerContrat(co.id)} className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-[10px]">🗑</button>
                       </div>
                     </div>
+                    {/* TIMELINE preuve de transmission style DocuSign */}
+                    <div className="border-t pt-1.5 space-y-1 text-[10px] text-slate-600">
+                      <div className="flex justify-between"><span>📄 Brouillon créé</span><strong>{fmt(co.date_creation)}</strong></div>
+                      {co.date_envoye && (
+                        <div className="flex justify-between text-blue-700"><span>📧 Envoyé à {co.courriel_destinataire || "—"}</span><strong>{fmt(co.date_envoye)}</strong></div>
+                      )}
+                      {co.courriel_erreur && (
+                        <div className="text-red-700">⚠️ Échec envoi : {co.courriel_erreur}</div>
+                      )}
+                      {co.date_vue && (
+                        <div className="flex justify-between text-amber-700"><span>👁 Vu par le client (IP {co.ip_vue || "—"})</span><strong>{fmt(co.date_vue)}</strong></div>
+                      )}
+                      {co.signature_date && (
+                        <div className="flex justify-between text-emerald-700"><span>✅ Signé par <strong>{co.signature_nom}</strong> (IP {co.signature_ip || "—"})</span><strong>{fmt(co.signature_date)}</strong></div>
+                      )}
+                    </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </section>
           )}

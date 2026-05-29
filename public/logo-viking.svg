@@ -1,32 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280" fill="none">
-  <g stroke="#1e3a5f" stroke-width="6" stroke-linejoin="round" stroke-linecap="round" fill="none">
-    <!-- Mât et drapeau -->
-    <line x1="200" y1="40" x2="200" y2="180"/>
-    <path d="M200 50 L240 55 L235 70 L245 80 L200 78 Z" fill="#1e3a5f"/>
-    <!-- Voile -->
-    <path d="M205 70 L300 100 L300 175 L205 175 Z" fill="#1e3a5f"/>
-    <path d="M195 70 L130 100 L130 175 L195 175 Z" fill="none"/>
-    <!-- Coque -->
-    <path d="M40 180 L360 180 L340 240 L60 240 Z" fill="none"/>
-    <!-- Proue dragon (droite) -->
-    <path d="M360 180 Q385 175 390 160 L370 155 L390 145 L370 140 L385 130" stroke-width="5"/>
-    <!-- Poupe courbée (gauche) -->
-    <path d="M40 180 Q15 175 25 155 Q35 145 50 165" stroke-width="5"/>
-    <!-- Boucliers -->
-    <g stroke-width="3">
-      <rect x="75" y="205" width="18" height="22"/>
-      <rect x="100" y="205" width="18" height="22"/>
-      <rect x="125" y="205" width="18" height="22"/>
-      <rect x="150" y="205" width="18" height="22"/>
-      <rect x="175" y="205" width="18" height="22"/>
-      <rect x="200" y="205" width="18" height="22"/>
-      <rect x="225" y="205" width="18" height="22"/>
-      <rect x="250" y="205" width="18" height="22"/>
-      <rect x="275" y="205" width="18" height="22"/>
-      <rect x="300" y="205" width="18" height="22"/>
-    </g>
-    <!-- Lignes coque -->
-    <line x1="50" y1="190" x2="350" y2="190" stroke-width="2"/>
-    <line x1="58" y1="232" x2="342" y2="232" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" stroke="#1e3a5f" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Drapeau au sommet du mât -->
+  <path d="M100 25 L120 30 L100 38 Z" fill="#1e3a5f" stroke="none"/>
+  <line x1="100" y1="22" x2="100" y2="135" stroke-width="2.5"/>
+  <!-- Vergue (barre horizontale en haut de voile) -->
+  <line x1="62" y1="55" x2="138" y2="55" stroke-width="2.5"/>
+  <!-- Voile carrée bleu marine pleine -->
+  <path d="M70 55 L130 55 L130 120 L70 120 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Cordages diagonaux -->
+  <line x1="70" y1="55" x2="40" y2="115" stroke-width="1.5"/>
+  <line x1="130" y1="55" x2="160" y2="115" stroke-width="1.5"/>
+  <!-- Coque principale du drakkar -->
+  <path d="M28 132 Q30 130 35 130 L165 130 Q170 130 172 132 L160 165 Q150 172 130 173 L70 173 Q50 172 40 165 Z" fill="none" stroke-width="3.5"/>
+  <!-- Lignes horizontales coque (planches) -->
+  <line x1="50" y1="148" x2="150" y2="148" stroke-width="1.5"/>
+  <line x1="55" y1="158" x2="145" y2="158" stroke-width="1.5"/>
+  <!-- Boucliers ronds entre les lignes -->
+  <g stroke-width="1">
+    <line x1="60" y1="153" x2="60" y2="158"/>
+    <line x1="72" y1="153" x2="72" y2="158"/>
+    <line x1="84" y1="153" x2="84" y2="158"/>
+    <line x1="96" y1="153" x2="96" y2="158"/>
+    <line x1="108" y1="153" x2="108" y2="158"/>
+    <line x1="120" y1="153" x2="120" y2="158"/>
+    <line x1="132" y1="153" x2="132" y2="158"/>
   </g>
+  <!-- Tête de dragon à l'avant (côté droit) -->
+  <path d="M168 130 Q180 128 184 120 L188 118 L184 124 Q183 128 178 131 Z" fill="#1e3a5f" stroke="none"/>
+  <path d="M186 117 L192 115 L188 122 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Queue arrière (côté gauche, recourbée) -->
+  <path d="M32 130 Q22 128 18 120 Q14 113 22 113 Q20 118 26 124 Z" fill="#1e3a5f" stroke="none"/>
 </svg>

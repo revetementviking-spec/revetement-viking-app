@@ -1,16 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getContratPipelineParToken, signerContratPipeline, getClient } from "@/lib/db";
+import { getContratPipelineParToken, signerContratPipeline, getClient, marquerContratVu } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
 function ipDe(req: NextRequest) { return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined; }
 
 // GET — public (allowlistée dans proxy.ts) : retourne les méta + data_json (sans les PDF blobs)
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
   const c = await getContratPipelineParToken(token);
   if (!c) return NextResponse.json({ error: "introuvable" }, { status: 404 });
-  // Récupère aussi un peu d'info du client (sans données sensibles)
+  // Enregistre la première vue (preuve de transmission style DocuSign)
+  marquerContratVu(token, ipDe(req)).catch(() => {});
   const cl = await getClient(c.client_id);
   return NextResponse.json({
     numero: c.numero,

@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -124,6 +124,12 @@ async function doInitDb() {
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_pipe_contrats_cli ON pipeline_contrats(client_id, date_creation DESC)");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_pipe_contrats_token ON pipeline_contrats(token)");
+  // Preuve de transmission style DocuSign : vue + envoi mail
+  await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN date_vue TEXT");
+  await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN ip_vue TEXT");
+  await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_destinataire TEXT");
+  await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_message_id TEXT");
+  await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_erreur TEXT");
   // Audit : qui a fait l'action ?
   await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
@@ -785,7 +791,11 @@ export async function creerContratPipeline(p: {
 }
 export async function listerContratsParClient(client_id: number): Promise<any[]> {
   return await all<any>(
-    "SELECT id, client_id, numero, token, statut, signature_nom, signature_date, cree_par, date_creation, date_envoye, (pdf_signe IS NOT NULL) as a_signe FROM pipeline_contrats WHERE client_id = ? ORDER BY date_creation DESC",
+    `SELECT id, client_id, numero, token, statut, signature_nom, signature_date, signature_ip,
+            cree_par, date_creation, date_envoye, date_vue, ip_vue,
+            courriel_destinataire, courriel_message_id, courriel_erreur,
+            (pdf_signe IS NOT NULL) as a_signe
+     FROM pipeline_contrats WHERE client_id = ? ORDER BY date_creation DESC`,
     [client_id]
   );
 }
@@ -806,8 +816,18 @@ export async function signerContratPipeline(token: string, p: {
   );
   return r.rowsAffected > 0;
 }
-export async function marquerContratEnvoye(id: number) {
-  await run("UPDATE pipeline_contrats SET statut='envoye', date_envoye=? WHERE id=? AND statut='brouillon'", [new Date().toISOString(), id]);
+export async function marquerContratEnvoye(id: number, courriel?: string, messageId?: string, erreur?: string) {
+  await run(
+    "UPDATE pipeline_contrats SET statut='envoye', date_envoye=?, courriel_destinataire=?, courriel_message_id=?, courriel_erreur=? WHERE id=? AND statut!='signe'",
+    [new Date().toISOString(), courriel || null, messageId || null, erreur || null, id]
+  );
+}
+/** Enregistre la première vue par le client (pour preuve de transmission). */
+export async function marquerContratVu(token: string, ip?: string): Promise<void> {
+  await run("UPDATE pipeline_contrats SET date_vue=?, ip_vue=? WHERE token=? AND date_vue IS NULL", [new Date().toISOString(), ip || null, token]);
+}
+export async function getContratPipelineParId(id: number): Promise<any | null> {
+  return await one<any>("SELECT * FROM pipeline_contrats WHERE id = ?", [id]);
 }
 export async function supprimerContratPipeline(id: number) {
   await run("DELETE FROM pipeline_contrats WHERE id = ?", [id]);

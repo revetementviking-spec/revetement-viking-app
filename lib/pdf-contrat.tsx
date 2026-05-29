@@ -45,47 +45,92 @@ export interface ContratData {
   signature_client_image?: string;                 // dataURL PNG dessinée par le client
 }
 
+const COULEUR_PRIMAIRE = "#1e3a5f"; // bleu marine Viking
+const COULEUR_TEXTE = "#1e293b";
+const COULEUR_GRIS = "#64748b";
+const COULEUR_GRIS_CLAIR = "#94a3b8";
+
 const s = StyleSheet.create({
-  page: { padding: 40, paddingBottom: 60, fontSize: 10, fontFamily: "Helvetica", color: "#1e293b", lineHeight: 1.4 },
-  titreCouv: { fontSize: 22, fontWeight: 700, textAlign: "center", marginTop: 80, marginBottom: 8 },
-  ligneCouv: { borderBottom: "1pt solid #0f172a", marginVertical: 12, marginHorizontal: 50 },
-  introCouv: { fontSize: 10, marginHorizontal: 50, textAlign: "center", color: "#475569", lineHeight: 1.5 },
-  nomClient: { fontSize: 14, fontWeight: 700, textAlign: "center", marginTop: 12 },
+  page: { paddingTop: 70, paddingBottom: 70, paddingHorizontal: 50, fontSize: 10, fontFamily: "Helvetica", color: COULEUR_TEXTE, lineHeight: 1.45 },
+  pageCouv: { padding: 50, fontSize: 10, fontFamily: "Helvetica", color: COULEUR_TEXTE },
 
-  h1: { fontSize: 14, fontWeight: 700, backgroundColor: "#0f172a", color: "white", padding: 6, marginTop: 12, marginBottom: 8 },
-  h2: { fontSize: 11, fontWeight: 700, marginTop: 10, marginBottom: 4 },
+  // EN-TÊTE sur chaque page (sauf couverture)
+  enTete: { position: "absolute", top: 25, left: 50, right: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 8, borderBottom: "1.5pt solid " + COULEUR_PRIMAIRE },
+  enTeteLogo: { flexDirection: "row", alignItems: "center", gap: 8 },
+  enTeteTitre: { fontSize: 11, fontWeight: 700, color: COULEUR_PRIMAIRE },
+  enTeteSous: { fontSize: 8, color: COULEUR_GRIS },
 
-  twoCol: { flexDirection: "row", gap: 16, marginVertical: 6 },
+  // COUVERTURE
+  couvLogoBloc: { alignItems: "center", marginTop: 80 },
+  couvNomEntreprise: { fontSize: 14, fontWeight: 700, color: COULEUR_PRIMAIRE, letterSpacing: 2, marginTop: 10 },
+  titreCouv: { fontSize: 26, fontWeight: 700, textAlign: "center", marginTop: 60, color: COULEUR_PRIMAIRE, letterSpacing: 0.5 },
+  sousTitreCouv: { fontSize: 12, fontWeight: 400, textAlign: "center", color: COULEUR_GRIS, marginTop: 4 },
+  ligneCouv: { borderBottom: "0.5pt solid " + COULEUR_PRIMAIRE, marginTop: 30, marginBottom: 30, marginHorizontal: 80 },
+  introCouv: { fontSize: 10, marginHorizontal: 70, textAlign: "center", color: COULEUR_GRIS, lineHeight: 1.6 },
+  nomClient: { fontSize: 16, fontWeight: 700, textAlign: "center", marginTop: 8, color: COULEUR_TEXTE },
+  numContrat: { fontSize: 9, textAlign: "center", color: COULEUR_GRIS_CLAIR, marginTop: 80, letterSpacing: 1 },
+
+  // SECTIONS
+  h1: { fontSize: 13, fontWeight: 700, color: COULEUR_PRIMAIRE, marginTop: 16, marginBottom: 10, paddingBottom: 4, borderBottom: "1pt solid " + COULEUR_PRIMAIRE },
+  h2: { fontSize: 11, fontWeight: 700, color: COULEUR_TEXTE, marginTop: 12, marginBottom: 6 },
+
+  twoCol: { flexDirection: "row", gap: 24, marginVertical: 4 },
   col: { flex: 1 },
 
-  label: { fontSize: 9, color: "#64748b" },
-  valeur: { fontSize: 10, fontWeight: 700, marginBottom: 4 },
+  label: { fontSize: 8, color: COULEUR_GRIS, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
+  valeur: { fontSize: 10, fontWeight: 700, marginBottom: 7, color: COULEUR_TEXTE },
 
-  row: { flexDirection: "row", justifyContent: "space-between", padding: 5, borderBottom: "0.5pt solid #e2e8f0" },
-  rowFort: { flexDirection: "row", justifyContent: "space-between", padding: 6, backgroundColor: "#0f172a", color: "white", marginTop: 4 },
+  row: { flexDirection: "row", justifyContent: "space-between", padding: 8, borderBottom: "0.5pt solid #cbd5e1" },
+  rowFort: { flexDirection: "row", justifyContent: "space-between", padding: 10, backgroundColor: COULEUR_PRIMAIRE, color: "white", marginTop: 6, borderRadius: 3 },
 
-  para: { marginVertical: 3 },
-  puce: { flexDirection: "row", marginVertical: 2 },
-  puceMarque: { width: 12, fontSize: 9 },
-  puceTxt: { flex: 1, fontSize: 9, color: "#334155", lineHeight: 1.4 },
+  para: { marginVertical: 4, fontSize: 10 },
+  paraGras: { fontWeight: 700 },
+  encadre: { padding: 10, backgroundColor: "#f1f5f9", borderLeft: "3pt solid " + COULEUR_PRIMAIRE, marginVertical: 8 },
 
-  sigBloc: { flexDirection: "row", justifyContent: "space-between", marginTop: 30, marginHorizontal: 10 },
-  sigBox: { width: 230 },
-  sigLigne: { borderTop: "1pt solid #0f172a", marginTop: 30, paddingTop: 4 },
-  sigNom: { fontSize: 10, fontWeight: 700 },
-  sigDate: { fontSize: 9, color: "#64748b" },
+  puce: { flexDirection: "row", marginVertical: 4 },
+  puceMarque: { width: 14, fontSize: 9, color: COULEUR_PRIMAIRE, fontWeight: 700 },
+  puceTxt: { flex: 1, fontSize: 9, color: COULEUR_TEXTE, lineHeight: 1.5 },
 
-  footer: { position: "absolute", bottom: 30, left: 40, right: 40, fontSize: 7, color: "#94a3b8", textAlign: "center", borderTop: "0.5pt solid #e2e8f0", paddingTop: 6 },
-  pageNum: { position: "absolute", bottom: 12, right: 40, fontSize: 8, color: "#94a3b8" },
+  sigBloc: { flexDirection: "row", justifyContent: "space-between", marginTop: 40 },
+  sigBox: { width: 220 },
+  sigLigne: { borderTop: "1pt solid " + COULEUR_PRIMAIRE, marginTop: 40, paddingTop: 6 },
+  sigNom: { fontSize: 11, fontWeight: 700, color: COULEUR_PRIMAIRE },
+  sigDate: { fontSize: 9, color: COULEUR_GRIS, marginTop: 2 },
+  sigTitre: { fontSize: 9, color: COULEUR_GRIS, marginBottom: 4, textTransform: "uppercase", letterSpacing: 0.5 },
+
+  // PIED DE PAGE
+  pied: { position: "absolute", bottom: 25, left: 50, right: 50, paddingTop: 8, borderTop: "0.5pt solid #e2e8f0", flexDirection: "row", justifyContent: "space-between" },
+  piedTxt: { fontSize: 7, color: COULEUR_GRIS_CLAIR },
 });
 
-const Logo = ({ size = 44 }: { size?: number }) => (
-  <Svg width={size} height={size * 0.7} viewBox="0 0 400 280">
-    <Path d="M40 180 L360 180 L340 240 L60 240 Z" stroke="#0f172a" strokeWidth={6} fill="none" />
-    <Path d="M200 40 L200 180" stroke="#0f172a" strokeWidth={6} />
-    <Path d="M205 70 L300 100 L300 175 L205 175 Z" fill="#0f172a" />
+// === Logo Drakkar Viking (fidèle au logo officiel : voile + tête de dragon + coque rayée) ===
+const LogoSvg = ({ size = 50 }: { size?: number }) => (
+  <Svg width={size} height={size} viewBox="0 0 200 200">
+    {/* Drapeau au sommet */}
+    <Path d="M100 25 L120 30 L100 38 Z" fill={COULEUR_PRIMAIRE} />
+    {/* Mât */}
+    <Path d="M100 22 L100 135" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
+    {/* Vergue */}
+    <Path d="M62 55 L138 55" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
+    {/* Voile pleine bleu marine */}
+    <Path d="M70 55 L130 55 L130 120 L70 120 Z" fill={COULEUR_PRIMAIRE} />
+    {/* Cordages */}
+    <Path d="M70 55 L40 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    <Path d="M130 55 L160 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    {/* Coque (forme drakkar) */}
+    <Path d="M28 132 L35 130 L165 130 L172 132 L160 165 L150 172 L70 172 L40 165 Z" stroke={COULEUR_PRIMAIRE} strokeWidth={3} fill="none" />
+    {/* Planches horizontales */}
+    <Path d="M50 148 L150 148" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    <Path d="M55 158 L145 158" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    {/* Tête de dragon avant */}
+    <Path d="M168 130 L180 128 L184 120 L188 118 L184 124 L178 131 Z" fill={COULEUR_PRIMAIRE} />
+    <Path d="M186 117 L192 115 L188 122 Z" fill={COULEUR_PRIMAIRE} />
+    {/* Queue arrière recourbée */}
+    <Path d="M32 130 L22 128 L18 120 L14 113 L22 113 L26 124 Z" fill={COULEUR_PRIMAIRE} />
   </Svg>
 );
+
+const Logo = LogoSvg;
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
 
@@ -105,24 +150,38 @@ export function ContratPDF({ c }: { c: ContratData }) {
   return (
     <Document>
       {/* COUVERTURE */}
-      <Page size="LETTER" style={s.page}>
-        <View style={{ marginTop: 60, alignItems: "center" }}><Logo size={70} /></View>
+      <Page size="LETTER" style={s.pageCouv}>
+        <View style={s.couvLogoBloc}>
+          <Logo size={120} />
+          <Text style={s.couvNomEntreprise}>REVÊTEMENT VIKING INC.</Text>
+          <Text style={{ fontSize: 9, color: COULEUR_GRIS, marginTop: 3 }}>RBQ {ENTREPRISE.rbq}</Text>
+        </View>
         <Text style={s.titreCouv}>Contrat de rénovation</Text>
-        <Text style={s.titreCouv}>résidentielle à prix fixe</Text>
+        <Text style={s.sousTitreCouv}>résidentielle à prix fixe</Text>
         <View style={s.ligneCouv} />
         <Text style={s.introCouv}>
-          La présente proposition commerciale contient tous les détails relatifs à la portée du travail, aux tarifs et aux conditions tels que demandés par
+          La présente proposition commerciale contient tous les détails relatifs à la portée du travail, aux tarifs et aux conditions tels que demandés par :
         </Text>
         <Text style={s.nomClient}>{c.client_nom}</Text>
-        <Text style={{ fontSize: 9, textAlign: "center", color: "#94a3b8", marginTop: 60 }}>
-          Contrat n° {c.numero} · {c.date_debut_travaux}
-        </Text>
-        <Text style={s.pageNum} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} fixed />
-        <View style={s.footer} fixed><Text>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq}</Text></View>
+        <Text style={s.numContrat}>CONTRAT N° {c.numero} — DÉBUT DES TRAVAUX : {c.date_debut_travaux}</Text>
+        <View style={s.pied} fixed>
+          <Text style={s.piedTxt}>{ENTREPRISE.nom} · {ENTREPRISE.adresse}, {ENTREPRISE.ville} {ENTREPRISE.code_postal}</Text>
+          <Text style={s.piedTxt}>{ENTREPRISE.telephone} · {ENTREPRISE.courriel}</Text>
+        </View>
       </Page>
 
       {/* IDENTIFICATION DES PARTIES */}
       <Page size="LETTER" style={s.page}>
+        <View style={s.enTete} fixed>
+          <View style={s.enTeteLogo}>
+            <Logo size={26} />
+            <View>
+              <Text style={s.enTeteTitre}>REVÊTEMENT VIKING INC.</Text>
+              <Text style={s.enTeteSous}>Contrat n° {c.numero}</Text>
+            </View>
+          </View>
+          <Text style={s.enTeteSous} render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
+        </View>
         <Text style={s.h1}>1. Identification des parties</Text>
         <View style={s.twoCol}>
           <View style={s.col}>
@@ -198,12 +257,24 @@ export function ContratPDF({ c }: { c: ContratData }) {
             </View>
           </>
         )}
-        <Text style={s.pageNum} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} fixed />
-        <View style={s.footer} fixed><Text>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq}</Text></View>
+        <View style={s.pied} fixed>
+          <Text style={s.piedTxt}>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · {ENTREPRISE.courriel}</Text>
+          <Text style={s.piedTxt}>{ENTREPRISE.telephone}</Text>
+        </View>
       </Page>
 
       {/* DESCRIPTION + PAIEMENT + ASSURANCES */}
       <Page size="LETTER" style={s.page}>
+        <View style={s.enTete} fixed>
+          <View style={s.enTeteLogo}>
+            <Logo size={26} />
+            <View>
+              <Text style={s.enTeteTitre}>REVÊTEMENT VIKING INC.</Text>
+              <Text style={s.enTeteSous}>Contrat n° {c.numero}</Text>
+            </View>
+          </View>
+          <Text style={s.enTeteSous} render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
+        </View>
         <Text style={s.h1}>2. Description des travaux</Text>
         {c.soumission_numero && (
           <Text style={s.para}>Se référer au devis <Text style={{ fontWeight: 700 }}>{c.soumission_numero}</Text>{c.soumission_date ? ` du ${c.soumission_date}` : ""}.</Text>
@@ -235,12 +306,24 @@ export function ContratPDF({ c }: { c: ContratData }) {
             <Text style={s.valeur}>{ASSURANCE.police}</Text>
           </View>
         </View>
-        <Text style={s.pageNum} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} fixed />
-        <View style={s.footer} fixed><Text>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq}</Text></View>
+        <View style={s.pied} fixed>
+          <Text style={s.piedTxt}>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · {ENTREPRISE.courriel}</Text>
+          <Text style={s.piedTxt}>{ENTREPRISE.telephone}</Text>
+        </View>
       </Page>
 
       {/* RESPONSABILITÉS */}
       <Page size="LETTER" style={s.page}>
+        <View style={s.enTete} fixed>
+          <View style={s.enTeteLogo}>
+            <Logo size={26} />
+            <View>
+              <Text style={s.enTeteTitre}>REVÊTEMENT VIKING INC.</Text>
+              <Text style={s.enTeteSous}>Contrat n° {c.numero}</Text>
+            </View>
+          </View>
+          <Text style={s.enTeteSous} render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
+        </View>
         <Text style={s.h1}>5. Responsabilités des clients</Text>
         {[
           "Toutes modifications au plan après signature de ce contrat seront considérées comme des extras et chargées en extra.",
@@ -259,12 +342,24 @@ export function ContratPDF({ c }: { c: ContratData }) {
             <Text style={s.puceTxt}>{txt}</Text>
           </View>
         ))}
-        <Text style={s.pageNum} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} fixed />
-        <View style={s.footer} fixed><Text>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq}</Text></View>
+        <View style={s.pied} fixed>
+          <Text style={s.piedTxt}>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · {ENTREPRISE.courriel}</Text>
+          <Text style={s.piedTxt}>{ENTREPRISE.telephone}</Text>
+        </View>
       </Page>
 
       {/* SIGNATURES */}
       <Page size="LETTER" style={s.page}>
+        <View style={s.enTete} fixed>
+          <View style={s.enTeteLogo}>
+            <Logo size={26} />
+            <View>
+              <Text style={s.enTeteTitre}>REVÊTEMENT VIKING INC.</Text>
+              <Text style={s.enTeteSous}>Contrat n° {c.numero}</Text>
+            </View>
+          </View>
+          <Text style={s.enTeteSous} render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
+        </View>
         <Text style={s.h1}>6. Signatures</Text>
         <Text style={s.para}>
           Votre signature ci-dessous indique que vous acceptez la présente proposition de gestion de projet et que vous concluez un accord contractuel avec {ENTREPRISE.nom} à compter de la date de signature ci-dessous.
@@ -291,9 +386,9 @@ export function ContratPDF({ c }: { c: ContratData }) {
           </View>
         </View>
 
-        <Text style={s.pageNum} render={({ pageNumber, totalPages }) => `${pageNumber} / ${totalPages}`} fixed />
-        <View style={s.footer} fixed>
-          <Text>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · TPS {ENTREPRISE.tps} · TVQ {ENTREPRISE.tvq}</Text>
+        <View style={s.pied} fixed>
+          <Text style={s.piedTxt}>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · TPS {ENTREPRISE.tps} · TVQ {ENTREPRISE.tvq}</Text>
+          <Text style={s.piedTxt}>{ENTREPRISE.courriel} · {ENTREPRISE.telephone}</Text>
         </View>
       </Page>
     </Document>
