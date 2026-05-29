@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+import Lightbox from "@/components/Lightbox";
 
 const STATUTS_LABEL: Record<string, string> = {
   actif: "Actif",
@@ -71,6 +72,7 @@ export default function ProjetDetail() {
   });
   const [selectionH, setSelectionH] = useState<Set<number>>(new Set());
   const [coutDetail, setCoutDetail] = useState(false);
+  const [lightboxId, setLightboxId] = useState<number | null>(null);
   const [hRecherche, setHRecherche] = useState("");
   const [hPeriode, setHPeriode] = useState<string>(""); // "" = toutes, ou "YYYY-MM-DD|YYYY-MM-DD"
   const [fForm, setFForm] = useState({ numero: "", montant: "", date: today, description: "" });
@@ -304,10 +306,9 @@ export default function ProjetDetail() {
                       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
                         {items.map((p: any) => (
                           <div key={p.id} className="relative group">
-                            <a
-                              href={`/api/photos/${p.id}`}
-                              target="_blank"
-                              rel="noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => setLightboxId(p.id)}
                               className="block w-full"
                             >
                               <img
@@ -317,7 +318,7 @@ export default function ProjetDetail() {
                                 decoding="async"
                                 className="w-full aspect-square object-cover rounded border hover:opacity-90"
                               />
-                            </a>
+                            </button>
                             <button
                               onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); charger(); } }}
                               className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
@@ -791,6 +792,20 @@ export default function ProjetDetail() {
           </div>
         )}
       </main>
+
+      {lightboxId !== null && (() => {
+        const liste = photos.map((p: any) => ({ id: p.id, description: p.description, date: p.date }));
+        const idx = liste.findIndex((p) => p.id === lightboxId);
+        if (idx < 0) return null;
+        return (
+          <Lightbox
+            photos={liste}
+            index={idx}
+            onClose={() => setLightboxId(null)}
+            onIndexChange={(i) => setLightboxId(liste[i].id)}
+          />
+        );
+      })()}
     </div>
   );
 }
@@ -935,13 +950,12 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
               ) : (
                 <div className="w-12 h-12 bg-slate-200 rounded flex items-center justify-center text-2xl">📄</div>
               )}
-              <button onClick={() => {
-                const w = window.open();
-                if (w) {
-                  if (projet.facture_finale_type?.startsWith("image/")) w.document.write(`<img src="${projet.facture_finale_data}" style="max-width:100%" />`);
-                  else w.location.href = projet.facture_finale_data;
-                }
-              }} className="flex-1 text-left text-sm text-emerald-700 hover:underline font-semibold">📎 Ouvrir la facture</button>
+              <a
+                href={`/api/projets/${projet.id}/facture`}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 text-left text-sm text-emerald-700 hover:underline font-semibold"
+              >📎 Ouvrir la facture</a>
               <label className="cursor-pointer text-xs text-blue-600 hover:underline">
                 Remplacer
                 <input type="file" accept="image/*,application/pdf" className="hidden" onChange={uploadFacture} />
