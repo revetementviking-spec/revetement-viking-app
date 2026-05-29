@@ -6,7 +6,7 @@ import { useSearchParams } from "next/navigation";
 function LoginForm() {
   const params = useSearchParams();
   const redirect = params.get("redirect") || "/";
-  const [user, setUser] = useState<"Gabriel" | "Francis">("Gabriel");
+  const [user, setUser] = useState<"Gabriel" | "Francis">("Francis");
   const [password, setPassword] = useState("");
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
@@ -42,7 +42,7 @@ function LoginForm() {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Utilisateur</label>
             <div className="grid grid-cols-2 gap-2">
-              {(["Gabriel", "Francis"] as const).map((u) => (
+              {(["Francis", "Gabriel"] as const).map((u) => (
                 <button key={u} type="button" onClick={() => setUser(u)} className={`px-3 py-3 rounded-lg font-bold border-2 transition ${user === u ? "bg-emerald-600 text-white border-emerald-700" : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300"}`}>
                   👤 {u}
                 </button>
