@@ -3,6 +3,7 @@
 import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
+import { calculerMargeProjet, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "soumissions.db");
@@ -586,14 +587,9 @@ export interface ProjetAvecTotaux extends Projet {
 }
 
 function calculerTotaux(r: any): ProjetAvecTotaux {
-  // Le prix de contrat (signé) prime sur le budget estimé (interne)
-  const revenu = r.prix_contrat || r.budget_estime || 0;
-  const cout_total = (r.cout_main_oeuvre || 0) + (r.total_depenses || 0);
-  const marge = revenu - cout_total;
-  const marge_pct = revenu ? (marge / revenu) * 100 : 0;
-  const pct_budget_consomme = revenu ? Math.min(100, (cout_total / revenu) * 100) : 0;
-  // On expose aussi le revenu actif pour affichage clair
-  return { ...r, cout_total, marge, marge_pct, pct_budget_consomme, revenu };
+  // Logique centralisée + testée dans lib/calculs.ts
+  const m = calculerMargeProjet(r);
+  return { ...r, ...m };
 }
 
 // Colonnes projets sans facture_finale_data (blob potentiel de plusieurs MB).
@@ -968,47 +964,9 @@ export interface PaiePeriode {
   paye?: number; date_paiement?: string; note?: string;
 }
 
-/** Retourne le dimanche de la semaine d'une date YYYY-MM-DD */
-function dimancheDe(dateStr: string): Date {
-  const d = new Date(dateStr + "T12:00:00");
-  const jour = d.getDay(); // 0 = dimanche
-  d.setDate(d.getDate() - jour);
-  return d;
-}
-
-/** Calcule la période bi-hebdo (sam→ven × 2) qui contient une date.
- *  Ancrée sur dimanches d'une année de référence (2026-01-04). */
-function periodeBiHebdo(dateStr: string): { debut: string; fin: string } {
-  const ancre = new Date("2026-01-04T12:00:00"); // dimanche de référence
-  const d = new Date(dateStr + "T12:00:00");
-  const diffJours = Math.floor((d.getTime() - ancre.getTime()) / 86400000);
-  const numeroPeriode = Math.floor(diffJours / 14);
-  const debut = new Date(ancre);
-  debut.setDate(ancre.getDate() + numeroPeriode * 14);
-  const fin = new Date(debut);
-  fin.setDate(debut.getDate() + 13);
-  return {
-    debut: debut.toISOString().slice(0, 10),
-    fin: fin.toISOString().slice(0, 10),
-  };
-}
-
-/** Calcule les heures normales/sup d'un ensemble d'heures pour une période bi-hebdo */
-function calculerHeuresPaye(heures: { date: string; heures: number }[], debut: string): { normales: number; sup: number } {
-  // Diviser en 2 semaines
-  const debutDate = new Date(debut + "T12:00:00");
-  const semaine1Fin = new Date(debutDate); semaine1Fin.setDate(debutDate.getDate() + 6);
-  const semaine2Debut = new Date(debutDate); semaine2Debut.setDate(debutDate.getDate() + 7);
-  let h1 = 0, h2 = 0;
-  for (const e of heures) {
-    const d = new Date(e.date + "T12:00:00");
-    if (d <= semaine1Fin) h1 += e.heures;
-    else if (d >= semaine2Debut) h2 += e.heures;
-  }
-  const normales = Math.min(40, h1) + Math.min(40, h2);
-  const sup = Math.max(0, h1 - 40) + Math.max(0, h2 - 40);
-  return { normales, sup };
-}
+// Logique paie centralisée + testée dans lib/calculs.ts
+const periodeBiHebdo = periodeBiHebdoCalc;
+const calculerHeuresPaye = calculerHeuresPayeCalc;
 
 /** Génère/met à jour les périodes de paye à partir des heures saisies.
  *  Retourne la liste des périodes pour un employé donné (ou tous). */
@@ -1040,9 +998,7 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // 3. Pour chaque groupe, calculer et upsert dans paies_periodes
   for (const g of groupes.values()) {
     const { normales, sup } = calculerHeuresPaye(g.heures, g.debut);
-    const brut = normales * g.taux + sup * g.taux * 1.5;
-    const dasMontant = brut * 0.15;
-    const net = brut - dasMontant;
+    const { brut, das: dasMontant, net } = calculerPaye(normales, sup, g.taux, 0.15);
 
     const existant = await one<PaiePeriode>("SELECT * FROM paies_periodes WHERE employe = ? AND debut = ? AND fin = ?", [g.employe, g.debut, g.fin]);
     if (existant) {
