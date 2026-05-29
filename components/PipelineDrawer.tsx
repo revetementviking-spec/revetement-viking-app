@@ -29,16 +29,56 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     notes: client.notes || "",
   });
   const [fichiers, setFichiers] = useState<any[]>([]);
+  const [taches, setTaches] = useState<any[]>([]);
+  const [commentaires, setCommentaires] = useState<any[]>([]);
+  const [nouvelleTache, setNouvelleTache] = useState("");
+  const [nouveauComm, setNouveauComm] = useState("");
   const [uploadEnCours, setUploadEnCours] = useState(false);
   const [busy, setBusy] = useState(false);
   const [moiUtilisateur, setMoiUtilisateur] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement | null>(null);
   const { toast } = useToast();
 
+  const rechargerTaches = () => fetch(`/api/client-taches?client_id=${client.id}`).then((r) => r.json()).then((t) => Array.isArray(t) && setTaches(t)).catch(() => {});
+  const rechargerComm = () => fetch(`/api/client-commentaires?client_id=${client.id}`).then((r) => r.json()).then((c) => Array.isArray(c) && setCommentaires(c)).catch(() => {});
+
   useEffect(() => {
     fetch(`/api/client-fichiers?client_id=${client.id}`).then((r) => r.json()).then((f) => Array.isArray(f) && setFichiers(f)).catch(() => {});
+    rechargerTaches();
+    rechargerComm();
     fetch("/api/auth/me").then((r) => r.json()).then((d) => setMoiUtilisateur(d.user)).catch(() => {});
   }, [client.id]);
+
+  const ajouterTache = async () => {
+    const titre = nouvelleTache.trim();
+    if (!titre) return;
+    await fetch("/api/client-taches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: client.id, titre }) });
+    setNouvelleTache("");
+    rechargerTaches();
+  };
+  const cocherTache = async (t: any) => {
+    await fetch("/api/client-taches", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.id, complete: !t.complete }) });
+    rechargerTaches();
+  };
+  const supprimerTache = async (id: number) => {
+    await fetch(`/api/client-taches?id=${id}`, { method: "DELETE" });
+    rechargerTaches();
+  };
+
+  const posterComm = async () => {
+    const texte = nouveauComm.trim();
+    if (!texte) return;
+    const r = await fetch("/api/client-commentaires", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: client.id, texte }) });
+    const d = await r.json();
+    setNouveauComm("");
+    rechargerComm();
+    if (d.mentions && d.mentions.length) toast(`📧 Courriel envoyé à @${d.mentions.join(", @")}`, "success");
+  };
+  const supprimerComm = async (id: number) => {
+    if (!confirm("Supprimer ce commentaire ?")) return;
+    await fetch(`/api/client-commentaires?id=${id}`, { method: "DELETE" });
+    rechargerComm();
+  };
 
   const sauver = async () => {
     setBusy(true);
@@ -176,10 +216,62 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             )}
           </section>
 
-          {/* Notes / @mention */}
+          {/* Notes */}
           <section>
-            <label className="block text-xs font-medium text-slate-600 mb-1">📝 Notes (utilise @Gabriel ou @Francis pour mentionner)</label>
-            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={4} placeholder="Détails, suivi, prochaines actions…" className="w-full px-3 py-2 border rounded text-sm" />
+            <label className="block text-xs font-medium text-slate-600 mb-1">📝 Notes</label>
+            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} placeholder="Détails internes du dossier…" className="w-full px-3 py-2 border rounded text-sm" />
+          </section>
+
+          {/* SOUS-TÂCHES (checklist) */}
+          <section>
+            <label className="block text-xs font-medium text-slate-600 mb-1">✅ Sous-tâches ({taches.filter((t) => t.complete).length}/{taches.length})</label>
+            <div className="flex gap-2 mb-2">
+              <input type="text" value={nouvelleTache} onChange={(e) => setNouvelleTache(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ajouterTache()} placeholder="Nouvelle sous-tâche…" className="flex-1 px-3 py-2 border rounded text-sm" />
+              <button onClick={ajouterTache} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">＋</button>
+            </div>
+            {taches.length > 0 && (
+              <ul className="space-y-1">
+                {taches.map((t) => (
+                  <li key={t.id} className="flex items-center gap-2 bg-slate-50 rounded p-2">
+                    <input type="checkbox" checked={!!t.complete} onChange={() => cocherTache(t)} className="w-4 h-4" />
+                    <span className={`flex-1 text-sm ${t.complete ? "line-through text-slate-400" : "text-slate-800"}`}>{t.titre}</span>
+                    <button onClick={() => supprimerTache(t.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* COMMENTAIRES (fil) */}
+          <section>
+            <label className="block text-xs font-medium text-slate-600 mb-1">💬 Fil de discussion ({commentaires.length})</label>
+            <div className="space-y-2 mb-2 max-h-64 overflow-y-auto">
+              {commentaires.map((c) => {
+                const aMention = c.mentions ? String(c.mentions).split(",") : [];
+                return (
+                  <div key={c.id} className="bg-slate-50 border-l-4 border-emerald-400 rounded p-2 text-sm">
+                    <div className="flex justify-between items-start gap-2">
+                      <strong className="text-emerald-800">👤 {c.auteur || "—"}</strong>
+                      <span className="text-[10px] text-slate-500">{new Date(c.date_creation).toLocaleString("fr-CA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                    </div>
+                    <div className="text-slate-800 whitespace-pre-wrap mt-0.5">
+                      {String(c.texte).split(/(@Gabriel|@Francis)/gi).map((part, i) =>
+                        /^@(Gabriel|Francis)$/i.test(part)
+                          ? <span key={i} className="bg-yellow-100 text-yellow-900 font-bold px-1 rounded">{part}</span>
+                          : <span key={i}>{part}</span>
+                      )}
+                    </div>
+                    {aMention.length > 0 && <div className="text-[10px] text-emerald-700 mt-1">📧 Envoyé à @{aMention.join(", @")}</div>}
+                    <button onClick={() => supprimerComm(c.id)} className="text-[10px] text-red-600 hover:underline mt-1">Supprimer</button>
+                  </div>
+                );
+              })}
+              {commentaires.length === 0 && <p className="text-xs text-slate-400 italic">Aucun commentaire. Lance la discussion ↓</p>}
+            </div>
+            <div className="flex gap-2">
+              <textarea value={nouveauComm} onChange={(e) => setNouveauComm(e.target.value)} rows={2} placeholder="Ajouter un commentaire… @Gabriel ou @Francis pour notifier par courriel" className="flex-1 px-3 py-2 border rounded text-sm" />
+              <button onClick={posterComm} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold self-stretch">Poster</button>
+            </div>
           </section>
 
           {/* Fichiers — zone de drop */}

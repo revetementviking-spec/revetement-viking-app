@@ -114,6 +114,7 @@ export async function proxy(req: NextRequest) {
     path.startsWith("/api/login") ||
     estAssetPublic(path) ||
     (path === "/api/backup" && req.method === "GET") ||      // cron Vercel (route exige CRON_SECRET)
+    (path === "/api/relances/email" && req.method === "GET") || // cron Vercel relances (CRON_SECRET aussi)
     path === "/api/ping" ||                                   // réchauffement anti cold-start (public, sans données)
     path.startsWith("/soumission/") ||                        // signature publique (token HMAC)
     path === "/api/soumission-publique"

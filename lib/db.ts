@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -86,6 +86,21 @@ async function doInitDb() {
     data TEXT NOT NULL, ajoute_par TEXT, date_ajout TEXT NOT NULL
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_client_fichiers_cli ON client_fichiers(client_id, date_ajout DESC)");
+  // Sous-tâches d'une carte pipeline (checklist style Asana)
+  await tryExec(`CREATE TABLE IF NOT EXISTS client_taches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL, titre TEXT NOT NULL,
+    complete INTEGER DEFAULT 0, assignee TEXT, ordre INTEGER DEFAULT 0,
+    date_creation TEXT NOT NULL, date_completion TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_client_taches_cli ON client_taches(client_id, ordre)");
+  // Fil de commentaires
+  await tryExec(`CREATE TABLE IF NOT EXISTS client_commentaires (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL, auteur TEXT, texte TEXT NOT NULL,
+    mentions TEXT, date_creation TEXT NOT NULL
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_client_comm_cli ON client_commentaires(client_id, date_creation DESC)");
   // Audit : qui a fait l'action ?
   await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
@@ -737,6 +752,58 @@ export async function ajouterFichierClient(f: { client_id: number; nom: string; 
 }
 export async function supprimerFichierClient(id: number): Promise<void> {
   await run("DELETE FROM client_fichiers WHERE id = ?", [id]);
+}
+
+// === SOUS-TÂCHES (checklist d'une carte pipeline) ===
+export async function listerTachesClient(client_id: number): Promise<any[]> {
+  return await all<any>("SELECT * FROM client_taches WHERE client_id = ? ORDER BY ordre, id", [client_id]);
+}
+export async function ajouterTacheClient(client_id: number, titre: string, assignee?: string): Promise<number> {
+  const o = (await one<{ n: number }>("SELECT COALESCE(MAX(ordre),0)+1 as n FROM client_taches WHERE client_id = ?", [client_id]))?.n || 1;
+  const r = await run(
+    "INSERT INTO client_taches (client_id, titre, complete, assignee, ordre, date_creation) VALUES (?, ?, 0, ?, ?, ?)",
+    [client_id, titre.trim(), assignee || null, o, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function modifierTacheClient(id: number, champs: { titre?: string; complete?: boolean; assignee?: string | null }): Promise<void> {
+  const sets: string[] = [], args: any[] = [];
+  if (champs.titre !== undefined) { sets.push("titre = ?"); args.push(champs.titre); }
+  if (champs.complete !== undefined) { sets.push("complete = ?"); sets.push("date_completion = ?"); args.push(champs.complete ? 1 : 0); args.push(champs.complete ? new Date().toISOString() : null); }
+  if (champs.assignee !== undefined) { sets.push("assignee = ?"); args.push(champs.assignee || null); }
+  if (!sets.length) return;
+  args.push(id);
+  await run(`UPDATE client_taches SET ${sets.join(", ")} WHERE id = ?`, args);
+}
+export async function supprimerTacheClient(id: number): Promise<void> {
+  await run("DELETE FROM client_taches WHERE id = ?", [id]);
+}
+
+// === COMMENTAIRES (fil de discussion) ===
+export async function listerCommentairesClient(client_id: number): Promise<any[]> {
+  return await all<any>("SELECT * FROM client_commentaires WHERE client_id = ? ORDER BY date_creation ASC", [client_id]);
+}
+export async function ajouterCommentaireClient(c: { client_id: number; auteur: string | null; texte: string; mentions?: string[] }): Promise<number> {
+  const r = await run(
+    "INSERT INTO client_commentaires (client_id, auteur, texte, mentions, date_creation) VALUES (?, ?, ?, ?, ?)",
+    [c.client_id, c.auteur, c.texte, (c.mentions && c.mentions.length) ? c.mentions.join(",") : null, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function supprimerCommentaireClient(id: number): Promise<void> {
+  await run("DELETE FROM client_commentaires WHERE id = ?", [id]);
+}
+
+// === RELANCES — clients dont la date de relance est due ===
+export async function relancesDues(): Promise<{ id: number; nom: string; courriel?: string; telephone?: string; adresse?: string; pipeline_stage?: string; assignee?: string; date_relance: string }[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  return await all<any>(
+    `SELECT id, nom, courriel, telephone, adresse, pipeline_stage, assignee, date_relance
+     FROM clients
+     WHERE date_relance IS NOT NULL AND date_relance != '' AND date_relance <= ?
+     ORDER BY date_relance ASC`,
+    [today]
+  );
 }
 
 // === CATÉGORIES DE DÉPENSES ===
