@@ -180,12 +180,22 @@ ${VIKING_EMAIL}
   const changerStatut = async (nouveauStatut: string) => {
     await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, statut: nouveauStatut }) });
     toast(`Statut → ${STATUTS_LABEL[nouveauStatut]}`, "success");
-    // Projet complété → proposer l'envoi automatique du courriel de demande d'avis Google
+    // Projet complété → envoi du courriel de demande d'avis Google
     if (nouveauStatut === "complete") {
       const courriel = projet?.client_courriel;
       if (courriel) {
         if (confirm(`Projet complété ✅\n\nEnvoyer un courriel de demande d'avis Google à ${courriel} ?`)) {
-          envoyerDemandeReview(courriel, projet?.client_nom);
+          // 1. Tente l'envoi serveur automatique (Gmail SMTP)
+          let envoye = false;
+          try {
+            const r = await fetch("/api/email/review", {
+              method: "POST", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ projet_id: id }),
+            }).then((x) => x.json());
+            if (r.ok) { toast(`✓ Courriel d'avis envoyé à ${courriel}`, "success"); envoye = true; }
+          } catch {}
+          // 2. Sinon (SMTP non configuré) → ouvre le client mail pré-rempli
+          if (!envoye) envoyerDemandeReview(courriel, projet?.client_nom);
         }
       } else {
         toast("Projet complété. Aucun courriel client enregistré pour la demande d'avis.", "info");
