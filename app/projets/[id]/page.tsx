@@ -6,6 +6,7 @@ import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import Lightbox from "@/components/Lightbox";
+import { getProjetPrefetch, setProjetPrefetch } from "@/lib/prefetchProjet";
 
 const STATUTS_LABEL: Record<string, string> = {
   actif: "Actif",
@@ -33,10 +34,12 @@ export default function ProjetDetail() {
   const id = +(params.id as string);
   const { toast } = useToast();
 
-  const [projet, setProjet] = useState<any>(null);
-  const [heures, setHeures] = useState<any[]>([]);
-  const [depenses, setDepenses] = useState<any[]>([]);
-  const [photos, setPhotos] = useState<any[]>([]);
+  // Affichage instantané si les données ont été préchargées au survol/toucher de la carte
+  const seed = typeof window !== "undefined" ? getProjetPrefetch(id) : null;
+  const [projet, setProjet] = useState<any>(seed?.projet || null);
+  const [heures, setHeures] = useState<any[]>(seed?.heures || []);
+  const [depenses, setDepenses] = useState<any[]>(seed?.depenses || []);
+  const [photos, setPhotos] = useState<any[]>(seed?.photos || []);
   const [onglet, setOnglet] = useState<"heures" | "depenses" | "photos" | "description">("heures");
 
   // Forms
@@ -67,6 +70,7 @@ export default function ProjetDetail() {
       setHeures(d.heures || []);
       setDepenses(d.depenses || []);
       setPhotos(d.photos || []);
+      setProjetPrefetch(id, d); // garde le cache à jour pour les retours rapides
     } catch {
       // Repli : anciennes requêtes séparées si l'endpoint combiné échoue
       const noStore = { cache: "no-store" as RequestCache };

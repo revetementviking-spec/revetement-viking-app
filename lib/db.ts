@@ -311,7 +311,22 @@ async function one<T = any>(sql: string, args: any[] = []): Promise<T | null> {
 async function run(sql: string, args: any[] = []): Promise<{ lastInsertRowid: number; rowsAffected: number }> {
   await initDb();
   const r = await exec(sql, args);
+  _lastWrite = Date.now(); // invalide les caches de lecture (voir cacheLecture)
   return { lastInsertRowid: Number(r.lastInsertRowid || 0), rowsAffected: r.rowsAffected };
+}
+
+// === CACHE MÉMOIRE COURT pour requêtes de liste lourdes ===
+// Sert le résultat caché uniquement si AUCUNE écriture depuis sa construction
+// (toute écriture via run() avance _lastWrite) ET âge < TTL. Donc jamais de
+// donnée périmée après une modification, mais lectures répétées instantanées.
+let _lastWrite = 0;
+const _cache = new Map<string, { builtAt: number; data: any }>();
+async function cacheLecture<T>(cle: string, ttlMs: number, producteur: () => Promise<T>): Promise<T> {
+  const e = _cache.get(cle);
+  if (e && e.builtAt >= _lastWrite && Date.now() - e.builtAt < ttlMs) return e.data as T;
+  const data = await producteur();
+  _cache.set(cle, { builtAt: Date.now(), data });
+  return data;
 }
 
 // === TYPES ===
@@ -653,12 +668,16 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
 
 export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]> {
-  let sql = PROJ_SQL;
-  const args: any[] = [];
-  if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
-  sql += ` ORDER BY p.date_creation DESC`;
-  const rows = await all<any>(sql, args);
-  return rows.map(calculerTotaux);
+  // Cache court (10 s) invalidé par toute écriture — la liste (PROJ_SQL = 5 sous-requêtes
+  // par projet) est l'une des plus lourdes ; les ouvertures répétées deviennent instantanées.
+  return cacheLecture(`projets:${statut || "all"}`, 10000, async () => {
+    let sql = PROJ_SQL;
+    const args: any[] = [];
+    if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
+    sql += ` ORDER BY p.date_creation DESC`;
+    const rows = await all<any>(sql, args);
+    return rows.map(calculerTotaux);
+  });
 }
 export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
   // PERF : on ne charge PAS les blobs facture/contrat (plusieurs Mo) dans le JSON.

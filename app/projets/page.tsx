@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatCAD } from "@/lib/calculateur";
+import { prefetchProjet } from "@/lib/prefetchProjet";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
@@ -168,7 +169,7 @@ export default function ProjetsPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {projetsAffiches.map((p) => (
-              <Link key={p.id} href={`/projets/${p.id}`} prefetch className="bg-white rounded-lg shadow hover:shadow-lg transition p-4 space-y-2">
+              <Link key={p.id} href={`/projets/${p.id}`} prefetch onMouseEnter={() => prefetchProjet(p.id)} onTouchStart={() => prefetchProjet(p.id)} className="bg-white rounded-lg shadow hover:shadow-lg transition p-4 space-y-2">
                 <div className="flex justify-between items-start gap-2">
                   <div className="min-w-0 flex-1">
                     {p.numero && <div className="text-[10px] font-mono text-indigo-600 font-bold">{p.numero}</div>}

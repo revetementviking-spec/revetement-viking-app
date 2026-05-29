@@ -52,8 +52,20 @@ export async function compresserImage(file: File): Promise<string> {
   });
 }
 
-/** Génère une VIGNETTE (max 400px, qualité 0.6) — ~10-30 ko.
- *  Affiche les grilles de photos sans télécharger les images pleine taille.
+/** Détecte le support WebP du navigateur (encodage canvas). Mémoïsé. */
+let _webpOk: boolean | null = null;
+function supporteWebp(): boolean {
+  if (_webpOk !== null) return _webpOk;
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    _webpOk = c.toDataURL("image/webp").startsWith("data:image/webp");
+  } catch { _webpOk = false; }
+  return _webpOk;
+}
+
+/** Génère une VIGNETTE (max 400px) — WebP si supporté (~40% plus léger que JPEG),
+ *  sinon JPEG. Affiche les grilles de photos sans télécharger les images pleine taille.
  *  Retourne null pour PDF/vidéos. */
 export async function genererVignette(file: File, maxDim = 400, qualite = 0.6): Promise<string | null> {
   if (!file.type.startsWith("image/")) return null;
@@ -76,7 +88,8 @@ export async function genererVignette(file: File, maxDim = 400, qualite = 0.6): 
       const ctx = canvas.getContext("2d");
       if (!ctx) return resolve(null);
       ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/jpeg", qualite));
+      const mime = supporteWebp() ? "image/webp" : "image/jpeg";
+      resolve(canvas.toDataURL(mime, qualite));
     };
     img.onerror = () => resolve(null);
     img.src = dataUrl;
