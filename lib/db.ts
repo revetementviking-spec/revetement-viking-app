@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -111,6 +111,19 @@ async function doInitDb() {
   )`);
   // Badge "Reno assistance" sur les projets (visible dans la liste + détail)
   await tryExec("ALTER TABLE projets ADD COLUMN reno_assistance INTEGER DEFAULT 0");
+  // Contrats générés depuis le pipeline (avec signature en ligne par token public)
+  await tryExec(`CREATE TABLE IF NOT EXISTS pipeline_contrats (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL,
+    numero TEXT, token TEXT UNIQUE NOT NULL,
+    data_json TEXT NOT NULL,
+    pdf_brouillon TEXT, pdf_signe TEXT,
+    signature_dataurl TEXT, signature_nom TEXT, signature_date TEXT, signature_ip TEXT,
+    statut TEXT DEFAULT 'brouillon',
+    cree_par TEXT, date_creation TEXT NOT NULL, date_envoye TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_pipe_contrats_cli ON pipeline_contrats(client_id, date_creation DESC)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_pipe_contrats_token ON pipeline_contrats(token)");
   // Audit : qui a fait l'action ?
   await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
@@ -757,6 +770,48 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id), 0) as total_facture,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id AND payee = 1), 0) as total_paye
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
+
+// === CONTRATS PIPELINE (avec signature en ligne) ===
+export async function creerContratPipeline(p: {
+  client_id: number; numero: string; token: string;
+  data_json: any; pdf_brouillon: string; cree_par?: string;
+}): Promise<number> {
+  const r = await run(
+    `INSERT INTO pipeline_contrats (client_id, numero, token, data_json, pdf_brouillon, cree_par, date_creation, statut)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'brouillon')`,
+    [p.client_id, p.numero, p.token, JSON.stringify(p.data_json), p.pdf_brouillon, p.cree_par || null, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function listerContratsParClient(client_id: number): Promise<any[]> {
+  return await all<any>(
+    "SELECT id, client_id, numero, token, statut, signature_nom, signature_date, cree_par, date_creation, date_envoye, (pdf_signe IS NOT NULL) as a_signe FROM pipeline_contrats WHERE client_id = ? ORDER BY date_creation DESC",
+    [client_id]
+  );
+}
+export async function getContratPipelineParToken(token: string): Promise<any | null> {
+  return await one<any>("SELECT * FROM pipeline_contrats WHERE token = ?", [token]);
+}
+export async function getPDFContratPipeline(token: string, signe = false): Promise<string | null> {
+  const r = await one<any>(`SELECT ${signe ? "pdf_signe" : "pdf_brouillon"} as pdf FROM pipeline_contrats WHERE token = ?`, [token]);
+  return r?.pdf || null;
+}
+export async function signerContratPipeline(token: string, p: {
+  signature_dataurl: string; signature_nom: string; pdf_signe: string; ip?: string;
+}): Promise<boolean> {
+  const r = await run(
+    `UPDATE pipeline_contrats SET signature_dataurl=?, signature_nom=?, signature_date=?, signature_ip=?, pdf_signe=?, statut='signe'
+     WHERE token = ? AND statut != 'signe'`,
+    [p.signature_dataurl, p.signature_nom, new Date().toISOString(), p.ip || null, p.pdf_signe, token]
+  );
+  return r.rowsAffected > 0;
+}
+export async function marquerContratEnvoye(id: number) {
+  await run("UPDATE pipeline_contrats SET statut='envoye', date_envoye=? WHERE id=? AND statut='brouillon'", [new Date().toISOString(), id]);
+}
+export async function supprimerContratPipeline(id: number) {
+  await run("DELETE FROM pipeline_contrats WHERE id = ?", [id]);
+}
 
 // === FICHIERS ATTACHÉS AUX CLIENTS (pipeline Asana-style) ===
 export async function listerFichiersClient(client_id: number): Promise<any[]> {

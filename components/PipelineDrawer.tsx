@@ -32,6 +32,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   const [fichiers, setFichiers] = useState<any[]>([]);
   const [taches, setTaches] = useState<any[]>([]);
   const [commentaires, setCommentaires] = useState<any[]>([]);
+  const [contrats, setContrats] = useState<any[]>([]);
   const [nouvelleTache, setNouvelleTache] = useState("");
   const [nouveauComm, setNouveauComm] = useState("");
   const [uploadEnCours, setUploadEnCours] = useState(false);
@@ -42,11 +43,13 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
 
   const rechargerTaches = () => fetch(`/api/client-taches?client_id=${client.id}`).then((r) => r.json()).then((t) => Array.isArray(t) && setTaches(t)).catch(() => {});
   const rechargerComm = () => fetch(`/api/client-commentaires?client_id=${client.id}`).then((r) => r.json()).then((c) => Array.isArray(c) && setCommentaires(c)).catch(() => {});
+  const rechargerContrats = () => fetch(`/api/contrats-pipeline?client_id=${client.id}`).then((r) => r.json()).then((cs) => Array.isArray(cs) && setContrats(cs)).catch(() => {});
 
   useEffect(() => {
     fetch(`/api/client-fichiers?client_id=${client.id}`).then((r) => r.json()).then((f) => Array.isArray(f) && setFichiers(f)).catch(() => {});
     rechargerTaches();
     rechargerComm();
+    rechargerContrats();
     fetch("/api/auth/me").then((r) => r.json()).then((d) => setMoiUtilisateur(d.user)).catch(() => {});
   }, [client.id]);
 
@@ -126,7 +129,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   };
 
   const genererContrat = async () => {
-    const prixStr = prompt(`Prix total du contrat pour « ${form.nom} » (avant ou avec taxes selon ton habitude) :`, "");
+    const prixStr = prompt(`Prix total du contrat pour « ${form.nom} » (incluant taxes ou non, comme tu veux) :`, "");
     if (prixStr === null) return;
     const prix = parseFloat(prixStr.replace(",", ".")) || 0;
     const dateStr = prompt("Date de début des travaux (ex: 15 juin 2026) :", "");
@@ -138,9 +141,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
 
     try {
       const { genererContratBlob } = await import("@/lib/pdf-contrat");
-      const numero = `C-${new Date().getFullYear()}-${String(client.id).padStart(3, "0")}`;
-      const blob = await genererContratBlob({
-        numero,
+      const data = {
         charge_projet: moiUtilisateur || "Francis Quinchon",
         client_nom: form.nom,
         client_adresse: form.adresse,
@@ -153,17 +154,73 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
         prix_total: prix,
         depot_pct: depot,
         notes_travaux: form.notes,
+      };
+      const blob = await genererContratBlob(data);
+      // Convertit en data URL et sauvegarde côté serveur
+      const pdf64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result as string);
+        r.onerror = rej;
+        r.readAsDataURL(blob);
       });
+      const r = await fetch("/api/contrats-pipeline", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: client.id, data_json: data, pdf_brouillon: pdf64 }),
+      });
+      const d = await r.json();
+      if (!d.ok) { toast("Erreur sauvegarde", "error"); return; }
+      rechargerContrats();
+      // Téléchargement local du brouillon
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Contrat-${numero}-${form.nom.replace(/[^a-z0-9]/gi, "_")}.pdf`;
+      a.download = `Contrat-${d.numero}-${form.nom.replace(/[^a-z0-9]/gi, "_")}.pdf`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast(`📝 Contrat ${numero} généré`, "success");
+      // Copie le lien de signature
+      const lien = `${window.location.origin}/contrat/${d.token}`;
+      try { await navigator.clipboard.writeText(lien); } catch {}
+      toast(`📝 Contrat ${d.numero} créé — lien de signature copié`, "success");
     } catch (e: any) {
       toast("Erreur génération PDF : " + (e?.message || ""), "error");
     }
+  };
+
+  const ouvrirContratPublic = (token: string) => {
+    window.open(`/contrat/${token}`, "_blank", "noreferrer");
+  };
+
+  const copierLienContrat = async (token: string) => {
+    const lien = `${window.location.origin}/contrat/${token}`;
+    try { await navigator.clipboard.writeText(lien); toast("📋 Lien copié", "success"); } catch { toast("Copie impossible", "error"); }
+  };
+
+  const envoyerContratParMail = (c: any) => {
+    if (!form.courriel) { toast("Aucun courriel client pour cette fiche", "warning"); return; }
+    const lien = `${window.location.origin}/contrat/${c.token}`;
+    const sujet = `Contrat à signer — Revêtement Viking Inc. (${c.numero})`;
+    const corps = `Bonjour ${form.nom},
+
+Vous trouverez ci-dessous le lien sécurisé pour consulter et signer votre contrat de rénovation :
+
+${lien}
+
+Merci de prendre le temps de le lire attentivement avant de le signer. Une copie signée vous sera renvoyée automatiquement.
+
+Cordialement,
+
+Revêtement Viking Inc.
+revetementviking@gmail.com
+(438) 493-2041`;
+    window.location.href = `mailto:${form.courriel}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
+    fetch("/api/contrats-pipeline", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: c.id, action: "envoye" }) }).then(rechargerContrats);
+  };
+
+  const supprimerContrat = async (id: number) => {
+    if (!confirm("Supprimer ce contrat ? (Le lien de signature deviendra invalide.)")) return;
+    await fetch(`/api/contrats-pipeline?id=${id}`, { method: "DELETE" });
+    toast("Contrat supprimé", "info");
+    rechargerContrats();
   };
 
   const supprimerFiche = async () => {
@@ -339,6 +396,43 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
               className="w-full px-3 py-2 border rounded text-sm font-mono"
             />
           </section>
+
+          {/* CONTRATS générés (avec lien de signature) */}
+          {contrats.length > 0 && (
+            <section>
+              <label className="block text-xs font-medium text-slate-600 mb-1">📝 Contrats ({contrats.length})</label>
+              <ul className="space-y-1.5">
+                {contrats.map((co) => (
+                  <li key={co.id} className={`bg-white border rounded p-2 text-xs ${co.statut === "signe" ? "border-emerald-300" : "border-slate-200"}`}>
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-slate-900">{co.numero}</div>
+                        <div className="text-[10px] text-slate-500">
+                          {co.statut === "signe"
+                            ? <>✅ Signé par <strong>{co.signature_nom}</strong> le {new Date(co.signature_date).toLocaleDateString("fr-CA")}</>
+                            : co.statut === "envoye"
+                              ? <>📧 Envoyé le {co.date_envoye ? new Date(co.date_envoye).toLocaleDateString("fr-CA") : "—"}</>
+                              : <>📄 Brouillon créé le {new Date(co.date_creation).toLocaleDateString("fr-CA")}</>
+                          }
+                        </div>
+                      </div>
+                      <div className="flex gap-1 flex-wrap">
+                        <a href={`/api/contrats-pipeline/${co.token}/pdf${co.statut === "signe" ? "?signe=1" : ""}`} target="_blank" rel="noreferrer" className="px-2 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[10px] font-bold">📄 PDF</a>
+                        <button onClick={() => copierLienContrat(co.token)} className="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-[10px] font-bold">🔗 Lien</button>
+                        {co.statut !== "signe" && (
+                          <>
+                            <button onClick={() => ouvrirContratPublic(co.token)} className="px-2 py-1 bg-amber-500 hover:bg-amber-400 text-white rounded text-[10px] font-bold" title="Ouvrir la page publique de signature">👁 Voir</button>
+                            <button onClick={() => envoyerContratParMail(co)} className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[10px] font-bold" title="Envoyer le lien au client par mail">📧 Mail</button>
+                          </>
+                        )}
+                        <button onClick={() => supprimerContrat(co.id)} className="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-[10px]">🗑</button>
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {/* SOUS-TÂCHES (checklist) */}
           <section>

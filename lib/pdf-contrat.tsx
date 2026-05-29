@@ -1,4 +1,4 @@
-import { Document, Page, Text, View, StyleSheet, pdf, Svg, Path } from "@react-pdf/renderer";
+import { Document, Page, Text, View, StyleSheet, pdf, Svg, Path, Image } from "@react-pdf/renderer";
 
 const ENTREPRISE = {
   nom: "Revêtement Viking Inc.",
@@ -42,6 +42,7 @@ export interface ContratData {
   notes_travaux?: string;
   signature_entrepreneur?: { nom: string; date: string };
   signature_client?: { nom: string; date: string };
+  signature_client_image?: string;                 // dataURL PNG dessinée par le client
 }
 
 const s = StyleSheet.create({
@@ -280,6 +281,9 @@ export function ContratPDF({ c }: { c: ContratData }) {
           </View>
           <View style={s.sigBox}>
             <Text style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>Pour le client</Text>
+            {c.signature_client_image && (
+              <Image src={c.signature_client_image} style={{ width: 200, height: 60, marginBottom: -20, alignSelf: "flex-start" }} />
+            )}
             <View style={s.sigLigne}>
               <Text style={s.sigNom}>{c.signature_client?.nom || c.client_nom}</Text>
               <Text style={s.sigDate}>{c.signature_client?.date || "Date : ____ / ____ / ________"}</Text>
@@ -326,6 +330,7 @@ export async function genererContratBlob(brut: any): Promise<Blob> {
     notes_travaux: brut.notes_travaux || brut.description_travaux || brut.conditions,
     signature_entrepreneur: brut.signature_entrepreneur,
     signature_client: brut.signature_client,
+    signature_client_image: brut.signature_client_image,
   };
   return await pdf(<ContratPDF c={c} />).toBlob();
 }

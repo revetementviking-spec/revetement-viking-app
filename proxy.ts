@@ -117,7 +117,9 @@ export async function proxy(req: NextRequest) {
     (path === "/api/relances/email" && req.method === "GET") || // cron Vercel relances (CRON_SECRET aussi)
     path === "/api/ping" ||                                   // réchauffement anti cold-start (public, sans données)
     path.startsWith("/soumission/") ||                        // signature publique (token HMAC)
-    path === "/api/soumission-publique"
+    path === "/api/soumission-publique" ||
+    path.startsWith("/contrat/") ||                            // page publique de signature du contrat pipeline
+    /^\/api\/contrats-pipeline\/[^/]+(\/pdf)?$/.test(path)     // GET infos + GET PDF + POST signature (token = secret)
   ) {
     return avecHeaders(NextResponse.next());
   }
