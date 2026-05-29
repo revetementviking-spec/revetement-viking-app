@@ -50,7 +50,7 @@ async function tryExec(sql: string): Promise<void> {
 
 export async function initDb() {
   if (_initialized) return;
-  if (!_initPromise) _initPromise = doInitDb();
+  if (!_initPromise) _initPromise = doInitDb().catch((e) => { _initPromise = null; throw e; });
   await _initPromise;
 }
 
@@ -61,6 +61,9 @@ async function doInitDb() {
     const cur = Number((r.rows?.[0] as any)?.user_version ?? 0);
     if (cur >= SCHEMA_VERSION) { _initialized = true; return; }
   } catch { /* PRAGMA indisponible → on exécute les migrations par sécurité */ }
+  // IMPORTANT : marquer initialisé AVANT les migrations. Le backfill ci-dessous
+  // appelle all()/run() qui re-appellent initDb() → sans ce flag, deadlock sur _initPromise.
+  _initialized = true;
   // Migrations idempotentes pour les anciennes installations
   await tryExec("ALTER TABLE clients ADD COLUMN statut TEXT DEFAULT 'prospect'");
   await tryExec("ALTER TABLE clients ADD COLUMN source TEXT");
