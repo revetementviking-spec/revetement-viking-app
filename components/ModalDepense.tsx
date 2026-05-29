@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
 import { compresserImage } from "@/lib/img";
+
+const ScannerRecu = lazy(() => import("@/components/ScannerRecu"));
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
 const CATEGORIES_FALLBACK = ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
@@ -16,6 +18,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
   const [fournisseursConnus, setFournisseursConnus] = useState<string[]>([]);
   const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: CATEGORIES_FALLBACK[0] });
   const [recu, setRecu] = useState<{ data: string; type: string; nom: string } | null>(null);
+  const [scannerOuvert, setScannerOuvert] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
 
@@ -25,8 +28,24 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
       const data = await compresserImage(file);
       const type = file.type === "application/pdf" ? file.type : "image/jpeg";
       setRecu({ data, type, nom: file.name });
+      // Ouvre automatiquement le scanner pour cadrer + filtrer + OCR (uniquement pour les images)
+      if (type.startsWith("image/")) setScannerOuvert(true);
     } catch (e: any) {
       toast("Erreur : " + e.message, "error");
+    }
+  };
+
+  const confirmerScan = (image: string, type: string, donnees?: { montant?: number; date?: string; fournisseur?: string }) => {
+    setRecu({ data: image, type, nom: recu?.nom || "recu-scan.jpg" });
+    setScannerOuvert(false);
+    if (donnees) {
+      setForm((f) => ({
+        ...f,
+        montant: donnees.montant !== undefined && !f.montant ? String(donnees.montant.toFixed(2)) : f.montant,
+        date: donnees.date && !f.date ? donnees.date : f.date,
+        fournisseur: donnees.fournisseur && !f.fournisseur ? donnees.fournisseur : f.fournisseur,
+      }));
+      if (donnees.montant || donnees.date || donnees.fournisseur) toast("✓ Formulaire pré-rempli depuis l'OCR", "success");
     }
   };
 
@@ -164,6 +183,9 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
                   <div className="text-xs font-semibold truncate">{recu.nom}</div>
                   <div className="text-[10px] text-slate-500">{(recu.data.length * 0.75 / 1024).toFixed(0)} ko</div>
                 </div>
+                {recu.type.startsWith("image/") && (
+                  <button onClick={() => setScannerOuvert(true)} className="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded font-bold" title="Cadrer · Filtrer · OCR">📄 Scanner</button>
+                )}
                 <button onClick={() => setRecu(null)} className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-sm">✕</button>
               </div>
             ) : (
@@ -182,6 +204,16 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
             )}
           </div>
         </div>
+
+        {scannerOuvert && recu && recu.type.startsWith("image/") && (
+          <Suspense fallback={null}>
+            <ScannerRecu
+              imageOriginale={recu.data}
+              onClose={() => setScannerOuvert(false)}
+              onConfirmer={confirmerScan}
+            />
+          </Suspense>
+        )}
     </BottomSheet>
   );
 }

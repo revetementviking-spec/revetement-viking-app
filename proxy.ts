@@ -22,11 +22,14 @@ async function signToken(secret: string): Promise<string> {
 // - img-src data:/blob: pour aperçus base64 + binaires
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  // Tesseract.js (OCR) charge un Worker + WASM depuis blob:/data: et son CDN
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https://unpkg.com https://cdn.jsdelivr.net",
+  "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
-  "connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com https://*.googleapis.com https://www.googleapis.com",
+  // OCR : tessdata + CDN ; météo Open-Meteo ; Google APIs (Drive)
+  "connect-src 'self' blob: data: https://api.open-meteo.com https://geocoding-api.open-meteo.com https://*.googleapis.com https://www.googleapis.com https://unpkg.com https://cdn.jsdelivr.net https://tessdata.projectnaptha.com",
   "frame-ancestors 'self'",
   "base-uri 'self'",
   "form-action 'self'",
