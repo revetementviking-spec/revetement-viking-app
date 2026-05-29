@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -149,6 +149,16 @@ async function doInitDb() {
     notes TEXT, date_creation TEXT
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_assurances_renouv ON assurances(date_renouvellement)");
+  // Catégories de dépenses : gérables par l'utilisateur (ajout/renommage/désactivation)
+  await tryExec(`CREATE TABLE IF NOT EXISTS categories_depense (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT UNIQUE NOT NULL, ordre INTEGER DEFAULT 99,
+    actif INTEGER DEFAULT 1, date_creation TEXT
+  )`);
+  // Seed par défaut (idempotent grâce à INSERT OR IGNORE) — anciennes constantes du code
+  for (const [i, nom] of ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"].entries()) {
+    await tryExec(`INSERT OR IGNORE INTO categories_depense (nom, ordre, actif, date_creation) VALUES ('${nom}', ${i}, 1, '${new Date().toISOString()}')`);
+  }
   // Banque d'heures : heures réellement travaillées + solde de banque après la période
   await tryExec("ALTER TABLE paies_periodes ADD COLUMN heures_travaillees REAL");
   await tryExec("ALTER TABLE paies_periodes ADD COLUMN banque_solde REAL DEFAULT 0");
@@ -691,6 +701,35 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id), 0) as total_facture,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id AND payee = 1), 0) as total_paye
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
+
+// === CATÉGORIES DE DÉPENSES ===
+export async function listerCategoriesDepense(actives = true): Promise<{ id: number; nom: string; ordre: number; actif: number }[]> {
+  const where = actives ? "WHERE actif = 1" : "";
+  return await all<any>(`SELECT id, nom, ordre, actif FROM categories_depense ${where} ORDER BY ordre, nom`);
+}
+export async function ajouterCategorieDepense(nom: string): Promise<number> {
+  const ordre = (await one<{ n: number }>("SELECT COALESCE(MAX(ordre), 0) + 1 as n FROM categories_depense"))?.n || 1;
+  const r = await run(
+    "INSERT INTO categories_depense (nom, ordre, actif, date_creation) VALUES (?, ?, 1, ?)",
+    [nom.trim(), ordre, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function renommerCategorieDepense(id: number, nouveau: string): Promise<void> {
+  const old = await one<{ nom: string }>("SELECT nom FROM categories_depense WHERE id = ?", [id]);
+  if (!old) return;
+  const nv = nouveau.trim();
+  await run("UPDATE categories_depense SET nom = ? WHERE id = ?", [nv, id]);
+  // Cascade : renomme aussi dans les dépenses existantes
+  await run("UPDATE depenses_projet SET categorie = ? WHERE categorie = ?", [nv, old.nom]);
+}
+export async function supprimerCategorieDepense(id: number): Promise<void> {
+  // Soft delete : on désactive (on ne casse pas l'historique des dépenses)
+  await run("UPDATE categories_depense SET actif = 0 WHERE id = ?", [id]);
+}
+export async function reactiverCategorieDepense(id: number): Promise<void> {
+  await run("UPDATE categories_depense SET actif = 1 WHERE id = ?", [id]);
+}
 
 /** Réchauffement : initialise la connexion + une requête triviale (garde Turso chaud). */
 export async function pingDb(): Promise<boolean> {

@@ -7,13 +7,14 @@ import BottomSheet from "@/components/BottomSheet";
 import { compresserImage } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
-const CATEGORIES = ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
+const CATEGORIES_FALLBACK = ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
 
 export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdInitial }: Props) {
   const today = new Date().toISOString().slice(0, 10);
   const [projets, setProjets] = useState<any[]>([]);
+  const [categories, setCategories] = useState<string[]>(CATEGORIES_FALLBACK);
   const [fournisseursConnus, setFournisseursConnus] = useState<string[]>([]);
-  const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
+  const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: CATEGORIES_FALLBACK[0] });
   const [recu, setRecu] = useState<{ data: string; type: string; nom: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
@@ -40,6 +41,13 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
     });
     fetch("/api/depenses?fournisseurs=1").then((r) => r.json()).then((d) => {
       if (Array.isArray(d)) setFournisseursConnus(d);
+    }).catch(() => {});
+    fetch("/api/categories-depense").then((r) => r.json()).then((cats: any[]) => {
+      if (Array.isArray(cats) && cats.length > 0) {
+        const noms = cats.map((c) => c.nom);
+        setCategories(noms);
+        setForm((f) => (noms.includes(f.categorie) ? f : { ...f, categorie: noms[0] }));
+      }
     }).catch(() => {});
   }, [ouvert]);
 
@@ -129,7 +137,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Catégorie</label>
             <div className="grid grid-cols-3 gap-1.5">
-              {CATEGORIES.map((c) => (
+              {categories.map((c) => (
                 <button key={c} onClick={() => setForm({ ...form, categorie: c })} className={`px-2 py-2.5 rounded-lg text-xs font-medium ${form.categorie === c ? "bg-orange-600 text-white" : "bg-slate-100 hover:bg-slate-200 text-slate-700"}`}>
                   {c}
                 </button>

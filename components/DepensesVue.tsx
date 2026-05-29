@@ -6,8 +6,6 @@ import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import { exporterCSV } from "@/lib/csv";
 
-const CATEGORIES = ["", "matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
-
 type TriCol = "date" | "fournisseur" | "categorie" | "projet" | "montant";
 type TriSens = "asc" | "desc";
 
@@ -19,6 +17,8 @@ function fmtLocal(d: Date): string {
 export default function DepensesVue() {
   const [depenses, setDepenses] = useState<any[]>([]);
   const [projets, setProjets] = useState<any[]>([]);
+  const [categories, setCategories] = useState<{ id: number; nom: string }[]>([]);
+  const [gestionCatOuverte, setGestionCatOuverte] = useState(false);
   const [recherche, setRecherche] = useState("");
   const [filtreCat, setFiltreCat] = useState("");
   const [filtreProj, setFiltreProj] = useState<string>("");
@@ -32,12 +32,14 @@ export default function DepensesVue() {
   const { toast } = useToast();
 
   const charger = async () => {
-    const [d, p] = await Promise.all([
+    const [d, p, c] = await Promise.all([
       fetch("/api/depenses?data=0").then((r) => r.json()),
       fetch("/api/projets").then((r) => r.json()),
+      fetch("/api/categories-depense").then((r) => r.json()).catch(() => []),
     ]);
     setDepenses(Array.isArray(d) ? d : []);
     setProjets(Array.isArray(p) ? p : []);
+    setCategories(Array.isArray(c) ? c : []);
     setSelection(new Set());
   };
 
@@ -52,9 +54,14 @@ export default function DepensesVue() {
       if (filtreProj === "aucun" && d.projet_id) return false;
       if (filtreProj && filtreProj !== "aucun" && d.projet_id !== +filtreProj) return false;
       if (recherche) {
-        const q = recherche.toLowerCase();
-        const fields = [d.fournisseur, d.description, d.categorie, projNom(d.projet_id)].filter(Boolean);
-        if (!fields.some((f: any) => f.toLowerCase().includes(q))) return false;
+        const q = recherche.toLowerCase().trim();
+        const fields = [
+          d.fournisseur, d.description, d.categorie, projNom(d.projet_id),
+          d.date,                                  // ex: "2026-05" ou "29"
+          String(d.montant ?? ""),                 // ex: "12.5"
+          formatCAD(d.montant || 0),               // ex: "12,50 $"
+        ].filter(Boolean);
+        if (!fields.some((f: any) => String(f).toLowerCase().includes(q))) return false;
       }
       return true;
     });
@@ -156,7 +163,7 @@ export default function DepensesVue() {
 
         {/* Recherche et filtres */}
         <section className="bg-white rounded-lg shadow p-3 space-y-2">
-          <input type="search" placeholder="🔍 Rechercher fournisseur, description, projet..." value={recherche} onChange={(e) => setRecherche(e.target.value)} className="w-full px-3 py-2 border rounded text-sm" />
+          <input type="search" placeholder="🔍 Rechercher (fournisseur, description, projet, date, montant…)" value={recherche} onChange={(e) => setRecherche(e.target.value)} className="w-full px-3 py-2 border rounded text-sm" />
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
             <div>
               <label className="block text-[10px] font-medium text-slate-600 mb-1">Depuis</label>
@@ -169,7 +176,8 @@ export default function DepensesVue() {
             <div>
               <label className="block text-[10px] font-medium text-slate-600 mb-1">Catégorie</label>
               <select value={filtreCat} onChange={(e) => setFiltreCat(e.target.value)} className="w-full px-2 py-1.5 border rounded text-sm bg-white">
-                {CATEGORIES.map((c) => <option key={c} value={c}>{c || "Toutes"}</option>)}
+                <option value="">Toutes</option>
+                {categories.map((c) => <option key={c.id} value={c.nom}>{c.nom}</option>)}
               </select>
             </div>
             <div>
@@ -188,6 +196,17 @@ export default function DepensesVue() {
             <button onClick={() => { setRecherche(""); setFiltreCat(""); setFiltreProj(""); }} className="px-2 py-1 bg-slate-200 hover:bg-slate-300 rounded text-xs font-semibold">✕ Reset filtres</button>
             <button onClick={exportCSV} className="ml-auto px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold">📥 Export CSV (QuickBooks)</button>
           </div>
+        </section>
+
+        {/* Gestion des catégories (repliable) */}
+        <section className="bg-white rounded-lg shadow">
+          <button onClick={() => setGestionCatOuverte(!gestionCatOuverte)} className="w-full p-3 flex justify-between items-center text-left">
+            <span className="font-bold text-sm">🏷️ Catégories de dépenses <span className="text-xs font-normal text-slate-500 ml-1">({categories.length})</span></span>
+            <span className="text-slate-400">{gestionCatOuverte ? "▾" : "▸"}</span>
+          </button>
+          {gestionCatOuverte && (
+            <CategoriesGestion categories={categories} onChange={charger} />
+          )}
         </section>
 
         {/* Sélection multiple — barre */}
@@ -297,7 +316,8 @@ export default function DepensesVue() {
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Catégorie</label>
                 <select value={editing.categorie || ""} onChange={(e) => setEditing({ ...editing, categorie: e.target.value })} className="w-full px-3 py-2 border rounded text-sm bg-white">
-                  {CATEGORIES.map((c) => <option key={c} value={c}>{c || "—"}</option>)}
+                  <option value="">—</option>
+                  {categories.map((c) => <option key={c.id} value={c.nom}>{c.nom}</option>)}
                 </select>
               </div>
               <div>
@@ -326,6 +346,63 @@ export default function DepensesVue() {
 
       <FAB onSuccess={charger} />
     </>
+  );
+}
+
+function CategoriesGestion({ categories, onChange }: { categories: { id: number; nom: string }[]; onChange: () => void }) {
+  const [nouveau, setNouveau] = useState("");
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editNom, setEditNom] = useState("");
+  const { toast } = useToast();
+
+  const ajouter = async () => {
+    const nom = nouveau.trim();
+    if (!nom) return;
+    const r = await fetch("/api/categories-depense", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nom }) });
+    const d = await r.json();
+    if (d.ok) { toast(`Catégorie « ${nom} » ajoutée`, "success"); setNouveau(""); onChange(); }
+    else toast(d.error || "Erreur", "warning");
+  };
+  const sauverEdition = async (id: number) => {
+    const nom = editNom.trim();
+    if (!nom) return;
+    await fetch("/api/categories-depense", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, nom }) });
+    toast("Catégorie renommée (les dépenses existantes sont mises à jour)", "success");
+    setEditId(null); onChange();
+  };
+  const supprimer = async (c: { id: number; nom: string }) => {
+    if (!confirm(`Désactiver la catégorie « ${c.nom} » ?\n(L'historique des dépenses reste intact, mais elle n'apparaît plus dans les listes.)`)) return;
+    await fetch(`/api/categories-depense?id=${c.id}`, { method: "DELETE" });
+    toast("Catégorie désactivée", "info"); onChange();
+  };
+
+  return (
+    <div className="px-3 pb-3 space-y-2">
+      <div className="flex gap-2">
+        <input type="text" value={nouveau} onChange={(e) => setNouveau(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ajouter()} placeholder="Nouvelle catégorie (ex: assurance, sous-location)" className="flex-1 px-3 py-2 border rounded text-sm" />
+        <button onClick={ajouter} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">＋ Ajouter</button>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5">
+        {categories.map((c) => (
+          <div key={c.id} className="flex items-center gap-2 bg-slate-50 rounded p-2">
+            {editId === c.id ? (
+              <>
+                <input type="text" value={editNom} onChange={(e) => setEditNom(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sauverEdition(c.id)} className="flex-1 px-2 py-1 border rounded text-sm" autoFocus />
+                <button onClick={() => sauverEdition(c.id)} className="text-xs bg-emerald-600 text-white px-2 py-1 rounded font-bold">✓</button>
+                <button onClick={() => setEditId(null)} className="text-xs bg-slate-300 px-2 py-1 rounded">✕</button>
+              </>
+            ) : (
+              <>
+                <span className="flex-1 text-sm text-slate-800">{c.nom}</span>
+                <button onClick={() => { setEditId(c.id); setEditNom(c.nom); }} className="text-xs text-emerald-700 hover:underline">✏️ Renommer</button>
+                <button onClick={() => supprimer(c)} className="text-xs text-red-600 hover:underline">🗑</button>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+      <p className="text-[10px] text-slate-500 italic">Renommer une catégorie met à jour toutes les dépenses existantes. Supprimer = désactiver (l'historique reste intact).</p>
+    </div>
   );
 }
 
