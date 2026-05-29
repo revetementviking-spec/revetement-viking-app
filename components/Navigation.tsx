@@ -156,14 +156,32 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
             <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-9 w-9 brightness-0 invert opacity-90 drakkar-animate" />
           </Link>
 
-          {/* Titre */}
-          <div className="flex-1 min-w-0">
-            <h1 className="text-base md:text-xl font-bold flex items-center gap-2 truncate">
+          {/* Liens nav desktop — placés à GAUCHE, juste après le logo */}
+          <nav className="hidden md:flex gap-1">
+            {LINKS.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                prefetch
+                className={`px-3 py-2 rounded text-sm transition whitespace-nowrap ${
+                  pathname === l.href ? "bg-emerald-600 text-white" : "text-slate-200 hover:bg-slate-700"
+                }`}
+              >
+                <span className="mr-1">{l.icon}</span>
+                <span>{l.label}</span>
+              </Link>
+            ))}
+          </nav>
+
+          {/* Titre — uniquement sur mobile (sur desktop, il passe en sous-rangée) */}
+          <div className="flex-1 min-w-0 md:hidden">
+            <h1 className="text-base font-bold flex items-center gap-2 truncate">
               <span className="truncate">{titre}</span>
-              {badge && <span className="hidden md:inline-block">{badge}</span>}
             </h1>
-            {soustitre && <p className="text-xs text-slate-300 hidden md:block truncate">{soustitre}</p>}
           </div>
+
+          {/* Spacer desktop pour pousser les contrôles à droite */}
+          <div className="hidden md:block flex-1" />
 
           {/* Recherche globale */}
           <div className="hidden md:block relative">
@@ -281,23 +299,6 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
             {dark ? "☀️" : "🌙"}
           </button>
 
-          {/* Liens desktop */}
-          <nav className="hidden md:flex gap-1">
-            {LINKS.map((l) => (
-              <Link
-                key={l.href}
-                href={l.href}
-                prefetch
-                className={`px-3 py-2 rounded text-sm transition ${
-                  pathname === l.href ? "bg-emerald-600 text-white" : "text-slate-200 hover:bg-slate-700"
-                }`}
-              >
-                <span className="mr-1">{l.icon}</span>
-                <span>{l.label}</span>
-              </Link>
-            ))}
-          </nav>
-
           {/* Actions desktop inline */}
           {actions && <div className="hidden lg:flex gap-2 ml-2 border-l border-slate-700 pl-3">{actions}</div>}
 
@@ -323,6 +324,15 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
               )}
             </div>
           )}
+        </div>
+
+        {/* Sous-rangée desktop : titre + sous-titre + badge (sous la barre principale) */}
+        <div className="hidden md:block max-w-7xl mx-auto px-4 pb-3">
+          <h1 className="text-xl font-bold flex items-center gap-2 truncate">
+            <span className="truncate">{titre}</span>
+            {badge && <span>{badge}</span>}
+          </h1>
+          {soustitre && <p className="text-xs text-slate-300 truncate">{soustitre}</p>}
         </div>
 
         {/* Badge mobile */}
