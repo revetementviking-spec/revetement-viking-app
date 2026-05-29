@@ -84,48 +84,100 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     rechargerComm();
   };
 
-  const marquerAccepte = async () => {
-    // Si on RETIRE le statut accepté (toggle off), juste changer le stage
+  /** FLUX UNIFIÉ accepter + créer projet + générer contrat en un seul clic. */
+  const accepterEtContrat = async () => {
+    // Toggle off
     if (form.pipeline_stage === "accepte") {
       setForm({ ...form, pipeline_stage: "info_1" });
       await fetch("/api/clients", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: client.id, pipeline_stage: "info_1" }) });
-      toast("↩ Remis en début de pipeline", "info");
+      toast("↩ Remis en début de pipeline (le projet et le contrat restent intacts)", "info");
       onUpdate();
       return;
     }
-    // Sinon on accepte : proposer la création d'un VRAI projet (devient actif sur tous les dashboards)
-    let nouveauProjetId: number | null = form.projet_lien_id || null;
-    if (!nouveauProjetId) {
-      const prixStr = prompt(`Convertir « ${form.nom} » en projet actif.\n\nPrix du contrat (laisser vide pour 0) :`, "");
-      if (prixStr === null) return; // utilisateur a annulé
-      const prix = parseFloat(prixStr.replace(",", ".")) || 0;
-      // 1. trouver ou créer le client_id dans projets — utiliser le nom du client comme nom de projet
-      const r = await fetch("/api/projets", {
+
+    // Saisie unique : prix, date début, dépôt, n° de devis
+    const prixStr = prompt(`Accepter « ${form.nom} » et générer le contrat\n\nPrix total du contrat :`, "");
+    if (prixStr === null) return;
+    const prix = parseFloat(prixStr.replace(",", ".")) || 0;
+    const dateStr = prompt("Date de début des travaux (ex: 15 juin 2026) :", "");
+    if (dateStr === null) return;
+    const depotStr = prompt("% de dépôt à la signature (défaut 25) :", "25");
+    if (depotStr === null) return;
+    const depot = parseFloat(depotStr) || 25;
+    const soumNum = prompt("N° de devis/soumission lié (laisser vide si aucun) :", "") || "";
+
+    setBusy(true);
+    try {
+      // 1. Créer ou récupérer le projet lié
+      let projetId = form.projet_lien_id || null;
+      let projetNumero = "";
+      if (!projetId) {
+        const r = await fetch("/api/projets", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nom: form.nom, client_nom: form.nom, adresse_chantier: form.adresse,
+            description: form.notes, prix_contrat: prix || null, budget_estime: prix || null,
+            statut: "actif", date_debut: new Date().toISOString().slice(0, 10), reno_assistance: 0,
+          }),
+        });
+        const d = await r.json();
+        if (!d.ok) { toast("Erreur création projet", "error"); return; }
+        projetId = d.id;
+      }
+      // Récupère le numéro du projet pour l'utiliser comme numéro de contrat
+      try {
+        const pr = await fetch(`/api/projets?id=${projetId}`, { cache: "no-store" }).then((r) => r.json());
+        projetNumero = pr?.numero || `C-${new Date().getFullYear()}-${String(client.id).padStart(3, "0")}`;
+      } catch { projetNumero = `C-${new Date().getFullYear()}-${String(client.id).padStart(3, "0")}`; }
+
+      // 2. Lier le client au projet + déplacer dans pipeline_stage = accepte
+      setForm({ ...form, pipeline_stage: "accepte", projet_lien_id: projetId });
+      await fetch("/api/clients", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: client.id, pipeline_stage: "accepte", projet_lien_id: projetId, statut: "actif" }),
+      });
+
+      // 3. Générer le PDF du contrat
+      const { genererContratBlob } = await import("@/lib/pdf-contrat");
+      const data = {
+        numero: projetNumero,
+        charge_projet: moiUtilisateur || "Francis Quinchon",
+        client_nom: form.nom,
+        client_adresse: form.adresse,
+        client_telephone: form.telephone,
+        client_courriel: form.courriel,
+        proprietaire: form.nom,
+        soumission_numero: soumNum || undefined,
+        soumission_date: soumNum ? new Date().toLocaleDateString("fr-CA") : undefined,
+        date_debut_travaux: dateStr,
+        prix_total: prix,
+        depot_pct: depot,
+        notes_travaux: form.notes,
+      };
+      const blob = await genererContratBlob(data);
+      const pdf64 = await new Promise<string>((res, rej) => {
+        const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(blob);
+      });
+      // 4. Sauvegarder côté serveur
+      const r = await fetch("/api/contrats-pipeline", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          nom: form.nom,
-          client_nom: form.nom,
-          adresse_chantier: form.adresse,
-          description: form.notes,
-          prix_contrat: prix || null,
-          budget_estime: prix || null,
-          statut: "actif",
-          date_debut: new Date().toISOString().slice(0, 10),
-          reno_assistance: 0,
-        }),
+        body: JSON.stringify({ client_id: client.id, numero: projetNumero, data_json: data, pdf_brouillon: pdf64 }),
       });
       const d = await r.json();
-      if (!d.ok) { toast("Erreur création projet", "error"); return; }
-      nouveauProjetId = d.id;
-    }
-    // 2. lier le client au projet + déplacer dans pipeline_stage = accepte
-    setForm({ ...form, pipeline_stage: "accepte", projet_lien_id: nouveauProjetId });
-    await fetch("/api/clients", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: client.id, pipeline_stage: "accepte", projet_lien_id: nouveauProjetId, statut: "actif" }),
-    });
-    toast(`✅ Projet créé et actif sur les dashboards`, "success");
-    onUpdate();
+      if (!d.ok) { toast("Projet créé, mais erreur sauvegarde contrat", "warning"); onUpdate(); return; }
+
+      // 5. Téléchargement local + lien copié
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Contrat-${projetNumero}-${form.nom.replace(/[^a-z0-9]/gi, "_")}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      const lien = `${window.location.origin}/contrat/${d.token}`;
+      try { await navigator.clipboard.writeText(lien); } catch {}
+      rechargerContrats();
+      onUpdate();
+      toast(`✅ Projet activé · 📝 Contrat ${projetNumero} créé · 🔗 Lien copié`, "success");
+    } finally { setBusy(false); }
   };
 
   const genererContrat = async () => {
@@ -329,10 +381,17 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             <div className="text-xs opacity-90 truncate">{form.adresse || "Sans adresse"}</div>
             {moiUtilisateur && <div className="text-[10px] opacity-75 mt-0.5">Connecté en tant que <strong>{moiUtilisateur}</strong></div>}
           </div>
-          <button onClick={genererContrat} className="text-xs px-3 py-1.5 rounded font-bold bg-amber-400 text-amber-900 hover:bg-amber-300" title="Générer le contrat PDF (template Viking)">📝 Contrat</button>
-          <button onClick={marquerAccepte} className={`text-xs px-3 py-1.5 rounded font-bold ${form.pipeline_stage === "accepte" ? "bg-emerald-300 text-emerald-900" : "bg-white text-emerald-800 hover:bg-emerald-50"}`}>
-            {form.pipeline_stage === "accepte" ? "✓ Accepté" : "✅ Marquer accepté"}
+          <button
+            onClick={accepterEtContrat}
+            disabled={busy}
+            className={`text-xs px-3 py-1.5 rounded font-bold disabled:opacity-50 ${form.pipeline_stage === "accepte" ? "bg-emerald-300 text-emerald-900 hover:bg-emerald-200" : "bg-white text-emerald-800 hover:bg-emerald-50"}`}
+            title={form.pipeline_stage === "accepte" ? "Cliquer pour ré-ouvrir (sortir du pipeline accepté). Le projet et le contrat restent intacts." : "Activer le projet + générer le contrat PDF en un seul clic"}
+          >
+            {busy ? "⏳…" : form.pipeline_stage === "accepte" ? "✓ Accepté (ré-ouvrir)" : "✅ Accepter & Générer contrat"}
           </button>
+          {form.pipeline_stage === "accepte" && (
+            <button onClick={genererContrat} className="text-xs px-3 py-1.5 rounded font-bold bg-amber-400 text-amber-900 hover:bg-amber-300" title="Ajouter un contrat additionnel (avenant, extra, etc.)">📝 + contrat</button>
+          )}
           {form.projet_lien_id ? (
             <Link href={`/projets/${form.projet_lien_id}`} className="text-xs bg-emerald-400/30 hover:bg-emerald-400/50 px-2 py-1 rounded font-semibold" title="Projet actif lié">🏗️ Projet →</Link>
           ) : null}
