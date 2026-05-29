@@ -9,6 +9,7 @@ import Lightbox from "@/components/Lightbox";
 import { getProjetPrefetch, setProjetPrefetch } from "@/lib/prefetchProjet";
 
 const STATUTS_LABEL: Record<string, string> = {
+  a_venir: "À venir",
   actif: "Actif",
   en_pause: "En pause",
   complete: "Complété",

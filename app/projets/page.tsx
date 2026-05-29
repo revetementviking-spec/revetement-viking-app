@@ -9,6 +9,7 @@ import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
+  a_venir: { label: "À venir", couleur: "bg-violet-100 text-violet-900" },
   actif: { label: "Actif", couleur: "bg-emerald-100 text-emerald-900" },
   en_pause: { label: "En pause", couleur: "bg-amber-100 text-amber-900" },
   complete: { label: "Complété", couleur: "bg-blue-100 text-blue-900" },
@@ -25,7 +26,7 @@ export default function ProjetsPage() {
   const [triAsc, setTriAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creerOuvert, setCreerOuvert] = useState(false);
-  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "" });
+  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "", statut: "actif" });
   const [facture, setFacture] = useState<{ data: string; type: string; nom: string } | null>(null);
   const { toast } = useToast();
 
@@ -49,6 +50,7 @@ export default function ProjetsPage() {
         // Le prix de contrat sert AUSSI de budget initial pour les calculs de marge
         budget_estime: prix,
         prix_contrat: prix,
+        statut: nouveau.statut,
         date_debut: new Date().toISOString().slice(0, 10),
       }),
     });
@@ -63,7 +65,7 @@ export default function ProjetsPage() {
       }
       toast("Projet créé", "success");
       setCreerOuvert(false);
-      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "" });
+      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "", statut: "actif" });
       setFacture(null);
       charger();
     }
@@ -222,9 +224,17 @@ export default function ProjetsPage() {
             <Input label="Adresse chantier" value={nouveau.adresse_chantier} onChange={(v) => setNouveau({ ...nouveau, adresse_chantier: v })} />
             <Input label="💰 Prix total du contrat $ *" value={nouveau.prix_contrat} onChange={(v) => setNouveau({ ...nouveau, prix_contrat: v })} type="number" placeholder="Ex: 45000" />
             <p className="text-[10px] text-slate-500 -mt-2">Ce prix devient la référence pour calculer la marge et la rentabilité du projet.</p>
-            <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Date de fin prévue</label>
-              <input type="date" value={nouveau.date_fin_prevue} onChange={(e) => setNouveau({ ...nouveau, date_fin_prevue: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Statut</label>
+                <select value={nouveau.statut} onChange={(e) => setNouveau({ ...nouveau, statut: e.target.value })} className="w-full px-3 py-2 border rounded text-sm bg-white">
+                  {Object.entries(STATUTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Date de fin prévue</label>
+                <input type="date" value={nouveau.date_fin_prevue} onChange={(e) => setNouveau({ ...nouveau, date_fin_prevue: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+              </div>
             </div>
             <Input label="Description" value={nouveau.description} onChange={(v) => setNouveau({ ...nouveau, description: v })} />
 

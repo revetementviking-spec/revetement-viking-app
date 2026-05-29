@@ -656,7 +656,7 @@ export async function supprimerContrat(id: number) {
 // === PROJETS ===
 export interface Projet {
   id?: number; client_id?: number; nom: string; adresse_chantier?: string;
-  description?: string; statut?: 'actif' | 'complete' | 'en_pause' | 'annule';
+  description?: string; statut?: 'a_venir' | 'actif' | 'complete' | 'en_pause' | 'annule';
   date_debut?: string; date_fin_prevue?: string; date_fin_reelle?: string;
   soumission_numero?: string; budget_estime?: number; heures_estimees?: number;
   prix_contrat?: number; facture_finale_data?: string; facture_finale_type?: string;
