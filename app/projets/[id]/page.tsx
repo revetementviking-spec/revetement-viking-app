@@ -59,17 +59,25 @@ export default function ProjetDetail() {
   const [dForm, setDForm] = useState({ date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
 
   const charger = async () => {
-    const noStore = { cache: "no-store" as RequestCache };
-    const [p, h, d, ph] = await Promise.all([
-      fetch(`/api/projets?id=${id}`, noStore).then((r) => r.json()),
-      fetch(`/api/heures?projet_id=${id}`, noStore).then((r) => r.json()),
-      fetch(`/api/depenses?projet_id=${id}`, noStore).then((r) => r.json()),
-      fetch(`/api/photos?projet_id=${id}&data=0`, noStore).then((r) => r.json()).catch(() => []),
-    ]);
-    setProjet(p);
-    setHeures(h);
-    setDepenses(d);
-    setPhotos(ph);
+    // 1 seul aller-retour combiné (projet + heures + dépenses + photos)
+    try {
+      const r = await fetch(`/api/projets/${id}/full`, { cache: "no-store" });
+      const d = await r.json();
+      setProjet(d.projet);
+      setHeures(d.heures || []);
+      setDepenses(d.depenses || []);
+      setPhotos(d.photos || []);
+    } catch {
+      // Repli : anciennes requêtes séparées si l'endpoint combiné échoue
+      const noStore = { cache: "no-store" as RequestCache };
+      const [p, h, dep, ph] = await Promise.all([
+        fetch(`/api/projets?id=${id}`, noStore).then((r) => r.json()),
+        fetch(`/api/heures?projet_id=${id}`, noStore).then((r) => r.json()),
+        fetch(`/api/depenses?projet_id=${id}`, noStore).then((r) => r.json()),
+        fetch(`/api/photos?projet_id=${id}&data=0`, noStore).then((r) => r.json()).catch(() => []),
+      ]);
+      setProjet(p); setHeures(h); setDepenses(dep); setPhotos(ph);
+    }
   };
 
   useEffect(() => {

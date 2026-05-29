@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, type ReactNode } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
 interface NavLink {
@@ -137,9 +138,9 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
           </button>
 
           {/* Logo Viking */}
-          <a href="/" className="flex-shrink-0 hidden sm:block" title="Tableau de bord">
+          <Link href="/" prefetch className="flex-shrink-0 hidden sm:block" title="Tableau de bord">
             <img src="/logo-viking.svg" alt="Revêtement Viking" className="h-9 w-9 brightness-0 invert opacity-90 drakkar-animate" />
-          </a>
+          </Link>
 
           {/* Titre */}
           <div className="flex-1 min-w-0">
@@ -165,11 +166,11 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
             {rechercheOuvert && rechercheRes.length > 0 && (
               <div className="absolute top-full right-0 mt-1 bg-white text-slate-900 rounded-lg shadow-xl border w-72 max-h-80 overflow-y-auto z-50">
                 {rechercheRes.map((r, i) => (
-                  <a key={i} href={lienResultat(r)} className="block px-3 py-2 hover:bg-slate-100 border-b last:border-b-0">
+                  <Link key={i} href={lienResultat(r)} className="block px-3 py-2 hover:bg-slate-100 border-b last:border-b-0">
                     <div className="text-xs text-emerald-700 uppercase font-bold">{r.type}</div>
                     <div className="text-sm font-semibold truncate">{r.titre}</div>
                     {r.sous && <div className="text-xs text-slate-500 truncate">{r.sous}</div>}
-                  </a>
+                  </Link>
                 ))}
               </div>
             )}
@@ -183,16 +184,17 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
           {/* Liens desktop */}
           <nav className="hidden md:flex gap-1">
             {LINKS.map((l) => (
-              <a
+              <Link
                 key={l.href}
                 href={l.href}
+                prefetch
                 className={`px-3 py-2 rounded text-sm transition ${
                   pathname === l.href ? "bg-emerald-600 text-white" : "text-slate-200 hover:bg-slate-700"
                 }`}
               >
                 <span className="mr-1">{l.icon}</span>
                 <span>{l.label}</span>
-              </a>
+              </Link>
             ))}
           </nav>
 
@@ -231,16 +233,17 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
           <div className="md:hidden bg-slate-800 border-t border-slate-700">
             <nav className="px-2 py-2 flex flex-col gap-1">
               {[...LINKS, ...LINKS_SECONDAIRES].map((l) => (
-                <a
+                <Link
                   key={l.href}
                   href={l.href}
+                  onClick={() => setMenuOuvert(false)}
                   className={`px-3 py-3 rounded text-base flex items-center gap-2 ${
                     pathname === l.href ? "bg-emerald-600 text-white" : "text-slate-200 hover:bg-slate-700"
                   }`}
                 >
                   <span className="text-xl">{l.icon}</span>
                   <span>{l.label}</span>
-                </a>
+                </Link>
               ))}
             </nav>
           </div>
@@ -256,16 +259,17 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
         }}
       >
         {LINKS.map((l) => (
-          <a
+          <Link
             key={l.href}
             href={l.href}
+            prefetch
             className={`flex flex-col items-center justify-center py-2 px-0.5 text-xs font-medium ${
               pathname === l.href || (l.href !== "/" && pathname?.startsWith(l.href)) ? "text-emerald-600 bg-emerald-50" : "text-slate-600 hover:bg-slate-50"
             }`}
           >
             <span className="text-lg mb-0.5">{l.icon}</span>
             <span className="text-[9px] leading-tight truncate w-full text-center">{l.label}</span>
-          </a>
+          </Link>
         ))}
       </nav>
 
