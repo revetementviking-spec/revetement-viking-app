@@ -925,18 +925,31 @@ function PhotoUploader({ projet_id, onUpload }: { projet_id: number; onUpload: (
 
 function ClientInfo({ client_id }: { client_id?: number | null }) {
   const [c, setC] = useState<any>(null);
-  useEffect(() => {
+  const charger = () => { if (client_id) fetch(`/api/clients?id=${client_id}`, { cache: "no-store" }).then((r) => r.json()).then(setC).catch(() => {}); };
+  useEffect(() => { charger(); }, [client_id]);
+  const changerStatut = async (statut: string) => {
     if (!client_id) return;
-    fetch(`/api/clients?id=${client_id}`).then((r) => r.json()).then(setC).catch(() => {});
-  }, [client_id]);
+    await fetch("/api/clients", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: client_id, statut }) });
+    charger();
+  };
   if (!client_id) return <div className="text-xs text-slate-500 italic">Aucun client lié</div>;
   if (!c) return <div className="text-xs text-slate-400">Chargement...</div>;
+  const STATUTS_CLIENT = ["prospect", "actif", "inactif", "perdu"];
   return (
     <div className="text-sm space-y-0.5 mt-1">
       {c.telephone && <div>📞 <a href={`tel:${c.telephone}`} className="text-blue-600 hover:underline">{c.telephone}</a></div>}
       {c.courriel && <div>✉️ <a href={`mailto:${c.courriel}`} className="text-blue-600 hover:underline break-all">{c.courriel}</a></div>}
       {c.adresse && <div className="text-xs text-slate-600">🏠 {c.adresse}</div>}
-      {c.statut && <span className={`inline-block text-[10px] mt-1 px-2 py-0.5 rounded font-semibold ${c.statut === "actif" ? "bg-emerald-100 text-emerald-900" : c.statut === "prospect" ? "bg-amber-100 text-amber-900" : "bg-slate-200"}`}>{c.statut}</span>}
+      <div className="flex items-center gap-2 mt-1">
+        <span className="text-[10px] text-slate-500 uppercase">Statut</span>
+        <select
+          value={c.statut || "prospect"}
+          onChange={(e) => changerStatut(e.target.value)}
+          className={`text-xs px-2 py-1 rounded border font-semibold ${c.statut === "actif" ? "bg-emerald-50 text-emerald-900 border-emerald-300" : c.statut === "prospect" ? "bg-amber-50 text-amber-900 border-amber-300" : "bg-slate-100 border-slate-300"}`}
+        >
+          {STATUTS_CLIENT.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
     </div>
   );
 }

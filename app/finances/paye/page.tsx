@@ -85,12 +85,12 @@ export default function PayePage() {
   const totaux = filtrees.reduce(
     (s, p) => ({
       hN: s.hN + (p.heures_normales || 0),
-      hS: s.hS + (p.heures_sup || 0),
+      hT: s.hT + (p.heures_travaillees ?? p.heures_normales ?? 0),
       brut: s.brut + (p.montant_brut || 0),
       das: s.das + (p.das_montant || 0),
       net: s.net + (p.montant_net || 0),
     }),
-    { hN: 0, hS: 0, brut: 0, das: 0, net: 0 }
+    { hN: 0, hT: 0, brut: 0, das: 0, net: 0 }
   );
 
   const aPayerTotal = periodes.filter((p) => !p.paye).reduce((s, p) => s + (p.montant_net || 0), 0);
@@ -99,7 +99,7 @@ export default function PayePage() {
     <div className="min-h-screen bg-slate-50">
       <Navigation
         titre="💵 Paie"
-        soustitre="Suivi bi-hebdomadaire · DAS 15% · heures sup ×1.5"
+        soustitre="Suivi bi-hebdomadaire · DAS 15% · banque d'heures (max 80 h/période)"
         actions={
           <a href="/employes" className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded text-sm font-semibold text-slate-700 text-left">
             👷 Employés (salaires, infos)
@@ -177,14 +177,18 @@ export default function PayePage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2 mt-3 text-sm">
                   <div className="bg-slate-50 p-2 rounded">
-                    <div className="text-[10px] text-slate-500 uppercase">Heures normales</div>
+                    <div className="text-[10px] text-slate-500 uppercase">Heures travaillées</div>
+                    <div className="font-bold">{(p.heures_travaillees ?? p.heures_normales ?? 0).toFixed(1)} h</div>
+                  </div>
+                  <div className="bg-slate-50 p-2 rounded">
+                    <div className="text-[10px] text-slate-500 uppercase">Heures payées</div>
                     <div className="font-bold">{(p.heures_normales || 0).toFixed(1)} h</div>
                   </div>
-                  <div className={`p-2 rounded ${p.heures_sup > 0 ? "bg-amber-50" : "bg-slate-50"}`}>
-                    <div className="text-[10px] text-slate-500 uppercase">Heures sup. (×1.5)</div>
-                    <div className={`font-bold ${p.heures_sup > 0 ? "text-amber-700" : ""}`}>{(p.heures_sup || 0).toFixed(1)} h</div>
+                  <div className={`p-2 rounded ${(p.banque_solde || 0) > 0 ? "bg-indigo-50" : "bg-slate-50"}`}>
+                    <div className="text-[10px] text-slate-500 uppercase">Banque (solde)</div>
+                    <div className={`font-bold ${(p.banque_solde || 0) > 0 ? "text-indigo-700" : ""}`}>{(p.banque_solde || 0).toFixed(1)} h</div>
                   </div>
                   <div className="bg-slate-50 p-2 rounded">
                     <div className="text-[10px] text-slate-500 uppercase">Taux $/h</div>
@@ -202,7 +206,13 @@ export default function PayePage() {
 
                 <div className="mt-2 text-xs text-slate-500">
                   DAS retenue (15%) : <strong>{formatCAD(p.das_montant || 0)}</strong>
-                  {p.heures_sup > 0 && <span className="ml-3 text-amber-700">⚡ Heures sup. payées 50% en plus = <strong>{formatCAD(p.heures_sup * p.taux_horaire * 0.5)}</strong> de remboursement</span>}
+                  {(() => {
+                    const trav = p.heures_travaillees ?? p.heures_normales ?? 0;
+                    const surplus = trav - (p.heures_normales || 0);
+                    if (surplus > 0.01) return <span className="ml-3 text-indigo-700">🏦 {surplus.toFixed(1)} h accumulées en banque (payées plus tard)</span>;
+                    if (surplus < -0.01) return <span className="ml-3 text-indigo-700">🏦 {Math.abs(surplus).toFixed(1)} h tirées de la banque pour compléter la période</span>;
+                    return null;
+                  })()}
                 </div>
               </div>
             ))}

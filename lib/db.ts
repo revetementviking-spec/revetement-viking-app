@@ -128,6 +128,9 @@ export async function initDb() {
     notes TEXT, date_creation TEXT
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_assurances_renouv ON assurances(date_renouvellement)");
+  // Banque d'heures : heures réellement travaillées + solde de banque après la période
+  await tryExec("ALTER TABLE paies_periodes ADD COLUMN heures_travaillees REAL");
+  await tryExec("ALTER TABLE paies_periodes ADD COLUMN banque_solde REAL DEFAULT 0");
   // Backfill numéros de projet manquants (anciens projets créés avant le numérotage)
   try {
     const sansNum = await all<{ id: number; date_creation: string }>("SELECT id, date_creation FROM projets WHERE numero IS NULL ORDER BY date_creation ASC, id ASC");
@@ -1071,25 +1074,49 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
     groupes.get(key)!.heures.push({ date: h.date, heures: h.heures });
   }
 
-  // 3. Pour chaque groupe, calculer et upsert dans paies_periodes
+  // 3. BANQUE D'HEURES — traitement CHRONOLOGIQUE par employé.
+  //    Pas de prime ×1.5 : les heures au-delà de 80h/quinzaine sont ACCUMULÉES
+  //    dans une banque, et servent à compléter une quinzaine sous 80h plus tard.
+  const SEUIL = 80;
+  // Regrouper les groupes par employé, triés par date de début (ancien → récent)
+  const parEmploye = new Map<string, typeof groupes extends Map<string, infer V> ? V[] : never>();
   for (const g of groupes.values()) {
-    const { normales, sup } = calculerHeuresPaye(g.heures, g.debut);
-    const { brut, das: dasMontant, net } = calculerPaye(normales, sup, g.taux, 0.15);
+    if (!parEmploye.has(g.employe)) parEmploye.set(g.employe, [] as any);
+    (parEmploye.get(g.employe) as any).push(g);
+  }
+  for (const [, liste] of parEmploye) {
+    (liste as any[]).sort((a, b) => a.debut.localeCompare(b.debut));
+    let banque = 0;
+    for (const g of liste as any[]) {
+      const travaillees = g.heures.reduce((s: number, e: any) => s + (e.heures || 0), 0);
+      let payees: number;
+      if (travaillees >= SEUIL) {
+        payees = SEUIL;
+        banque += travaillees - SEUIL;           // surplus accumulé (pas payé maintenant)
+      } else {
+        const tirage = Math.min(SEUIL - travaillees, banque);
+        payees = travaillees + tirage;            // on complète avec la banque
+        banque -= tirage;
+      }
+      // Taux normal sur les heures payées — AUCUNE prime ×1.5
+      const brut = payees * g.taux;
+      const dasMontant = brut * 0.15;
+      const net = brut - dasMontant;
 
-    const existant = await one<PaiePeriode>("SELECT * FROM paies_periodes WHERE employe = ? AND debut = ? AND fin = ?", [g.employe, g.debut, g.fin]);
-    if (existant) {
-      // Ne pas écraser si déjà payé
-      if (!existant.paye) {
+      const existant = await one<PaiePeriode>("SELECT * FROM paies_periodes WHERE employe = ? AND debut = ? AND fin = ?", [g.employe, g.debut, g.fin]);
+      if (existant) {
+        if (!existant.paye) {
+          await run(
+            `UPDATE paies_periodes SET heures_normales=?, heures_sup=0, heures_travaillees=?, banque_solde=?, taux_horaire=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
+            [payees, travaillees, banque, g.taux, brut, dasMontant, net, existant.id]
+          );
+        }
+      } else {
         await run(
-          `UPDATE paies_periodes SET heures_normales=?, heures_sup=?, taux_horaire=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
-          [normales, sup, g.taux, brut, dasMontant, net, existant.id]
+          `INSERT INTO paies_periodes (employe, debut, fin, heures_normales, heures_sup, heures_travaillees, banque_solde, taux_horaire, das_pct, montant_brut, das_montant, montant_net, paye, date_creation) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          [g.employe, g.debut, g.fin, payees, travaillees, banque, g.taux, 0.15, brut, dasMontant, net, new Date().toISOString()]
         );
       }
-    } else {
-      await run(
-        `INSERT INTO paies_periodes (employe, debut, fin, heures_normales, heures_sup, taux_horaire, das_pct, montant_brut, das_montant, montant_net, paye, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-        [g.employe, g.debut, g.fin, normales, sup, g.taux, 0.15, brut, dasMontant, net, new Date().toISOString()]
-      );
     }
   }
 
