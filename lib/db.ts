@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -77,6 +77,7 @@ async function doInitDb() {
   await tryExec("ALTER TABLE clients ADD COLUMN assignee TEXT");
   await tryExec("ALTER TABLE clients ADD COLUMN date_relance TEXT");
   await tryExec("ALTER TABLE clients ADD COLUMN projet_lien_id INTEGER");
+  await tryExec("ALTER TABLE clients ADD COLUMN instructions_speciales TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_clients_assignee ON clients(assignee)");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_clients_relance ON clients(date_relance)");
   // Fichiers attachés aux clients (plans, photos, contrats) — drag & drop dans le pipeline
@@ -573,15 +574,30 @@ export async function listerClients(): Promise<ClientType[]> {
 export async function getClient(id: number): Promise<ClientType | null> {
   return await one<ClientType>("SELECT * FROM clients WHERE id = ?", [id]);
 }
-export async function ajouterClient(c: ClientType): Promise<number> {
+export async function ajouterClient(c: any): Promise<number> {
   const r = await run(
-    `INSERT INTO clients (nom, courriel, telephone, adresse, notes, date_creation) VALUES (?, ?, ?, ?, ?, ?)`,
-    [c.nom, c.courriel || null, c.telephone || null, c.adresse || null, c.notes || null, new Date().toISOString()]
+    `INSERT INTO clients (nom, courriel, telephone, adresse, notes, statut, source, tags, pipeline_stage, assignee, date_relance, projet_lien_id, date_creation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      c.nom,
+      c.courriel || null,
+      c.telephone || null,
+      c.adresse || null,
+      c.notes || null,
+      c.statut || "prospect",
+      c.source || null,
+      c.tags || null,
+      c.pipeline_stage || null,
+      c.assignee || null,
+      c.date_relance || null,
+      c.projet_lien_id || null,
+      new Date().toISOString(),
+    ]
   );
   return r.lastInsertRowid;
 }
 export async function modifierClient(id: number, c: Partial<ClientType>) {
-  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags', 'asana_gid', 'asana_modifie_le', 'pipeline_stage', 'assignee', 'date_relance', 'projet_lien_id'];
+  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags', 'asana_gid', 'asana_modifie_le', 'pipeline_stage', 'assignee', 'date_relance', 'projet_lien_id', 'instructions_speciales'];
   const definis = champs.filter(k => (c as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');

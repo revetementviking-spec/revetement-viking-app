@@ -26,6 +26,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     date_relance: client.date_relance || "",
     projet_lien_id: client.projet_lien_id || 0,
     tags: client.tags || "",
+    instructions_speciales: client.instructions_speciales || "",
     notes: client.notes || "",
   });
   const [fichiers, setFichiers] = useState<any[]>([]);
@@ -80,6 +81,14 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     rechargerComm();
   };
 
+  const marquerAccepte = async () => {
+    const futur = form.pipeline_stage === "accepte" ? "info_1" : "accepte";
+    setForm({ ...form, pipeline_stage: futur });
+    await fetch("/api/clients", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: client.id, pipeline_stage: futur }) });
+    toast(futur === "accepte" ? "✅ Marqué Projet accepté" : "↩ Remis en début de pipeline", "success");
+    onUpdate();
+  };
+
   const sauver = async () => {
     setBusy(true);
     try {
@@ -91,6 +100,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
           date_relance: form.date_relance || null,
           assignee: form.assignee || null,
           pipeline_stage: form.pipeline_stage || null,
+          instructions_speciales: form.instructions_speciales || null,
         }),
       });
       toast("✓ Modifications enregistrées", "success");
@@ -159,7 +169,10 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             <div className="text-xs opacity-90 truncate">{form.adresse || "Sans adresse"}</div>
             {moiUtilisateur && <div className="text-[10px] opacity-75 mt-0.5">Connecté en tant que <strong>{moiUtilisateur}</strong></div>}
           </div>
-          <Link href={`/clients/${client.id}`} className="text-xs bg-white/15 hover:bg-white/25 px-2 py-1 rounded">Fiche complète →</Link>
+          <button onClick={marquerAccepte} className={`text-xs px-3 py-1.5 rounded font-bold ${form.pipeline_stage === "accepte" ? "bg-emerald-300 text-emerald-900" : "bg-white text-emerald-800 hover:bg-emerald-50"}`}>
+            {form.pipeline_stage === "accepte" ? "✓ Accepté" : "✅ Marquer accepté"}
+          </button>
+          <Link href={`/clients/${client.id}`} className="text-xs bg-white/15 hover:bg-white/25 px-2 py-1 rounded">Fiche →</Link>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-xl leading-none">✕</button>
         </header>
 
@@ -216,10 +229,22 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             )}
           </section>
 
-          {/* Notes */}
+          {/* Instructions spéciales (champ distinct, style Asana) */}
           <section>
-            <label className="block text-xs font-medium text-slate-600 mb-1">📝 Notes</label>
-            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={3} placeholder="Détails internes du dossier…" className="w-full px-3 py-2 border rounded text-sm" />
+            <label className="block text-xs font-medium text-slate-600 mb-1">⚠️ Instructions spéciales</label>
+            <textarea value={form.instructions_speciales} onChange={(e) => setForm({ ...form, instructions_speciales: e.target.value })} rows={2} placeholder="Accès, code de porte, heures préférées, allergies, animaux, etc." className="w-full px-3 py-2 border rounded text-sm" />
+          </section>
+
+          {/* Description du projet (style Asana — fourchette budgétaire, dimensions, type) */}
+          <section>
+            <label className="block text-xs font-medium text-slate-600 mb-1">📝 Description du projet</label>
+            <textarea
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              rows={6}
+              placeholder={"FOURCHETTE BUDGÉTAIRE DU CLIENT: Entre ___ à ___ + taxes\n\nDescription :\n• Dimensions environ: ___ PC\n• Type: bungalow / cottage / autre\n• Détails: …"}
+              className="w-full px-3 py-2 border rounded text-sm font-mono"
+            />
           </section>
 
           {/* SOUS-TÂCHES (checklist) */}
