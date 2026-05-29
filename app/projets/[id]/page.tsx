@@ -344,6 +344,7 @@ ${VIKING_EMAIL}
           <DescriptionTab
             projet={projet}
             photos={photos}
+            heures={heures}
             onUpdate={charger}
             onOpenPhoto={setLightboxId}
           />
@@ -779,54 +780,120 @@ ${VIKING_EMAIL}
   );
 }
 
-function DescriptionTab({ projet, photos, onUpdate, onOpenPhoto }: { projet: any; photos: any[]; onUpdate: () => void; onOpenPhoto: (id: number) => void }) {
+function DescriptionTab({ projet, photos, heures, onUpdate, onOpenPhoto }: { projet: any; photos: any[]; heures: any[]; onUpdate: () => void; onOpenPhoto: (id: number) => void }) {
   const [texte, setTexte] = useState(projet.description || "");
   const [busy, setBusy] = useState(false);
+  const [notesOuvert, setNotesOuvert] = useState(false);
   const { toast } = useToast();
   useEffect(() => { setTexte(projet.description || ""); }, [projet.id]);
   const sauver = async () => {
     setBusy(true);
     try {
       await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, description: texte }) });
-      toast("Description enregistrée", "success");
+      toast("Notes du projet enregistrées", "success");
       onUpdate();
     } finally { setBusy(false); }
   };
   const modifie = texte !== (projet.description || "");
+
+  // === Journal de chantier : regroupe par jour les descriptions d'heures + les photos ===
+  const dateLisible = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  };
+  const jours: Record<string, { heures: any[]; photos: any[] }> = {};
+  for (const h of heures) {
+    if (!jours[h.date]) jours[h.date] = { heures: [], photos: [] };
+    jours[h.date].heures.push(h);
+  }
+  for (const p of photos) {
+    if (!jours[p.date]) jours[p.date] = { heures: [], photos: [] };
+    jours[p.date].photos.push(p);
+  }
+  const joursTries = Object.keys(jours).sort((a, b) => b.localeCompare(a));
+
   return (
     <div className="space-y-3">
-      <div className="bg-white rounded-lg shadow p-4 space-y-2">
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold">📝 Description du projet</h3>
-          <button onClick={sauver} disabled={!modifie || busy} className={`px-4 py-2 rounded text-sm font-bold ${modifie && !busy ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}>
-            {busy ? "…" : "💾 Enregistrer"}
-          </button>
-        </div>
-        <textarea
-          value={texte}
-          onChange={(e) => setTexte(e.target.value)}
-          rows={6}
-          placeholder="Détails du projet : portée des travaux, type de revêtement, particularités du chantier, notes…"
-          className="w-full px-3 py-2 border rounded text-sm"
-        />
-        {modifie && <div className="text-xs text-amber-600">Modifications non enregistrées</div>}
+      {/* Ajout rapide de photos */}
+      <div className="bg-white rounded-lg shadow p-4">
+        <PhotoUploader projet_id={projet.id} onUpload={onUpdate} />
       </div>
 
-      <div className="bg-white rounded-lg shadow p-4 space-y-3">
-        <PhotoUploader projet_id={projet.id} onUpload={onUpdate} />
-        {photos.length === 0 ? (
-          <p className="text-center text-slate-500 text-sm py-8">Aucune photo. Ajoute-en ci-dessus.</p>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-            {photos.map((p: any) => (
-              <button key={p.id} type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
-                <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
-                {p.description && <div className="text-[10px] text-slate-600 truncate mt-1 text-left">{p.description}</div>}
+      {/* Notes générales du projet (repliable) */}
+      <div className="bg-white rounded-lg shadow">
+        <button onClick={() => setNotesOuvert(!notesOuvert)} className="w-full flex items-center justify-between p-4 text-left">
+          <h3 className="font-semibold">🗒️ Notes générales du projet</h3>
+          <span className="text-slate-400">{notesOuvert ? "▾" : "▸"}</span>
+        </button>
+        {notesOuvert && (
+          <div className="px-4 pb-4 space-y-2">
+            <textarea
+              value={texte}
+              onChange={(e) => setTexte(e.target.value)}
+              rows={4}
+              placeholder="Portée des travaux, type de revêtement, particularités du chantier…"
+              className="w-full px-3 py-2 border rounded text-sm"
+            />
+            <div className="flex justify-end">
+              <button onClick={sauver} disabled={!modifie || busy} className={`px-4 py-2 rounded text-sm font-bold ${modifie && !busy ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-slate-200 text-slate-400 cursor-not-allowed"}`}>
+                {busy ? "…" : "💾 Enregistrer"}
               </button>
-            ))}
+            </div>
           </div>
         )}
       </div>
+
+      {/* Journal de chantier jour par jour */}
+      <h3 className="font-bold text-slate-700 px-1">📅 Suivi de chantier — jour par jour</h3>
+      {joursTries.length === 0 ? (
+        <div className="bg-white rounded-lg shadow p-10 text-center text-slate-500 text-sm">
+          Aucune entrée pour l'instant. Les descriptions et photos saisies avec les heures apparaîtront ici, jour par jour.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {joursTries.map((date) => {
+            const jour = jours[date];
+            const totalH = jour.heures.reduce((s, h) => s + (h.heures || 0), 0);
+            const descriptions = jour.heures.filter((h) => (h.description || "").trim());
+            return (
+              <div key={date} className="bg-white rounded-lg shadow p-4">
+                <div className="flex items-baseline justify-between flex-wrap gap-2 border-b pb-2 mb-2">
+                  <h4 className="font-bold text-slate-900 capitalize">{dateLisible(date)}</h4>
+                  <span className="text-xs text-slate-500">{totalH > 0 ? `${totalH.toFixed(1)} h` : ""}{jour.photos.length ? ` · ${jour.photos.length} photo(s)` : ""}</span>
+                </div>
+
+                {/* Descriptions du jour */}
+                {descriptions.length > 0 ? (
+                  <ul className="space-y-1.5 mb-3">
+                    {descriptions.map((h) => (
+                      <li key={h.id} className="text-sm flex gap-2">
+                        <span className="text-emerald-600 flex-shrink-0">•</span>
+                        <span className="text-slate-700">
+                          {h.description}
+                          <span className="text-xs text-slate-400 ml-1">— {h.employe || "—"}{h.heures ? `, ${h.heures} h` : ""}</span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  totalH > 0 && <p className="text-xs text-slate-400 italic mb-3">Heures saisies, sans description.</p>
+                )}
+
+                {/* Photos du jour */}
+                {jour.photos.length > 0 && (
+                  <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
+                    {jour.photos.map((p: any) => (
+                      <button key={p.id} type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
+                        <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
