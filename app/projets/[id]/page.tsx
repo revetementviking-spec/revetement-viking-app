@@ -280,66 +280,14 @@ ${VIKING_EMAIL}
 
         {/* Onglets */}
         <div className="flex gap-2 border-b overflow-x-auto">
-          {(["heures", "depenses", "photos", "description"] as const).map((o) => (
+          {(["heures", "depenses", "description"] as const).map((o) => (
             <button key={o} onClick={() => setOnglet(o)} className={`px-4 py-2 text-sm font-semibold border-b-2 transition whitespace-nowrap ${onglet === o ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
-              {o === "heures" ? `⏱️ Heures (${heures.length})` : o === "depenses" ? `💸 Dépenses (${depenses.length})` : o === "photos" ? `📸 Photos (${photos.length})` : `📝 Description`}
+              {o === "heures" ? `⏱️ Heures (${heures.length})` : o === "depenses" ? `💸 Dépenses (${depenses.length})` : `📝 Description / Photos`}
             </button>
           ))}
         </div>
 
-        {/* ONGLET PHOTOS */}
-        {onglet === "photos" && (
-          <div className="bg-white rounded-lg shadow p-4 space-y-3">
-            {/* Upload manuel */}
-            <PhotoUploader projet_id={id} onUpload={charger} />
-            {photos.length === 0 ? (
-              <p className="text-center text-slate-500 text-sm py-12">Aucune photo. Ajoute-en ci-dessus ou via la saisie d'heures.</p>
-            ) : (
-              <div className="space-y-4">
-                {Object.entries(
-                  photos.reduce((acc: any, p: any) => {
-                    const k = p.date;
-                    if (!acc[k]) acc[k] = [];
-                    acc[k].push(p);
-                    return acc;
-                  }, {})
-                )
-                  .sort(([a], [b]) => b.localeCompare(a))
-                  .map(([dateJour, items]: any) => (
-                    <div key={dateJour}>
-                      <h3 className="font-bold text-sm text-slate-700 mb-2 sticky top-0 bg-white py-1">📅 {dateJour} <span className="text-xs font-normal text-slate-500">· {items[0].employes || "—"} · {items.length} photo(s)</span></h3>
-                      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                        {items.map((p: any) => (
-                          <div key={p.id} className="relative group">
-                            <button
-                              type="button"
-                              onClick={() => setLightboxId(p.id)}
-                              className="block w-full"
-                            >
-                              <img
-                                src={`/api/photos/${p.id}?thumb=1`}
-                                alt={p.description || ""}
-                                loading="lazy"
-                                decoding="async"
-                                className="w-full aspect-square object-cover rounded border hover:opacity-90"
-                              />
-                            </button>
-                            <button
-                              onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); charger(); } }}
-                              className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-                            >✕</button>
-                            {p.description && <div className="text-[10px] text-slate-600 truncate mt-1">{p.description}</div>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ONGLET DESCRIPTION */}
+        {/* ONGLET DESCRIPTION / PHOTOS */}
         {onglet === "description" && (
           <DescriptionTab
             projet={projet}
@@ -883,9 +831,15 @@ function DescriptionTab({ projet, photos, heures, onUpdate, onOpenPhoto }: { pro
                 {jour.photos.length > 0 && (
                   <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                     {jour.photos.map((p: any) => (
-                      <button key={p.id} type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
-                        <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
-                      </button>
+                      <div key={p.id} className="relative group">
+                        <button type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
+                          <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
+                        </button>
+                        <button
+                          onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); onUpdate(); } }}
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+                        >✕</button>
+                      </div>
                     ))}
                   </div>
                 )}

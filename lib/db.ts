@@ -12,6 +12,11 @@ if (!fs.existsSync(DB_DIR)) fs.mkdirSync(DB_DIR, { recursive: true });
 
 let _client: LibsqlClient | null = null;
 let _initialized = false;
+let _initPromise: Promise<void> | null = null;
+// Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
+// Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
+// toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
+const SCHEMA_VERSION = 2;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -45,7 +50,17 @@ async function tryExec(sql: string): Promise<void> {
 
 export async function initDb() {
   if (_initialized) return;
-  _initialized = true;
+  if (!_initPromise) _initPromise = doInitDb();
+  await _initPromise;
+}
+
+async function doInitDb() {
+  // Schéma déjà à jour ? (1 aller-retour) → on saute les ~70 migrations.
+  try {
+    const r = await getLibsqlClient().execute("PRAGMA user_version");
+    const cur = Number((r.rows?.[0] as any)?.user_version ?? 0);
+    if (cur >= SCHEMA_VERSION) { _initialized = true; return; }
+  } catch { /* PRAGMA indisponible → on exécute les migrations par sécurité */ }
   // Migrations idempotentes pour les anciennes installations
   await tryExec("ALTER TABLE clients ADD COLUMN statut TEXT DEFAULT 'prospect'");
   await tryExec("ALTER TABLE clients ADD COLUMN source TEXT");
@@ -275,6 +290,9 @@ export async function initDb() {
       notes_chantier TEXT, complexite TEXT
     )`,
   ]);
+  // Schéma à jour : on enregistre la version pour sauter les migrations aux prochains démarrages.
+  try { await getLibsqlClient().execute(`PRAGMA user_version = ${SCHEMA_VERSION}`); } catch { /* ignore */ }
+  _initialized = true;
 }
 
 // Helpers retournent rows / first row
