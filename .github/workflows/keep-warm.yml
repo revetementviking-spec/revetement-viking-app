@@ -1,8 +1,12 @@
 name: Keep warm
 
-# Pinge l'endpoint de réchauffement pour éviter les démarrages à froid de la
-# fonction serverless (~1,7 s sinon à la première ouverture après une pause).
+# Évite les démarrages à froid (~1,7 s) des fonctions serverless du chemin
+# « ouvrir un projet ». Sur Vercel chaque route API est une fonction distincte,
+# donc on réchauffe précisément les routes réellement utilisées.
 # GitHub planifie au mieux toutes les 5 min (peut décaler en période de charge).
+#
+# Requiert le secret de dépôt APP_PASSWORD (Settings → Secrets and variables →
+# Actions → New repository secret), identique au mot de passe de l'app.
 
 on:
   schedule:
@@ -10,13 +14,24 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  ping:
+  warm:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /api/ping
+      - name: Warm real endpoints (authenticated)
+        env:
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          BASE: https://app.revetementviking.com
         run: |
-          for i in 1 2; do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 25 https://app.revetementviking.com/api/ping || true)
-            echo "Ping #$i → HTTP $code"
-            sleep 5
-          done
+          set -e
+          # Cookie d'auth = HMAC-SHA256("xpress-auth-v1", clé=APP_PASSWORD) en hex (cf. proxy.ts)
+          TOKEN=$(printf 'xpress-auth-v1' | openssl dgst -sha256 -hmac "$APP_PASSWORD" -hex | sed 's/^.*= //')
+          warm () {
+            code=$(curl -s -o /dev/null -w "%{http_code} %{time_total}s" --max-time 25 \
+              --cookie "xpress_auth=$TOKEN" "$BASE$1" || true)
+            echo "$1 → $code"
+          }
+          # endpoint public (réchauffe sa propre fonction + Turso)
+          curl -s -o /dev/null --max-time 25 "$BASE/api/ping" || true
+          # chemins réels d'ouverture d'un projet
+          warm "/api/projets"
+          warm "/api/projets/1/full"
