@@ -46,17 +46,19 @@ describe("dateISOLocale (anti-bug timezone)", () => {
   });
 });
 
-describe("periodeBiHebdo", () => {
-  it("regroupe deux dates de la même quinzaine ensemble", () => {
-    const p1 = periodeBiHebdo("2026-01-04");
-    const p2 = periodeBiHebdo("2026-01-17");
-    expect(p1.debut).toBe(p2.debut);
-    expect(p1.debut).toBe("2026-01-04");
-    expect(p1.fin).toBe("2026-01-17");
+describe("periodeBiHebdo (ancrage lundi 18 mai 2026)", () => {
+  it("regroupe les 2 semaines de travail consécutives dans la MÊME période", () => {
+    // Cas réel Gabriel : 19-23 mai (semaine 1) et 25-27 mai (semaine 2)
+    const p1 = periodeBiHebdo("2026-05-19");
+    const p2 = periodeBiHebdo("2026-05-27");
+    expect(p1.debut).toBe("2026-05-18");
+    expect(p1.fin).toBe("2026-05-31");
+    expect(p2.debut).toBe(p1.debut); // même quinzaine
   });
-  it("sépare deux quinzaines différentes", () => {
-    const p1 = periodeBiHebdo("2026-01-04");
-    const p2 = periodeBiHebdo("2026-01-18");
+  it("sépare la quinzaine suivante (1er juin)", () => {
+    const p1 = periodeBiHebdo("2026-05-27");
+    const p2 = periodeBiHebdo("2026-06-01");
+    expect(p2.debut).toBe("2026-06-01");
     expect(p1.debut).not.toBe(p2.debut);
   });
 });

@@ -25,8 +25,13 @@ export function dateISOLocale(iso: string): Date {
   return new Date(y, (m || 1) - 1, d || 1);
 }
 
-/** Période bi-hebdo (14 jours) contenant une date, ancrée sur 2026-01-04 (dimanche). */
-export function periodeBiHebdo(dateStr: string, ancreISO = "2026-01-04"): { debut: string; fin: string } {
+// Ancrage des périodes de paie : LUNDI 18 mai 2026 (choisi par Gabriel).
+// Les quinzaines vont donc lundi → dimanche 2 semaines plus tard
+// (ex : 2026-05-18 → 2026-05-31, puis 2026-06-01 → 2026-06-14...).
+export const ANCRE_PAIE = "2026-05-18";
+
+/** Période bi-hebdo (14 jours) contenant une date, ancrée sur ANCRE_PAIE (lundi). */
+export function periodeBiHebdo(dateStr: string, ancreISO = ANCRE_PAIE): { debut: string; fin: string } {
   const ancre = dateISOLocale(ancreISO);
   const d = dateISOLocale(dateStr);
   const diffJours = Math.floor((d.getTime() - ancre.getTime()) / 86400000);

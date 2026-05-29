@@ -1052,7 +1052,14 @@ export async function nettoyerPayePeriodesOrphelines(): Promise<number> {
   let deleted = 0;
   for (const p of periodes) {
     if (p.paye) continue; // jamais supprimer une paye marquée payée
-    // Vérifier s'il existe des heures pour cet employé dans cette période
+    // 1. Borne mal alignée avec l'ancrage de paie actuel → période obsolète, on supprime.
+    const aligne = periodeBiHebdoCalc(p.debut);
+    if (aligne.debut !== p.debut || aligne.fin !== p.fin) {
+      await run("DELETE FROM paies_periodes WHERE id = ?", [p.id]);
+      deleted++;
+      continue;
+    }
+    // 2. Aucune heure réelle dans la période → orpheline, on supprime.
     const r = await one<{ n: number }>(
       "SELECT COUNT(*) as n FROM heures_projet WHERE employe = ? AND date >= ? AND date <= ?",
       [p.employe, p.debut, p.fin]
