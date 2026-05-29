@@ -25,6 +25,9 @@ export default function ClientsPage() {
   const [filtreStatut, setFiltreStatut] = useState("");
   const [recherche, setRecherche] = useState("");
   const [vue, setVue] = useState<"clients" | "pipeline">("clients");
+  const [modeAffichage, setModeAffichage] = useState<"liste" | "tableau">("liste");
+  const [triCol, setTriCol] = useState<"nom" | "statut" | "telephone" | "adresse" | "source" | "projets" | "paye">("nom");
+  const [triAsc, setTriAsc] = useState(true);
   const [nouveau, setNouveau] = useState({ nom: "", courriel: "", telephone: "", adresse: "", notes: "", statut: "prospect", source: "", tags: "" });
   const { toast } = useToast();
 
@@ -175,9 +178,13 @@ export default function ClientsPage() {
           </section>
         )}
 
-        {/* Recherche */}
-        <div className="flex gap-2 flex-wrap">
+        {/* Recherche + toggle Liste/Tableau */}
+        <div className="flex gap-2 flex-wrap items-center">
           <input type="search" placeholder="🔍 Rechercher (nom, courriel, téléphone, tag)..." value={recherche} onChange={(e) => setRecherche(e.target.value)} className="flex-1 min-w-48 px-3 py-2 border rounded text-sm" />
+          <div className="flex gap-1 bg-white border rounded-lg p-1">
+            <button onClick={() => setModeAffichage("liste")} className={`px-3 py-1.5 rounded text-xs font-semibold ${modeAffichage === "liste" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>📋 Liste</button>
+            <button onClick={() => setModeAffichage("tableau")} className={`px-3 py-1.5 rounded text-xs font-semibold ${modeAffichage === "tableau" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>📊 Tableau</button>
+          </div>
           {filtreStatut && <button onClick={() => setFiltreStatut("")} className="px-3 py-2 bg-slate-200 hover:bg-slate-300 rounded text-xs font-semibold">✕ Filtre {STATUTS_CRM[filtreStatut].label}</button>}
           <button
             onClick={() => {
@@ -200,6 +207,83 @@ export default function ClientsPage() {
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucun contact</h3>
             <button onClick={() => setCreerOuvert(true)} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold">➕ Premier client</button>
           </div>
+        ) : modeAffichage === "tableau" ? (
+          (() => {
+            const trier = (col: any) => { if (triCol === col) setTriAsc(!triAsc); else { setTriCol(col); setTriAsc(true); } };
+            const mult = triAsc ? 1 : -1;
+            const cmp = (a: any, b: any) => {
+              const va = (() => { switch (triCol) {
+                case "nom": return (a.nom || "").toLowerCase();
+                case "statut": return a.statut || "";
+                case "telephone": return a.telephone || "";
+                case "adresse": return (a.adresse || "").toLowerCase();
+                case "source": return a.source || "";
+                case "projets": return projetsParClient(a.id).length;
+                case "paye": return projetsParClient(a.id).reduce((s, p) => s + (p.total_paye || 0), 0);
+              }})();
+              const vb = (() => { switch (triCol) {
+                case "nom": return (b.nom || "").toLowerCase();
+                case "statut": return b.statut || "";
+                case "telephone": return b.telephone || "";
+                case "adresse": return (b.adresse || "").toLowerCase();
+                case "source": return b.source || "";
+                case "projets": return projetsParClient(b.id).length;
+                case "paye": return projetsParClient(b.id).reduce((s, p) => s + (p.total_paye || 0), 0);
+              }})();
+              if (typeof va === "number" && typeof vb === "number") return mult * (va - vb);
+              return mult * String(va).localeCompare(String(vb));
+            };
+            const listeTriee = [...clientsFiltres].sort(cmp);
+            const Th = ({ k, label, align }: { k: any; label: string; align?: "right" }) => (
+              <th onClick={() => trier(k)} className={`p-2 cursor-pointer select-none hover:bg-slate-200 ${align === "right" ? "text-right" : "text-left"}`}>
+                {label} {triCol === k && <span className="text-emerald-600">{triAsc ? "▲" : "▼"}</span>}
+              </th>
+            );
+            return (
+              <section className="bg-white rounded-lg shadow overflow-x-auto">
+                <table className="w-full text-sm min-w-max">
+                  <thead className="bg-slate-100 text-xs uppercase">
+                    <tr>
+                      <Th k="nom" label="Nom" />
+                      <Th k="statut" label="Statut" />
+                      <Th k="telephone" label="Téléphone" />
+                      <th className="p-2 text-left">Courriel</th>
+                      <Th k="adresse" label="Adresse" />
+                      <Th k="source" label="Source" />
+                      <th className="p-2 text-left">Tags</th>
+                      <Th k="projets" label="Projets" align="right" />
+                      <Th k="paye" label="Encaissé" align="right" />
+                      <th className="p-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {listeTriee.map((c) => {
+                      const pc = projetsParClient(c.id);
+                      const totalPaye = pc.reduce((s, p) => s + (p.total_paye || 0), 0);
+                      const statutInfo = STATUTS_CRM[c.statut || "prospect"];
+                      return (
+                        <tr key={c.id} className="border-t hover:bg-slate-50">
+                          <td className="p-2 font-semibold"><a href={`/clients/${c.id}`} className="text-slate-900 hover:underline">{c.nom}</a></td>
+                          <td className="p-2"><span className={`text-[10px] px-2 py-0.5 rounded ${statutInfo.couleur}`}>{statutInfo.label}</span></td>
+                          <td className="p-2 whitespace-nowrap">{c.telephone ? <a href={`tel:${c.telephone}`} className="text-blue-600 hover:underline">{c.telephone}</a> : <span className="text-slate-300">—</span>}</td>
+                          <td className="p-2 max-w-[200px] truncate">{c.courriel ? <a href={`mailto:${c.courriel}`} className="text-blue-600 hover:underline">{c.courriel}</a> : <span className="text-slate-300">—</span>}</td>
+                          <td className="p-2 max-w-[220px] truncate text-slate-600">{c.adresse || "—"}</td>
+                          <td className="p-2 text-xs text-slate-500">{c.source || "—"}</td>
+                          <td className="p-2"><div className="flex flex-wrap gap-1">{c.tags ? c.tags.split(",").slice(0, 3).map((t: string, i: number) => <span key={i} className="text-[10px] bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded">{t.trim()}</span>) : <span className="text-slate-300">—</span>}</div></td>
+                          <td className="p-2 text-right font-bold">{pc.length}</td>
+                          <td className="p-2 text-right font-bold text-emerald-700 whitespace-nowrap">{formatCAD(totalPaye)}</td>
+                          <td className="p-2 text-right whitespace-nowrap">
+                            <a href={`/clients/${c.id}`} className="text-xs text-emerald-700 hover:underline mr-2">✏️</a>
+                            <button onClick={() => supprimer(c.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </section>
+            );
+          })()
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {clientsFiltres.map((c) => {
