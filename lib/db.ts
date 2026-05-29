@@ -667,6 +667,13 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id AND payee = 1), 0) as total_paye
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
 
+/** Réchauffement : initialise la connexion + une requête triviale (garde Turso chaud). */
+export async function pingDb(): Promise<boolean> {
+  await initDb();
+  await one("SELECT 1 as ok");
+  return true;
+}
+
 export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]> {
   // Cache court (10 s) invalidé par toute écriture — la liste (PROJ_SQL = 5 sous-requêtes
   // par projet) est l'une des plus lourdes ; les ouvertures répétées deviennent instantanées.
