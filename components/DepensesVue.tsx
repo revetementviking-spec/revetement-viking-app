@@ -242,6 +242,7 @@ export default function DepensesVue() {
                   <ThTri label="Projet" col="projet" actuel={triCol} sens={triSens} onClick={trier} />
                   <ThTri label="Montant" col="montant" actuel={triCol} sens={triSens} onClick={trier} align="right" />
                   <th className="p-2 text-center">Reçu</th>
+                  <th className="p-2 text-left">Saisi par</th>
                   <th className="p-2 text-right">Actions</th>
                 </tr>
               </thead>
@@ -268,6 +269,9 @@ export default function DepensesVue() {
                           <span className="text-slate-300">—</span>
                         )}
                       </td>
+                      <td className="p-2 text-xs">
+                        {d.ajoute_par ? <span className={`px-2 py-0.5 rounded font-semibold ${d.ajoute_par === "Francis" ? "bg-emerald-100 text-emerald-900" : "bg-blue-100 text-blue-900"}`}>👤 {d.ajoute_par}</span> : <span className="text-slate-300">—</span>}
+                      </td>
                       <td className="p-2 text-right whitespace-nowrap">
                         <button onClick={() => setEditing({ ...d })} className="text-xs text-emerald-700 hover:underline mr-2">✏️</button>
                         <button onClick={() => supprimer(d.id)} className="text-xs text-red-600 hover:underline">🗑</button>
@@ -280,7 +284,7 @@ export default function DepensesVue() {
                 <tr>
                   <td className="p-2" colSpan={6}>TOTAL {filtrees.length} entrée(s)</td>
                   <td className="p-2 text-right text-orange-700">{formatCAD(total)}</td>
-                  <td colSpan={2}></td>
+                  <td colSpan={3}></td>
                 </tr>
               </tfoot>
             </table>

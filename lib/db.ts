@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -130,6 +130,16 @@ async function doInitDb() {
   await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_destinataire TEXT");
   await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_message_id TEXT");
   await tryExec("ALTER TABLE pipeline_contrats ADD COLUMN courriel_erreur TEXT");
+  // « Ajouté par » sur les principales entités (qui a saisi cette dépense / heure / etc.)
+  await tryExec("ALTER TABLE depenses_projet ADD COLUMN ajoute_par TEXT");
+  await tryExec("ALTER TABLE heures_projet ADD COLUMN ajoute_par TEXT");
+  await tryExec("ALTER TABLE projets ADD COLUMN cree_par TEXT");
+  await tryExec("ALTER TABLE projets ADD COLUMN modifie_par TEXT");
+  await tryExec("ALTER TABLE photos_chantier ADD COLUMN ajoute_par TEXT");
+  await tryExec("ALTER TABLE factures_projet ADD COLUMN ajoute_par TEXT");
+  await tryExec("ALTER TABLE clients ADD COLUMN cree_par TEXT");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_ajoute_par ON depenses_projet(ajoute_par)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_heures_ajoute_par ON heures_projet(ajoute_par)");
   // Audit : qui a fait l'action ?
   await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
@@ -768,7 +778,7 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   p.date_debut, p.date_fin_prevue, p.date_fin_reelle, p.budget_estime, p.heures_estimees,
   p.prix_contrat, p.facture_finale_type, (p.facture_finale_data IS NOT NULL) as a_facture_finale,
   p.contrat_signe_type, (p.contrat_signe_data IS NOT NULL) as a_contrat_signe,
-  p.reno_assistance, p.soumission_numero, p.date_creation,
+  p.reno_assistance, p.cree_par, p.modifie_par, p.soumission_numero, p.date_creation,
   c.nom as client_nom, c.courriel as client_courriel,
   COALESCE((SELECT SUM(heures) FROM heures_projet WHERE projet_id = p.id), 0) as total_heures,
   COALESCE((SELECT SUM(heures * taux_horaire) FROM heures_projet WHERE projet_id = p.id), 0) as cout_main_oeuvre,
@@ -1040,17 +1050,17 @@ export async function genererNumeroProjet(): Promise<string> {
 export async function ajouterProjet(p: Projet): Promise<number> {
   const numero = (p as any).numero || await genererNumeroProjet();
   const r = await run(
-    `INSERT INTO projets (numero, client_id, nom, adresse_chantier, description, statut, date_debut, date_fin_prevue, soumission_numero, budget_estime, heures_estimees, prix_contrat, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO projets (numero, client_id, nom, adresse_chantier, description, statut, date_debut, date_fin_prevue, soumission_numero, budget_estime, heures_estimees, prix_contrat, cree_par, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [numero, p.client_id || null, p.nom, p.adresse_chantier || null, p.description || null,
      p.statut || 'actif', p.date_debut || null, p.date_fin_prevue || null,
      p.soumission_numero || null, p.budget_estime || null, p.heures_estimees || null,
-     (p as any).prix_contrat || null,
+     (p as any).prix_contrat || null, (p as any).cree_par || null,
      new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
 export async function modifierProjet(id: number, p: Partial<Projet>) {
-  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance'];
+  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'modifie_par'];
   const definis = champs.filter(k => (p as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');
@@ -1072,10 +1082,10 @@ export interface HeureProjet {
 export async function listerHeuresProjet(projet_id: number) {
   return await all<HeureProjet>("SELECT * FROM heures_projet WHERE projet_id = ? ORDER BY date DESC, id DESC", [projet_id]);
 }
-export async function ajouterHeureProjet(h: HeureProjet): Promise<number> {
+export async function ajouterHeureProjet(h: HeureProjet & { ajoute_par?: string }): Promise<number> {
   const r = await run(
-    `INSERT INTO heures_projet (projet_id, date, heures, description, employe, taux_horaire, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [h.projet_id, h.date, h.heures, h.description || null, h.employe || null, h.taux_horaire ?? 90, new Date().toISOString()]
+    `INSERT INTO heures_projet (projet_id, date, heures, description, employe, taux_horaire, ajoute_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [h.projet_id, h.date, h.heures, h.description || null, h.employe || null, h.taux_horaire ?? 90, h.ajoute_par || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
@@ -1186,7 +1196,7 @@ export interface DepenseProjet {
   recu_data?: string; recu_type?: string;
 }
 // Colonnes sans le blob recu_data (perf : envoie juste un flag a_recu)
-const DEPENSES_COLS_LITES = "id, projet_id, date, montant, fournisseur, description, categorie, recu_type, (recu_data IS NOT NULL) as a_recu";
+const DEPENSES_COLS_LITES = "id, projet_id, date, montant, fournisseur, description, categorie, recu_type, ajoute_par, (recu_data IS NOT NULL) as a_recu";
 export async function listerDepensesProjet(projet_id: number | null, options: { sansData?: boolean } = {}) {
   const cols = options.sansData ? DEPENSES_COLS_LITES : "*";
   if (projet_id === null) return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id IS NULL ORDER BY date DESC`);
@@ -1200,10 +1210,10 @@ export async function fournisseursConnus(): Promise<string[]> {
   const rows = await all<{ fournisseur: string }>("SELECT DISTINCT fournisseur FROM depenses_projet WHERE fournisseur IS NOT NULL AND fournisseur != '' ORDER BY fournisseur ASC");
   return rows.map(r => r.fournisseur);
 }
-export async function ajouterDepenseProjet(d: DepenseProjet): Promise<number> {
+export async function ajouterDepenseProjet(d: DepenseProjet & { ajoute_par?: string }): Promise<number> {
   const r = await run(
-    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [d.projet_id || null, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, d.recu_data || null, d.recu_type || null, new Date().toISOString()]
+    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, ajoute_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [d.projet_id || null, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, d.recu_data || null, d.recu_type || null, d.ajoute_par || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }

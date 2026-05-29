@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listerProjets, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { utilisateurActif } from "@/lib/authUser";
+import { journaliser } from "@/lib/audit";
 
 function ok(data: any, init?: ResponseInit) {
   // no-store : les chiffres (marge, coûts) doivent toujours être frais après
@@ -52,7 +54,9 @@ export async function POST(req: NextRequest) {
     if (!body.client_id && body.client_nom) {
       body.client_id = await trouverOuCreerClient(body.client_nom);
     }
-    const id = await ajouterProjet(body);
+    const user = await utilisateurActif(req);
+    const id = await ajouterProjet({ ...body, cree_par: user || undefined });
+    journaliser("projet.cree", { ref_type: "projet", ref_id: id, utilisateur: user || undefined, description: body.nom || `Projet #${id}` });
     return ok({ ok: true, id });
   } catch (e) { return fail(e); }
 }
@@ -61,7 +65,9 @@ export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json();
     if (!body.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
-    await modifierProjet(body.id, body);
+    const user = await utilisateurActif(req);
+    await modifierProjet(body.id, { ...body, modifie_par: user });
+    journaliser("projet.statut_change", { ref_type: "projet", ref_id: body.id, utilisateur: user || undefined, description: `Modif ${Object.keys(body).filter(k => k !== "id").join(", ")}` });
     return ok({ ok: true });
   } catch (e) { return fail(e); }
 }
@@ -70,7 +76,9 @@ export async function DELETE(req: NextRequest) {
   try {
     const id = req.nextUrl.searchParams.get("id");
     if (!id) return NextResponse.json({ error: "id requis" }, { status: 400 });
+    const user = await utilisateurActif(req);
     await supprimerProjet(+id);
+    journaliser("projet.supprime", { ref_type: "projet", ref_id: id, utilisateur: user || undefined, description: `Suppression projet #${id}` });
     return ok({ ok: true });
   } catch (e) { return fail(e); }
 }

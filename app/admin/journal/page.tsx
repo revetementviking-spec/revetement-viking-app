@@ -46,7 +46,7 @@ export default function PageJournal() {
           <button
             onClick={() => {
               const rows = activites.map((a) => ({
-                date: a.date, type: a.type, ref: `${a.ref_type || ""}/${a.ref_id || ""}`,
+                date: a.date, utilisateur: a.utilisateur || "", type: a.type, ref: `${a.ref_type || ""}/${a.ref_id || ""}`,
                 description: a.description || "", ip: a.ip || "",
               }));
               exporterCSV(`journal-${new Date().toISOString().slice(0, 10)}`, rows);
@@ -71,6 +71,7 @@ export default function PageJournal() {
               <thead className="bg-slate-100 text-xs uppercase text-slate-600">
                 <tr>
                   <th className="p-2 text-left">Quand</th>
+                  <th className="p-2 text-left">Qui</th>
                   <th className="p-2 text-left">Type</th>
                   <th className="p-2 text-left">Référence</th>
                   <th className="p-2 text-left">Description</th>
@@ -81,6 +82,9 @@ export default function PageJournal() {
                 {activites.map((a) => (
                   <tr key={a.id} className="border-t hover:bg-slate-50 vk-lazy-render">
                     <td className="p-2 text-xs text-slate-600 whitespace-nowrap">{new Date(a.date).toLocaleString("fr-CA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+                    <td className="p-2 whitespace-nowrap">
+                      {a.utilisateur ? <span className={`text-xs px-2 py-0.5 rounded font-bold ${a.utilisateur === "Francis" ? "bg-emerald-100 text-emerald-900" : "bg-blue-100 text-blue-900"}`}>👤 {a.utilisateur}</span> : <span className="text-xs text-slate-300">—</span>}
+                    </td>
                     <td className="p-2 whitespace-nowrap">
                       <span className="mr-1">{ICONES[a.type] || "•"}</span>
                       <code className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded">{a.type}</code>
