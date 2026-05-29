@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
-import { compresserImage } from "@/lib/img";
+import { compresserImage, genererVignette } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
 
@@ -64,11 +64,12 @@ export default function ModalPhotos({ ouvert, onClose, onSuccess, projetIdInitia
           data = await compresserImage(f);
           type = "image/jpeg";
         }
+        const thumb = await genererVignette(f).catch(() => null);
         await fetch("/api/photos", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projet_id, date, description: description || f.name,
-            photo_data: data, photo_type: type, employes: "Manuel",
+            photo_data: data, photo_type: type, employes: "Manuel", thumb_data: thumb,
           }),
         });
         setProgress({ total: files.length, done: i + 1 });

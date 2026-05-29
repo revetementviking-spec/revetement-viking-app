@@ -1,17 +1,19 @@
-// Sert la photo binaire directement avec cache HTTP agressif
-// → 10-100x plus rapide qu'envoyer du base64 dans du JSON
+// Sert la photo binaire directement avec cache HTTP agressif.
+// ?thumb=1 → sert la vignette (~15ko) pour les grilles ; sinon le plein format.
 import { NextRequest, NextResponse } from "next/server";
-import { getPhotoChantier } from "@/lib/db";
+import { getVignettePhoto } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const { id } = await ctx.params;
-  const photo = await getPhotoChantier(+id);
-  if (!photo || !photo.photo_data) {
-    return new NextResponse("Not found", { status: 404 });
-  }
-  const m = String(photo.photo_data).match(/^data:([^;]+);base64,(.+)$/);
+  const veutThumb = req.nextUrl.searchParams.get("thumb") === "1";
+  const photo = await getVignettePhoto(+id);
+  if (!photo) return new NextResponse("Not found", { status: 404 });
+  // Vignette demandée et dispo → sert la vignette ; sinon fallback plein format
+  const source = veutThumb && photo.thumb_data ? photo.thumb_data : photo.photo_data;
+  if (!source) return new NextResponse("Not found", { status: 404 });
+  const m = String(source).match(/^data:([^;]+);base64,(.+)$/);
   if (!m) return new NextResponse("Invalid data", { status: 500 });
   const mime = m[1];
   const buf = Buffer.from(m[2], "base64");
@@ -20,9 +22,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
     headers: {
       "Content-Type": mime,
       "Content-Length": String(buf.length),
-      // Cache 30 jours, immutable car les photos ne sont jamais modifiées (id == content)
       "Cache-Control": "public, max-age=2592000, immutable",
-      "Content-Disposition": `inline; filename="photo-${id}.${mime.split("/")[1] || "bin"}"`,
+      "Content-Disposition": `inline; filename="photo-${id}${veutThumb ? "-thumb" : ""}.${mime.split("/")[1] || "bin"}"`,
     },
   });
 }

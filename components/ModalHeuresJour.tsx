@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
-import { compresserImage } from "@/lib/img";
+import { compresserImage, genererVignette } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; }
 interface LigneJour {
   projet_id: number; heures: string; description: string;
-  photos: { data: string; type: string; nom: string }[];
+  photos: { data: string; type: string; nom: string; thumb?: string | null }[];
   heure_debut: string; heure_fin: string; dejeuner_retire: boolean;
   /** Date spécifique à cette ligne (override la date globale si renseignée) */
   date?: string;
@@ -76,7 +76,8 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
     if (file.size > 20 * 1024 * 1024) { toast("Photo > 20 MB", "warning"); return; }
     try {
       const data = await compresserImage(file);
-      setLignes((prev) => prev.map((l, i) => i === ligneIdx ? { ...l, photos: [...l.photos, { data, type: "image/jpeg", nom: file.name }] } : l));
+      const thumb = await genererVignette(file).catch(() => null);
+      setLignes((prev) => prev.map((l, i) => i === ligneIdx ? { ...l, photos: [...l.photos, { data, type: "image/jpeg", nom: file.name, thumb }] } : l));
     } catch (e: any) {
       toast("Erreur compression : " + e.message, "error");
     }
@@ -199,7 +200,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess }: Props) {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               projet_id: l.projet_id, date: l.date || date, employes: nomsEmps,
-              photo_data: p.data, photo_type: p.type, description: l.description || p.nom,
+              photo_data: p.data, photo_type: p.type, description: l.description || p.nom, thumb_data: p.thumb || null,
             }),
           }));
         }

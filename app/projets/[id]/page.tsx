@@ -311,7 +311,7 @@ export default function ProjetDetail() {
                               className="block w-full"
                             >
                               <img
-                                src={`/api/photos/${p.id}`}
+                                src={`/api/photos/${p.id}?thumb=1`}
                                 alt={p.description || ""}
                                 loading="lazy"
                                 decoding="async"
@@ -804,7 +804,7 @@ function PhotoUploader({ projet_id, onUpload }: { projet_id: number; onUpload: (
 
   const upload = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const { compresserImage } = await import("@/lib/img");
+    const { compresserImage, genererVignette } = await import("@/lib/img");
     setBusy(true);
     setProgress({ total: files.length, done: 0 });
     try {
@@ -812,9 +812,10 @@ function PhotoUploader({ projet_id, onUpload }: { projet_id: number; onUpload: (
         const f = files[i];
         if (f.size > 20 * 1024 * 1024) continue;
         const data = await compresserImage(f);
+        const thumb = await genererVignette(f).catch(() => null);
         await fetch("/api/photos", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projet_id, date, description: description || f.name, photo_data: data, photo_type: "image/jpeg", employes: "Manuel" }),
+          body: JSON.stringify({ projet_id, date, description: description || f.name, photo_data: data, photo_type: "image/jpeg", employes: "Manuel", thumb_data: thumb }),
         });
         setProgress({ total: files.length, done: i + 1 });
       }

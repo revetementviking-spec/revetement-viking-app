@@ -52,6 +52,37 @@ export async function compresserImage(file: File): Promise<string> {
   });
 }
 
+/** Génère une VIGNETTE (max 400px, qualité 0.6) — ~10-30 ko.
+ *  Affiche les grilles de photos sans télécharger les images pleine taille.
+ *  Retourne null pour PDF/vidéos. */
+export async function genererVignette(file: File, maxDim = 400, qualite = 0.6): Promise<string | null> {
+  if (!file.type.startsWith("image/")) return null;
+  const dataUrl = await new Promise<string>((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result as string);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  return await new Promise<string | null>((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+        else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return resolve(null);
+      ctx.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL("image/jpeg", qualite));
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  });
+}
+
 /** Retourne la taille en ko d'une string base64 dataURL */
 export function tailleBase64Ko(dataUrl: string): number {
   return Math.round((dataUrl.length * 0.75) / 1024);

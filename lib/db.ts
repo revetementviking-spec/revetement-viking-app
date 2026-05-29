@@ -80,6 +80,7 @@ export async function initDb() {
   // Drive sync status sur photos
   await tryExec("ALTER TABLE photos_chantier ADD COLUMN drive_file_id TEXT");
   await tryExec("ALTER TABLE photos_chantier ADD COLUMN drive_sync_error TEXT");
+  await tryExec("ALTER TABLE photos_chantier ADD COLUMN thumb_data TEXT"); // vignette ~15ko pour grilles rapides
   // Audit trail / journal activité (Big Four-grade)
   await tryExec(`CREATE TABLE IF NOT EXISTS journal_activite (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -825,11 +826,12 @@ export async function modifierDepenseProjet(id: number, d: Partial<DepenseProjet
 export interface PhotoChantier {
   id?: number; projet_id: number; date: string;
   employes?: string; photo_data: string; photo_type?: string;
-  description?: string; date_saisie?: string;
+  description?: string; date_saisie?: string; thumb_data?: string;
 }
 export async function listerPhotosChantier(projet_id?: number, options: { sansData?: boolean } = {}): Promise<any[]> {
+  // sansData : on exclut le blob plein-format mais on garde la vignette (légère) + flag
   const cols = options.sansData
-    ? "id, projet_id, date, employes, photo_type, description, date_saisie"
+    ? "id, projet_id, date, employes, photo_type, description, date_saisie, thumb_data, (thumb_data IS NOT NULL) as a_thumb"
     : "*";
   if (projet_id) {
     return await all<any>(`SELECT ${cols} FROM photos_chantier WHERE projet_id = ? ORDER BY date DESC, id DESC`, [projet_id]);
@@ -839,10 +841,13 @@ export async function listerPhotosChantier(projet_id?: number, options: { sansDa
 export async function getPhotoChantier(id: number): Promise<PhotoChantier | null> {
   return await one<PhotoChantier>("SELECT * FROM photos_chantier WHERE id = ?", [id]);
 }
+export async function getVignettePhoto(id: number): Promise<{ thumb_data?: string; photo_data?: string; photo_type?: string } | null> {
+  return await one<any>("SELECT thumb_data, photo_data, photo_type FROM photos_chantier WHERE id = ?", [id]);
+}
 export async function ajouterPhotoChantier(p: PhotoChantier): Promise<number> {
   const r = await run(
-    `INSERT INTO photos_chantier (projet_id, date, employes, photo_data, photo_type, description, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [p.projet_id, p.date, p.employes || null, p.photo_data, p.photo_type || null, p.description || null, new Date().toISOString()]
+    `INSERT INTO photos_chantier (projet_id, date, employes, photo_data, photo_type, description, date_saisie, thumb_data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [p.projet_id, p.date, p.employes || null, p.photo_data, p.photo_type || null, p.description || null, new Date().toISOString(), p.thumb_data || null]
   );
   return r.lastInsertRowid;
 }
