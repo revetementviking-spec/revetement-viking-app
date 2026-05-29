@@ -477,8 +477,16 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             )}
           </section>
 
-          {/* COMMENTAIRES (fil) */}
-          <section>
+          {/* COMMENTAIRES (fil) avec autocomplete @mention */}
+          <CommentairesSection
+            commentaires={commentaires}
+            nouveauComm={nouveauComm}
+            setNouveauComm={setNouveauComm}
+            posterComm={posterComm}
+            supprimerComm={supprimerComm}
+          />
+          {/* Section de remplacement ci-dessus rend l'ancien bloc inutile */}
+          {false && <section>
             <label className="block text-xs font-medium text-slate-600 mb-1">💬 Fil de discussion ({commentaires.length})</label>
             <div className="space-y-2 mb-2 max-h-64 overflow-y-auto">
               {commentaires.map((c) => {
@@ -507,7 +515,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
               <textarea value={nouveauComm} onChange={(e) => setNouveauComm(e.target.value)} rows={2} placeholder="Ajouter un commentaire… @Gabriel ou @Francis pour notifier par courriel" className="flex-1 px-3 py-2 border rounded text-sm" />
               <button onClick={posterComm} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold self-stretch">Poster</button>
             </div>
-          </section>
+          </section>}
 
           {/* Fichiers — zone de drop */}
           <section>
@@ -554,6 +562,120 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
         </footer>
       </div>
     </div>
+  );
+}
+
+// === FIL DE DISCUSSION AVEC AUTOCOMPLETE @MENTION ===
+const UTILISATEURS_DISPO = ["Gabriel", "Francis"] as const;
+
+function CommentairesSection({ commentaires, nouveauComm, setNouveauComm, posterComm, supprimerComm }: {
+  commentaires: any[]; nouveauComm: string; setNouveauComm: (v: string) => void; posterComm: () => void; supprimerComm: (id: number) => void;
+}) {
+  const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const [mentionOuvert, setMentionOuvert] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionIdx, setMentionIdx] = useState(0);
+
+  // Détecte si le curseur est dans un @-token et ouvre/ferme la liste
+  const onChange = (val: string) => {
+    setNouveauComm(val);
+    const ta = taRef.current;
+    if (!ta) return;
+    const pos = ta.selectionStart;
+    const avant = val.slice(0, pos);
+    const m = avant.match(/(?:^|\s)@(\w*)$/);
+    if (m) { setMentionOuvert(true); setMentionQuery(m[1]); setMentionIdx(0); }
+    else setMentionOuvert(false);
+  };
+
+  const suggestions = UTILISATEURS_DISPO.filter((u) => u.toLowerCase().startsWith(mentionQuery.toLowerCase()));
+
+  const choisirMention = (nom: string) => {
+    const ta = taRef.current; if (!ta) return;
+    const pos = ta.selectionStart;
+    const avant = nouveauComm.slice(0, pos);
+    const apres = nouveauComm.slice(pos);
+    const nouvAvant = avant.replace(/@\w*$/, `@${nom} `);
+    const next = nouvAvant + apres;
+    setNouveauComm(next);
+    setMentionOuvert(false);
+    // Repositionne le curseur juste après le nom + espace
+    setTimeout(() => {
+      const npos = nouvAvant.length;
+      ta.focus();
+      ta.setSelectionRange(npos, npos);
+    }, 0);
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOuvert && suggestions.length > 0) {
+      if (e.key === "ArrowDown") { e.preventDefault(); setMentionIdx((i) => (i + 1) % suggestions.length); return; }
+      if (e.key === "ArrowUp")   { e.preventDefault(); setMentionIdx((i) => (i - 1 + suggestions.length) % suggestions.length); return; }
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); choisirMention(suggestions[mentionIdx]); return; }
+      if (e.key === "Escape")    { e.preventDefault(); setMentionOuvert(false); return; }
+    } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault(); posterComm();
+    }
+  };
+
+  return (
+    <section>
+      <label className="block text-xs font-medium text-slate-600 mb-1">💬 Fil de discussion ({commentaires.length})</label>
+      <div className="space-y-2 mb-2 max-h-64 overflow-y-auto">
+        {commentaires.map((c: any) => {
+          const aMention = c.mentions ? String(c.mentions).split(",") : [];
+          return (
+            <div key={c.id} className="bg-slate-50 border-l-4 border-emerald-400 rounded p-2 text-sm">
+              <div className="flex justify-between items-start gap-2">
+                <strong className="text-emerald-800">👤 {c.auteur || "—"}</strong>
+                <span className="text-[10px] text-slate-500">{new Date(c.date_creation).toLocaleString("fr-CA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+              <div className="text-slate-800 whitespace-pre-wrap mt-0.5">
+                {String(c.texte).split(/(@Gabriel|@Francis)/gi).map((part: string, i: number) =>
+                  /^@(Gabriel|Francis)$/i.test(part)
+                    ? <span key={i} className="bg-yellow-100 text-yellow-900 font-bold px-1 rounded">{part}</span>
+                    : <span key={i}>{part}</span>
+                )}
+              </div>
+              {aMention.length > 0 && <div className="text-[10px] text-emerald-700 mt-1">📧 Envoyé à @{aMention.join(", @")}</div>}
+              <button onClick={() => supprimerComm(c.id)} className="text-[10px] text-red-600 hover:underline mt-1">Supprimer</button>
+            </div>
+          );
+        })}
+        {commentaires.length === 0 && <p className="text-xs text-slate-400 italic">Aucun commentaire. Lance la discussion ↓ — tape @ pour mentionner.</p>}
+      </div>
+
+      <div className="relative flex gap-2">
+        <div className="flex-1 relative">
+          <textarea
+            ref={taRef}
+            value={nouveauComm}
+            onChange={(e) => onChange(e.target.value)}
+            onKeyDown={onKeyDown}
+            rows={2}
+            placeholder="Ajouter un commentaire… tape @ pour mentionner Gabriel ou Francis (notification par courriel)"
+            className="w-full px-3 py-2 border rounded text-sm"
+          />
+          {mentionOuvert && suggestions.length > 0 && (
+            <div className="absolute bottom-full left-0 mb-1 bg-white border-2 border-emerald-400 rounded shadow-xl z-30 w-48">
+              <div className="px-2 py-1 text-[10px] text-slate-500 bg-slate-50 border-b">Mentionner…</div>
+              {suggestions.map((u, i) => (
+                <button
+                  key={u}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); choisirMention(u); }}
+                  className={`block w-full text-left px-3 py-1.5 text-sm font-semibold ${i === mentionIdx ? "bg-emerald-100 text-emerald-900" : "hover:bg-slate-100"}`}
+                >
+                  <span className="text-emerald-700">@</span>{u}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button onClick={posterComm} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold self-stretch">Poster</button>
+      </div>
+      <p className="text-[10px] text-slate-500 mt-1">💡 Tape <strong>@</strong> pour ouvrir la liste · ↑↓ pour naviguer · Entrée/Tab pour sélectionner · Ctrl/⌘+Entrée pour publier.</p>
+    </section>
   );
 }
 
