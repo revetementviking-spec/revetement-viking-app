@@ -125,6 +125,47 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     onUpdate();
   };
 
+  const genererContrat = async () => {
+    const prixStr = prompt(`Prix total du contrat pour « ${form.nom} » (avant ou avec taxes selon ton habitude) :`, "");
+    if (prixStr === null) return;
+    const prix = parseFloat(prixStr.replace(",", ".")) || 0;
+    const dateStr = prompt("Date de début des travaux (ex: 15 juin 2026) :", "");
+    if (dateStr === null) return;
+    const depotStr = prompt("% de dépôt à la signature (défaut 25) :", "25");
+    if (depotStr === null) return;
+    const depot = parseFloat(depotStr) || 25;
+    const soumNum = prompt("N° de devis/soumission lié (laisser vide si aucun) :", "") || "";
+
+    try {
+      const { genererContratBlob } = await import("@/lib/pdf-contrat");
+      const numero = `C-${new Date().getFullYear()}-${String(client.id).padStart(3, "0")}`;
+      const blob = await genererContratBlob({
+        numero,
+        charge_projet: moiUtilisateur || "Francis Quinchon",
+        client_nom: form.nom,
+        client_adresse: form.adresse,
+        client_telephone: form.telephone,
+        client_courriel: form.courriel,
+        proprietaire: form.nom,
+        soumission_numero: soumNum || undefined,
+        soumission_date: soumNum ? new Date().toLocaleDateString("fr-CA") : undefined,
+        date_debut_travaux: dateStr,
+        prix_total: prix,
+        depot_pct: depot,
+        notes_travaux: form.notes,
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Contrat-${numero}-${form.nom.replace(/[^a-z0-9]/gi, "_")}.pdf`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(`📝 Contrat ${numero} généré`, "success");
+    } catch (e: any) {
+      toast("Erreur génération PDF : " + (e?.message || ""), "error");
+    }
+  };
+
   const supprimerFiche = async () => {
     if (!confirm(`Supprimer la fiche de « ${form.nom} » ?\n\nCette action retire le client du CRM/pipeline.${form.projet_lien_id ? `\n\n⚠️ Le projet lié (#${form.projet_lien_id}) reste intact dans /projets.` : ""}`)) return;
     const r = await fetch(`/api/clients?id=${client.id}`, { method: "DELETE" });
@@ -217,6 +258,7 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
             <div className="text-xs opacity-90 truncate">{form.adresse || "Sans adresse"}</div>
             {moiUtilisateur && <div className="text-[10px] opacity-75 mt-0.5">Connecté en tant que <strong>{moiUtilisateur}</strong></div>}
           </div>
+          <button onClick={genererContrat} className="text-xs px-3 py-1.5 rounded font-bold bg-amber-400 text-amber-900 hover:bg-amber-300" title="Générer le contrat PDF (template Viking)">📝 Contrat</button>
           <button onClick={marquerAccepte} className={`text-xs px-3 py-1.5 rounded font-bold ${form.pipeline_stage === "accepte" ? "bg-emerald-300 text-emerald-900" : "bg-white text-emerald-800 hover:bg-emerald-50"}`}>
             {form.pipeline_stage === "accepte" ? "✓ Accepté" : "✅ Marquer accepté"}
           </button>
