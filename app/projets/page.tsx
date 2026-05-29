@@ -106,16 +106,11 @@ export default function ProjetsPage() {
       <Navigation
         titre="🏗️ Projets"
         soustitre={`${projets.length} projet(s)${filtre ? ` · ${STATUTS[filtre]?.label}` : ""}`}
-        actions={
-          <button onClick={() => setCreerOuvert(true)} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold text-left">
-            ➕ Nouveau projet
-          </button>
-        }
       />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
-        {/* Bouton Nouveau projet — toujours visible (surtout mobile) */}
-        <button onClick={() => setCreerOuvert(true)} className="md:hidden w-full px-4 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white rounded-lg font-bold shadow">
+        {/* Bouton Nouveau projet — toujours visible (mobile + desktop) */}
+        <button onClick={() => setCreerOuvert(true)} className="w-full md:w-auto px-4 py-3 bg-emerald-600 hover:bg-emerald-500 active:scale-[0.99] text-white rounded-lg font-bold shadow">
           ➕ Nouveau projet
         </button>
 
