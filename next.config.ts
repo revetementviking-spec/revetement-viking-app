@@ -28,9 +28,14 @@ const nextConfig: NextConfig = {
         headers: [{ key: "X-DNS-Prefetch-Control", value: "on" }],
       },
       {
-        // Logo + manifest : cache 7 jours (les icônes /icon /apple-icon sont gérées par Next)
-        source: "/:file(logo-viking.svg|manifest.json)",
-        headers: [{ key: "Cache-Control", value: "public, max-age=604800" }],
+        // manifest.json : cache court (1h) — il peut changer (shortcuts, icônes)
+        source: "/manifest.json",
+        headers: [{ key: "Cache-Control", value: "public, max-age=3600, must-revalidate" }],
+      },
+      {
+        // Logo : cache 1 jour
+        source: "/logo-viking.svg",
+        headers: [{ key: "Cache-Control", value: "public, max-age=86400" }],
       },
     ];
   },
