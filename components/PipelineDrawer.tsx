@@ -82,11 +82,59 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   };
 
   const marquerAccepte = async () => {
-    const futur = form.pipeline_stage === "accepte" ? "info_1" : "accepte";
-    setForm({ ...form, pipeline_stage: futur });
-    await fetch("/api/clients", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: client.id, pipeline_stage: futur }) });
-    toast(futur === "accepte" ? "✅ Marqué Projet accepté" : "↩ Remis en début de pipeline", "success");
+    // Si on RETIRE le statut accepté (toggle off), juste changer le stage
+    if (form.pipeline_stage === "accepte") {
+      setForm({ ...form, pipeline_stage: "info_1" });
+      await fetch("/api/clients", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: client.id, pipeline_stage: "info_1" }) });
+      toast("↩ Remis en début de pipeline", "info");
+      onUpdate();
+      return;
+    }
+    // Sinon on accepte : proposer la création d'un VRAI projet (devient actif sur tous les dashboards)
+    let nouveauProjetId: number | null = form.projet_lien_id || null;
+    if (!nouveauProjetId) {
+      const prixStr = prompt(`Convertir « ${form.nom} » en projet actif.\n\nPrix du contrat (laisser vide pour 0) :`, "");
+      if (prixStr === null) return; // utilisateur a annulé
+      const prix = parseFloat(prixStr.replace(",", ".")) || 0;
+      // 1. trouver ou créer le client_id dans projets — utiliser le nom du client comme nom de projet
+      const r = await fetch("/api/projets", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nom: form.nom,
+          client_nom: form.nom,
+          adresse_chantier: form.adresse,
+          description: form.notes,
+          prix_contrat: prix || null,
+          budget_estime: prix || null,
+          statut: "actif",
+          date_debut: new Date().toISOString().slice(0, 10),
+          reno_assistance: 0,
+        }),
+      });
+      const d = await r.json();
+      if (!d.ok) { toast("Erreur création projet", "error"); return; }
+      nouveauProjetId = d.id;
+    }
+    // 2. lier le client au projet + déplacer dans pipeline_stage = accepte
+    setForm({ ...form, pipeline_stage: "accepte", projet_lien_id: nouveauProjetId });
+    await fetch("/api/clients", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: client.id, pipeline_stage: "accepte", projet_lien_id: nouveauProjetId, statut: "actif" }),
+    });
+    toast(`✅ Projet créé et actif sur les dashboards`, "success");
     onUpdate();
+  };
+
+  const supprimerFiche = async () => {
+    if (!confirm(`Supprimer la fiche de « ${form.nom} » ?\n\nCette action retire le client du CRM/pipeline.${form.projet_lien_id ? `\n\n⚠️ Le projet lié (#${form.projet_lien_id}) reste intact dans /projets.` : ""}`)) return;
+    const r = await fetch(`/api/clients?id=${client.id}`, { method: "DELETE" });
+    if (r.ok) {
+      toast("Fiche supprimée", "success");
+      onClose();
+      onUpdate();
+    } else {
+      toast("Erreur suppression", "error");
+    }
   };
 
   const sauver = async () => {
@@ -172,6 +220,9 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
           <button onClick={marquerAccepte} className={`text-xs px-3 py-1.5 rounded font-bold ${form.pipeline_stage === "accepte" ? "bg-emerald-300 text-emerald-900" : "bg-white text-emerald-800 hover:bg-emerald-50"}`}>
             {form.pipeline_stage === "accepte" ? "✓ Accepté" : "✅ Marquer accepté"}
           </button>
+          {form.projet_lien_id ? (
+            <Link href={`/projets/${form.projet_lien_id}`} className="text-xs bg-emerald-400/30 hover:bg-emerald-400/50 px-2 py-1 rounded font-semibold" title="Projet actif lié">🏗️ Projet →</Link>
+          ) : null}
           <Link href={`/clients/${client.id}`} className="text-xs bg-white/15 hover:bg-white/25 px-2 py-1 rounded">Fiche →</Link>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-xl leading-none">✕</button>
         </header>
@@ -333,11 +384,14 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
           </section>
         </div>
 
-        <footer className="sticky bottom-0 bg-white border-t p-3 flex gap-2 justify-end">
-          <button onClick={onClose} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Fermer</button>
-          <button onClick={sauver} disabled={busy} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">
-            {busy ? "⏳…" : "💾 Enregistrer"}
-          </button>
+        <footer className="sticky bottom-0 bg-white border-t p-3 flex gap-2 justify-between items-center flex-wrap">
+          <button onClick={supprimerFiche} className="px-3 py-2 text-red-700 hover:bg-red-50 rounded text-xs font-semibold">🗑 Supprimer la fiche</button>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Fermer</button>
+            <button onClick={sauver} disabled={busy} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">
+              {busy ? "⏳…" : "💾 Enregistrer"}
+            </button>
+          </div>
         </footer>
       </div>
     </div>
