@@ -2,6 +2,7 @@
 // Tout changement métier critique passe ici → traçabilité complète
 
 import { db, initDb } from "@/lib/db";
+import { utilisateurActif } from "@/lib/authUser";
 
 export type ActiviteType =
   | "soumission.creee"
@@ -41,6 +42,8 @@ export interface ActiviteOpts {
   apres?: any;
   ip?: string;
   user_agent?: string;
+  utilisateur?: string;          // Gabriel | Francis (explicite)
+  req?: Request;                 // alternative : on extrait l'utilisateur du cookie
 }
 
 // Compteur en mémoire pour déclencher la purge périodique sans I/O à chaque appel
@@ -71,8 +74,12 @@ export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): 
   try {
     await initDb();
     const c = db();
+    let utilisateur = opts.utilisateur || null;
+    if (!utilisateur && opts.req) {
+      try { utilisateur = await utilisateurActif(opts.req as any); } catch { /* ignore */ }
+    }
     await c.execute({
-      sql: `INSERT INTO journal_activite (date, type, ref_type, ref_id, description, avant, apres, ip, user_agent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO journal_activite (date, type, ref_type, ref_id, description, avant, apres, ip, user_agent, utilisateur) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         new Date().toISOString(),
         type,
@@ -83,6 +90,7 @@ export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): 
         opts.apres ? JSON.stringify(opts.apres).slice(0, 2000) : null,
         opts.ip || null,
         opts.user_agent ? opts.user_agent.slice(0, 200) : null,
+        utilisateur,
       ],
     });
     // Purge périodique non bloquante

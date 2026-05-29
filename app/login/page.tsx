@@ -6,6 +6,7 @@ import { useSearchParams } from "next/navigation";
 function LoginForm() {
   const params = useSearchParams();
   const redirect = params.get("redirect") || "/";
+  const [user, setUser] = useState<"Gabriel" | "Francis">("Gabriel");
   const [password, setPassword] = useState("");
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
@@ -15,11 +16,12 @@ function LoginForm() {
     setLoading(true);
     setErreur("");
     try {
-      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) });
+      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user, password }) });
       if (r.ok) {
         window.location.href = redirect;
       } else {
-        setErreur("Mot de passe incorrect");
+        const d = await r.json().catch(() => ({}));
+        setErreur(d.error || "Mot de passe incorrect");
       }
     } catch {
       setErreur("Erreur de connexion");
@@ -37,6 +39,16 @@ function LoginForm() {
           <p className="text-sm text-slate-500">Revêtement Viking Inc. · RBQ 5811-4299-01</p>
         </div>
         <form onSubmit={login} className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Utilisateur</label>
+            <div className="grid grid-cols-2 gap-2">
+              {(["Gabriel", "Francis"] as const).map((u) => (
+                <button key={u} type="button" onClick={() => setUser(u)} className={`px-3 py-3 rounded-lg font-bold border-2 transition ${user === u ? "bg-emerald-600 text-white border-emerald-700" : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300"}`}>
+                  👤 {u}
+                </button>
+              ))}
+            </div>
+          </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Mot de passe</label>
             <input

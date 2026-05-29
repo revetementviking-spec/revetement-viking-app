@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -73,6 +73,22 @@ async function doInitDb() {
   // Pipeline CRM : étape du parcours commercial (info, RDV, mesures, soum, attente, accepté)
   await tryExec("ALTER TABLE clients ADD COLUMN pipeline_stage TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_clients_pipeline ON clients(pipeline_stage)");
+  // Pipeline enrichi style Asana : assignation (Gabriel/Francis), date de relance/rappel
+  await tryExec("ALTER TABLE clients ADD COLUMN assignee TEXT");
+  await tryExec("ALTER TABLE clients ADD COLUMN date_relance TEXT");
+  await tryExec("ALTER TABLE clients ADD COLUMN projet_lien_id INTEGER");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_clients_assignee ON clients(assignee)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_clients_relance ON clients(date_relance)");
+  // Fichiers attachés aux clients (plans, photos, contrats) — drag & drop dans le pipeline
+  await tryExec(`CREATE TABLE IF NOT EXISTS client_fichiers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL, nom TEXT, type TEXT, taille INTEGER,
+    data TEXT NOT NULL, ajoute_par TEXT, date_ajout TEXT NOT NULL
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_client_fichiers_cli ON client_fichiers(client_id, date_ajout DESC)");
+  // Audit : qui a fait l'action ?
+  await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_data TEXT");
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_type TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN prix_contrat REAL");
@@ -541,7 +557,7 @@ export async function ajouterClient(c: ClientType): Promise<number> {
   return r.lastInsertRowid;
 }
 export async function modifierClient(id: number, c: Partial<ClientType>) {
-  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags', 'asana_gid', 'asana_modifie_le', 'pipeline_stage'];
+  const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags', 'asana_gid', 'asana_modifie_le', 'pipeline_stage', 'assignee', 'date_relance', 'projet_lien_id'];
   const definis = champs.filter(k => (c as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');
@@ -701,6 +717,27 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id), 0) as total_facture,
   COALESCE((SELECT SUM(montant) FROM factures_projet WHERE projet_id = p.id AND payee = 1), 0) as total_paye
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
+
+// === FICHIERS ATTACHÉS AUX CLIENTS (pipeline Asana-style) ===
+export async function listerFichiersClient(client_id: number): Promise<any[]> {
+  return await all<any>(
+    "SELECT id, client_id, nom, type, taille, ajoute_par, date_ajout FROM client_fichiers WHERE client_id = ? ORDER BY date_ajout DESC",
+    [client_id]
+  );
+}
+export async function getFichierClient(id: number): Promise<{ data: string; type: string; nom: string } | null> {
+  return await one<any>("SELECT data, type, nom FROM client_fichiers WHERE id = ?", [id]);
+}
+export async function ajouterFichierClient(f: { client_id: number; nom: string; type: string; data: string; taille?: number; ajoute_par?: string }): Promise<number> {
+  const r = await run(
+    "INSERT INTO client_fichiers (client_id, nom, type, taille, data, ajoute_par, date_ajout) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [f.client_id, f.nom, f.type, f.taille || null, f.data, f.ajoute_par || null, new Date().toISOString()]
+  );
+  return r.lastInsertRowid;
+}
+export async function supprimerFichierClient(id: number): Promise<void> {
+  await run("DELETE FROM client_fichiers WHERE id = ?", [id]);
+}
 
 // === CATÉGORIES DE DÉPENSES ===
 export async function listerCategoriesDepense(actives = true): Promise<{ id: number; nom: string; ordre: number; actif: number }[]> {

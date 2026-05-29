@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, lazy, Suspense } from "react";
 import Link from "next/link";
 import {
   DndContext, DragOverlay, PointerSensor, TouchSensor, KeyboardSensor,
@@ -8,6 +8,8 @@ import {
   type DragEndEvent, type DragStartEvent,
 } from "@dnd-kit/core";
 import { useToast } from "@/components/Toasts";
+
+const PipelineDrawer = lazy(() => import("@/components/PipelineDrawer"));
 
 export const PIPELINE_STAGES = [
   { key: "info_1", label: "Info 1ère soumission", couleur: "bg-slate-100 border-slate-300", emoji: "📋" },
@@ -25,10 +27,17 @@ interface Props { clients: any[]; onUpdate: () => void; }
 
 export default function PipelineCRM({ clients, onUpdate }: Props) {
   const [recherche, setRecherche] = useState("");
-  const [ajoutOuvert, setAjoutOuvert] = useState<string | null>(null); // stage où on ajoute
+  const [ajoutOuvert, setAjoutOuvert] = useState<string | null>(null);
   const [nouveau, setNouveau] = useState({ nom: "", telephone: "", courriel: "" });
   const [dragActif, setDragActif] = useState<any>(null);
+  const [drawerClient, setDrawerClient] = useState<any>(null);
+  const [filtreAssignee, setFiltreAssignee] = useState<string>("");
+  const [projets, setProjets] = useState<any[]>([]);
   const { toast } = useToast();
+
+  useEffect(() => {
+    fetch("/api/projets").then((r) => r.json()).then((p: any[]) => Array.isArray(p) && setProjets(p)).catch(() => {});
+  }, []);
 
   // Capteurs : souris (avec petit délai pour ne pas confondre clic et drag) + touch + clavier
   const sensors = useSensors(
@@ -60,12 +69,16 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
   };
 
   const filtres = useMemo(() => {
-    if (!recherche.trim()) return clients;
-    const q = recherche.toLowerCase();
-    return clients.filter((c) =>
-      [c.nom, c.courriel, c.telephone, c.adresse, c.notes].filter(Boolean).some((x: string) => x.toLowerCase().includes(q))
-    );
-  }, [clients, recherche]);
+    let list = clients;
+    if (filtreAssignee) list = list.filter((c) => (c.assignee || "") === filtreAssignee);
+    if (recherche.trim()) {
+      const q = recherche.toLowerCase();
+      list = list.filter((c) =>
+        [c.nom, c.courriel, c.telephone, c.adresse, c.notes, c.tags, c.assignee].filter(Boolean).some((x: string) => x.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  }, [clients, recherche, filtreAssignee]);
 
   const parStage = useMemo(() => {
     const m = new Map<string, any[]>();
@@ -100,14 +113,22 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onStart} onDragEnd={onEnd}>
       <div className="space-y-3">
-        <input
-          type="search"
-          placeholder="🔍 Rechercher (nom, courriel, téléphone…)"
-          value={recherche}
-          onChange={(e) => setRecherche(e.target.value)}
-          className="w-full px-3 py-2 border rounded-lg text-sm"
-        />
-        <p className="text-xs text-slate-500 italic">💡 Astuce : glisse-dépose une carte vers une autre étape pour la déplacer (touche longue 0,15 s sur mobile).</p>
+        <div className="flex flex-wrap gap-2 items-center">
+          <input
+            type="search"
+            placeholder="🔍 Rechercher (nom, adresse, tag, assignation…)"
+            value={recherche}
+            onChange={(e) => setRecherche(e.target.value)}
+            className="flex-1 min-w-[200px] px-3 py-2 border rounded-lg text-sm"
+          />
+          <div className="flex gap-1 bg-white border rounded-lg p-1">
+            <button onClick={() => setFiltreAssignee("")} className={`px-2 py-1 rounded text-xs font-semibold ${!filtreAssignee ? "bg-slate-900 text-white" : "text-slate-600"}`}>Tous</button>
+            {["Gabriel", "Francis"].map((u) => (
+              <button key={u} onClick={() => setFiltreAssignee(filtreAssignee === u ? "" : u)} className={`px-2 py-1 rounded text-xs font-semibold ${filtreAssignee === u ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>👤 {u}</button>
+            ))}
+          </div>
+        </div>
+        <p className="text-xs text-slate-500 italic">💡 Glisse-dépose une carte pour la déplacer · clique pour voir/éditer les détails, fichiers, dates de relance.</p>
 
         <div className="lg:grid lg:grid-cols-3 xl:grid-cols-6 lg:gap-3 space-y-3 lg:space-y-0">
           {PIPELINE_STAGES.map((s) => (
@@ -121,6 +142,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
               nouveau={nouveau}
               setNouveau={setNouveau}
               onAjouter={() => ajouter(s.key)}
+              onOuvrirDetail={(c) => setDrawerClient(c)}
             />
           ))}
         </div>
@@ -131,6 +153,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
             clients={parStage.get(AUCUN_KEY) || []}
             ajoutOuvert={false} onOuvrirAjout={() => {}} onFermerAjout={() => {}} nouveau={nouveau} setNouveau={setNouveau} onAjouter={() => {}}
             cacherAjout
+            onOuvrirDetail={(c) => setDrawerClient(c)}
           />
         )}
 
@@ -138,11 +161,22 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
           {dragActif ? <CarteAffichage client={dragActif} ombre /> : null}
         </DragOverlay>
       </div>
+
+      {drawerClient && (
+        <Suspense fallback={null}>
+          <PipelineDrawer
+            client={drawerClient}
+            projets={projets}
+            onClose={() => setDrawerClient(null)}
+            onUpdate={() => { onUpdate(); fetch(`/api/clients?id=${drawerClient.id}`, { cache: "no-store" }).then((r) => r.json()).then((c) => setDrawerClient(c)).catch(() => {}); }}
+          />
+        </Suspense>
+      )}
     </DndContext>
   );
 }
 
-function Colonne({ stage, clients, ajoutOuvert, onOuvrirAjout, onFermerAjout, nouveau, setNouveau, onAjouter, cacherAjout }: {
+function Colonne({ stage, clients, ajoutOuvert, onOuvrirAjout, onFermerAjout, nouveau, setNouveau, onAjouter, cacherAjout, onOuvrirDetail }: {
   stage: { key: string; label: string; couleur: string; emoji: string };
   clients: any[];
   ajoutOuvert: boolean; onOuvrirAjout: () => void; onFermerAjout: () => void;
@@ -150,6 +184,7 @@ function Colonne({ stage, clients, ajoutOuvert, onOuvrirAjout, onFermerAjout, no
   setNouveau: (v: any) => void;
   onAjouter: () => void;
   cacherAjout?: boolean;
+  onOuvrirDetail: (client: any) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `s-${stage.key}` });
   return (
@@ -162,7 +197,7 @@ function Colonne({ stage, clients, ajoutOuvert, onOuvrirAjout, onFermerAjout, no
         {clients.length === 0 ? (
           <div className="text-xs italic text-slate-500 px-2 py-3 text-center">Glisse un client ici.</div>
         ) : clients.map((c) => (
-          <CarteDraggable key={c.id} client={c} />
+          <CarteDraggable key={c.id} client={c} onOuvrir={() => onOuvrirDetail(c)} />
         ))}
         {!cacherAjout && (
           ajoutOuvert ? (
@@ -184,7 +219,7 @@ function Colonne({ stage, clients, ajoutOuvert, onOuvrirAjout, onFermerAjout, no
   );
 }
 
-function CarteDraggable({ client }: { client: any }) {
+function CarteDraggable({ client, onOuvrir }: { client: any; onOuvrir: () => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: `c-${client.id}` });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   return (
@@ -195,7 +230,7 @@ function CarteDraggable({ client }: { client: any }) {
       {...attributes}
       {...listeners}
     >
-      <CarteContenu client={client} />
+      <CarteContenu client={client} onOuvrir={onOuvrir} />
     </div>
   );
 }
@@ -208,16 +243,32 @@ function CarteAffichage({ client, ombre }: { client: any; ombre?: boolean }) {
   );
 }
 
-function CarteContenu({ client }: { client: any }) {
+function CarteContenu({ client, onOuvrir }: { client: any; onOuvrir?: () => void }) {
+  const tagsList = client.tags ? String(client.tags).split(",").map((t: string) => t.trim()).filter(Boolean).slice(0, 3) : [];
+  const enRetard = client.date_relance && client.date_relance < new Date().toISOString().slice(0, 10);
   return (
     <>
-      <Link href={`/clients/${client.id}`} onPointerDown={(e) => e.stopPropagation()} className="font-semibold text-sm text-slate-900 hover:underline truncate block">{client.nom}</Link>
+      <div className="flex justify-between items-start gap-1">
+        <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onOuvrir} className="font-semibold text-sm text-slate-900 hover:underline text-left truncate flex-1">
+          {client.nom}
+        </button>
+        {client.assignee && (
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${client.assignee === "Gabriel" ? "bg-blue-100 text-blue-900" : "bg-purple-100 text-purple-900"}`}>{client.assignee[0]}</span>
+        )}
+      </div>
       <div className="text-xs text-slate-500 truncate">
         {client.telephone && <span>📞 {client.telephone}</span>}
         {client.telephone && client.adresse && <span> · </span>}
         {client.adresse && <span className="truncate">📍 {client.adresse}</span>}
       </div>
-      {client.courriel && <div className="text-[10px] text-slate-400 truncate">{client.courriel}</div>}
+      {(client.date_relance || tagsList.length > 0) && (
+        <div className="flex flex-wrap items-center gap-1 mt-1">
+          {client.date_relance && (
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${enRetard ? "bg-red-100 text-red-900" : "bg-amber-50 text-amber-800"}`}>⏰ {client.date_relance.slice(5)}</span>
+          )}
+          {tagsList.map((t: string) => <span key={t} className="text-[9px] bg-indigo-100 text-indigo-900 px-1.5 py-0.5 rounded-full">#{t}</span>)}
+        </div>
+      )}
     </>
   );
 }

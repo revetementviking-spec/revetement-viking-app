@@ -6,6 +6,16 @@ import { NextResponse, type NextRequest } from "next/server";
 const COOKIE_NAME = "xpress_auth";
 const LEGACY_PREFIX = "ok:"; // compat lors du déploiement
 
+// Multi-utilisateurs : Gabriel + Francis. Chacun a son mot de passe via env vars
+// (GABRIEL_PASSWORD, FRANCIS_PASSWORD). À défaut → APP_PASSWORD (rétrocompat).
+// Cookie format : "user|hmac" ou (legacy) juste l'HMAC pour APP_PASSWORD → "Gabriel".
+export const UTILISATEURS = ["Gabriel", "Francis"] as const;
+function motDePasse(user: string): string | undefined {
+  if (user === "Gabriel") return process.env.GABRIEL_PASSWORD || process.env.APP_PASSWORD;
+  if (user === "Francis") return process.env.FRANCIS_PASSWORD || process.env.APP_PASSWORD;
+  return undefined;
+}
+
 async function signToken(secret: string): Promise<string> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -13,6 +23,36 @@ async function signToken(secret: string): Promise<string> {
   );
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode("xpress-auth-v1"));
   return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+export async function signTokenPourUser(user: string, password: string): Promise<string> {
+  return await signToken(password);
+}
+
+const eqConstantTime = (a: string, b: string) => {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+};
+
+/** Décode + valide le cookie. Retourne le nom d'utilisateur si valide, sinon null. */
+export async function utilisateurDuCookie(cookieValue?: string): Promise<string | null> {
+  if (!cookieValue) return null;
+  // Nouveau format : "user|hmac"
+  if (cookieValue.includes("|")) {
+    const [user, sig] = cookieValue.split("|");
+    const pwd = motDePasse(user);
+    if (!pwd) return null;
+    const attendu = await signToken(pwd);
+    return eqConstantTime(sig, attendu) ? user : null;
+  }
+  // Legacy : juste l'HMAC ou "ok:<password>" → on tente avec APP_PASSWORD = Gabriel
+  const appPwd = process.env.APP_PASSWORD;
+  if (!appPwd) return null;
+  if (cookieValue === `${LEGACY_PREFIX}${appPwd}`) return "Gabriel";
+  const attendu = await signToken(appPwd);
+  return eqConstantTime(cookieValue, attendu) ? "Gabriel" : null;
 }
 
 // CSP compatible Next.js 16 :
@@ -82,17 +122,9 @@ export async function proxy(req: NextRequest) {
   }
 
   const cookie = req.cookies.get(COOKIE_NAME);
-  const expectedToken = await signToken(password);
-  const legacyValue = `${LEGACY_PREFIX}${password}`;
-  const eq = (a: string, b: string) => {
-    if (a.length !== b.length) return false;
-    let d = 0;
-    for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-    return d === 0;
-  };
-  const valide = cookie && (eq(cookie.value, expectedToken) || eq(cookie.value, legacyValue));
+  const user = await utilisateurDuCookie(cookie?.value);
 
-  if (!valide) {
+  if (!user) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", path);

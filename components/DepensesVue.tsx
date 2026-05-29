@@ -198,17 +198,6 @@ export default function DepensesVue() {
           </div>
         </section>
 
-        {/* Gestion des catégories (repliable) */}
-        <section className="bg-white rounded-lg shadow">
-          <button onClick={() => setGestionCatOuverte(!gestionCatOuverte)} className="w-full p-3 flex justify-between items-center text-left">
-            <span className="font-bold text-sm">🏷️ Catégories de dépenses <span className="text-xs font-normal text-slate-500 ml-1">({categories.length})</span></span>
-            <span className="text-slate-400">{gestionCatOuverte ? "▾" : "▸"}</span>
-          </button>
-          {gestionCatOuverte && (
-            <CategoriesGestion categories={categories} onChange={charger} />
-          )}
-        </section>
-
         {/* Sélection multiple — barre */}
         {selection.size > 0 && (
           <div className="bg-blue-50 border border-blue-300 rounded p-2 flex items-center justify-between sticky top-16 z-10">
@@ -295,6 +284,17 @@ export default function DepensesVue() {
                 </tr>
               </tfoot>
             </table>
+          )}
+        </section>
+
+        {/* Gestion des catégories — bas de page (repliable) */}
+        <section className="bg-white rounded-lg shadow mt-2">
+          <button onClick={() => setGestionCatOuverte(!gestionCatOuverte)} className="w-full p-3 flex justify-between items-center text-left">
+            <span className="font-bold text-sm">🏷️ Catégories de dépenses <span className="text-xs font-normal text-slate-500 ml-1">({categories.length})</span></span>
+            <span className="text-slate-400">{gestionCatOuverte ? "▾" : "▸"}</span>
+          </button>
+          {gestionCatOuverte && (
+            <CategoriesGestion categories={categories} onChange={charger} />
           )}
         </section>
       </div>
