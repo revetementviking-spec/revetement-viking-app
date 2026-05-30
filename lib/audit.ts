@@ -13,6 +13,7 @@ export type ActiviteType =
   | "soumission.refusee"
   | "soumission.facturee"
   | "soumission.supprimee"
+  | "soumission.dupliquee"
   | "client.cree"
   | "client.modifie"
   | "client.supprime"
