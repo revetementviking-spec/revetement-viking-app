@@ -26,7 +26,7 @@ export default function ProjetsPage() {
   const [triAsc, setTriAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creerOuvert, setCreerOuvert] = useState(false);
-  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "", statut: "actif", reno_assistance: false });
+  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "actif", reno_assistance: false });
   const [facture, setFacture] = useState<{ data: string; type: string; nom: string } | null>(null);
   const [clientsExistants, setClientsExistants] = useState<any[]>([]);
   const [suggClient, setSuggClient] = useState(false);
@@ -61,7 +61,7 @@ export default function ProjetsPage() {
         prix_contrat: prix,
         statut: nouveau.statut,
         reno_assistance: nouveau.reno_assistance ? 1 : 0,
-        date_debut: new Date().toISOString().slice(0, 10),
+        date_debut: nouveau.date_debut || new Date().toISOString().slice(0, 10),
       }),
     });
     const d = await r.json();
@@ -75,7 +75,7 @@ export default function ProjetsPage() {
       }
       toast("Projet créé", "success");
       setCreerOuvert(false);
-      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "", statut: "actif", reno_assistance: false });
+      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "actif", reno_assistance: false });
       setFacture(null);
       charger();
     }
@@ -286,15 +286,19 @@ export default function ProjetsPage() {
             <p className="text-[10px] text-slate-500 -mt-2">Ce prix devient la référence pour calculer la marge et la rentabilité du projet.</p>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Statut</label>
-                <select value={nouveau.statut} onChange={(e) => setNouveau({ ...nouveau, statut: e.target.value })} className="w-full px-3 py-2 border rounded text-sm bg-white">
-                  {Object.entries(STATUTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                </select>
+                <label className="block text-xs font-medium text-slate-600 mb-1">📅 Date de début</label>
+                <input type="date" value={nouveau.date_debut} onChange={(e) => setNouveau({ ...nouveau, date_debut: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Date de fin prévue</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1">🎯 Date de fin prévue</label>
                 <input type="date" value={nouveau.date_fin_prevue} onChange={(e) => setNouveau({ ...nouveau, date_fin_prevue: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
               </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Statut</label>
+              <select value={nouveau.statut} onChange={(e) => setNouveau({ ...nouveau, statut: e.target.value })} className="w-full px-3 py-2 border rounded text-sm bg-white">
+                {Object.entries(STATUTS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              </select>
             </div>
             <Input label="Description" value={nouveau.description} onChange={(v) => setNouveau({ ...nouveau, description: v })} />
 

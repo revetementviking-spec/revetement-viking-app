@@ -225,8 +225,34 @@ ${VIKING_EMAIL}
               {projet.adresse_chantier && (
                 <a href={`https://maps.google.com/?q=${encodeURIComponent(projet.adresse_chantier)}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">📍 Ouvrir dans Google Maps →</a>
               )}
-              {projet.date_debut && <div className="text-xs text-slate-600 mt-2">📅 Démarré le {new Date(projet.date_debut).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
-              {projet.date_fin_prevue && <div className="text-xs text-slate-600">🏁 Fin prévue : {new Date(projet.date_fin_prevue).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>}
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">📅 Date de début</label>
+                  <input
+                    type="date"
+                    value={projet.date_debut || ""}
+                    onChange={async (e) => {
+                      const v = e.target.value;
+                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, date_debut: v }) });
+                      if (r.ok) { toast("Date de début mise à jour", "success"); charger(); }
+                    }}
+                    className="w-full px-2 py-1 border rounded text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">🏁 Fin prévue</label>
+                  <input
+                    type="date"
+                    value={projet.date_fin_prevue || ""}
+                    onChange={async (e) => {
+                      const v = e.target.value;
+                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, date_fin_prevue: v }) });
+                      if (r.ok) { toast("Date de fin mise à jour", "success"); charger(); }
+                    }}
+                    className="w-full px-2 py-1 border rounded text-xs"
+                  />
+                </div>
+              </div>
             </div>
 
             {/* Client */}
@@ -288,17 +314,7 @@ ${VIKING_EMAIL}
                   aria-label="Retirer"
                 >×</button>
               </span>
-            ) : (
-              <button
-                onClick={async () => {
-                  const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, reno_assistance: 1 }) });
-                  if (r.ok) { toast("Badge Reno assistance ajouté", "success"); charger(); }
-                  else toast("Erreur", "error");
-                }}
-                className="text-xs px-3 py-1 rounded-full font-semibold bg-slate-100 text-slate-600 hover:bg-amber-100 hover:text-amber-900 border border-dashed border-slate-300"
-                title="Ajouter le badge Reno assistance"
-              >+ Reno assistance</button>
-            )}
+            ) : null}
           </div>
           {projet.date_debut && <span className="text-xs text-slate-500">Démarré : {new Date(projet.date_debut).toLocaleDateString("fr-CA")}</span>}
         </div>
