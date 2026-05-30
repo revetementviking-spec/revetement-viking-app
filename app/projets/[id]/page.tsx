@@ -253,6 +253,16 @@ ${VIKING_EMAIL}
               <a href={`/soumissions/nouveau?modifier=${projet.soumission_numero}`} className="text-xs px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded font-semibold">📄 Voir soumission {projet.soumission_numero}</a>
             )}
             <button onClick={genererResumeIa} disabled={resumeBusy} className="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 disabled:opacity-50 rounded font-semibold" title="Résumé automatique du chantier par IA">🤖 {resumeBusy ? "Analyse…" : "Résumé IA"}</button>
+            <button
+              onClick={async () => {
+                if (!confirm(`Supprimer définitivement le projet « ${projet.nom} » ?\n\n⚠️ Cette action est irréversible. Les heures, dépenses, photos et contrats liés deviendront orphelins.`)) return;
+                const r = await fetch(`/api/projets?id=${id}`, { method: "DELETE" });
+                if (r.ok) { toast(`Projet « ${projet.nom} » supprimé`, "success"); router.push("/projets"); }
+                else toast("Erreur suppression", "error");
+              }}
+              className="text-xs px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 rounded font-semibold"
+              title="Supprimer le projet définitivement"
+            >🗑 Supprimer</button>
             <button onClick={() => telechargerFeuilleTemps(projet)} className="text-xs px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded font-semibold">⏱️ Feuille de temps PDF</button>
             <a href={`/api/rapports?projet_id=${id}&format=csv`} className="text-xs px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded font-semibold">📊 Export CSV</a>
             {projet.reno_assistance ? (
