@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { listerCommentairesClient, ajouterCommentaireClient, supprimerCommentaireClient, getClient } from "@/lib/db";
 import { utilisateurActif } from "@/lib/authUser";
 import { sendEmail, emailEstConfigure } from "@/lib/email";
+import { envoyerPushUtilisateur, pushEstConfigure } from "@/lib/push";
 
 const COURRIELS: Record<string, string | undefined> = {
   Gabriel: process.env.GABRIEL_EMAIL,
@@ -22,11 +23,26 @@ export async function POST(req: NextRequest) {
   const mentions = Array.from(new Set((String(b.texte).match(/@(Gabriel|Francis)/gi) || []).map((m) => m.slice(1).replace(/^./, (c) => c.toUpperCase()))));
   const id = await ajouterCommentaireClient({ client_id: +b.client_id, auteur, texte: String(b.texte), mentions });
 
-  // Envoi des courriels @mention (best-effort, ne casse pas la POST si SMTP indispo)
+  // Notifications @mention (push + email, best-effort)
+  if (mentions.length) {
+    const client = await getClient(+b.client_id);
+    // Push PWA (immédiat, sur tous les appareils abonnés du destinataire)
+    if (pushEstConfigure()) {
+      for (const u of mentions) {
+        if (u === auteur) continue;
+        envoyerPushUtilisateur(u, {
+          title: `💬 ${auteur || "Quelqu'un"} t'a mentionné`,
+          body: `${client?.nom || "Client"} : ${String(b.texte).slice(0, 100)}`,
+          url: `/clients/${b.client_id}`,
+          tag: `mention-${b.client_id}`,
+        }).catch(() => {});
+      }
+    }
+  }
   if (mentions.length && emailEstConfigure()) {
     const client = await getClient(+b.client_id);
     for (const u of mentions) {
-      if (u === auteur) continue; // ne pas s'auto-pinguer
+      if (u === auteur) continue;
       const dest = COURRIELS[u];
       if (!dest) continue;
       const sujet = `[Pipeline Viking] @${auteur || "Quelqu'un"} t'a mentionné — ${client?.nom || "client"}`;

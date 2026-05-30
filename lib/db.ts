@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -140,6 +140,14 @@ async function doInitDb() {
   await tryExec("ALTER TABLE clients ADD COLUMN cree_par TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_ajoute_par ON depenses_projet(ajoute_par)");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_heures_ajoute_par ON heures_projet(ajoute_par)");
+  // Notifications push PWA (subscription par utilisateur+appareil)
+  await tryExec(`CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    utilisateur TEXT NOT NULL, endpoint TEXT UNIQUE NOT NULL,
+    p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+    user_agent TEXT, date_creation TEXT NOT NULL
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(utilisateur)");
   // Audit : qui a fait l'action ?
   await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
@@ -1020,6 +1028,20 @@ export async function supprimerCategorieDepense(id: number): Promise<void> {
 }
 export async function reactiverCategorieDepense(id: number): Promise<void> {
   await run("UPDATE categories_depense SET actif = 1 WHERE id = ?", [id]);
+}
+
+// === NOTIFICATIONS PUSH (PWA) ===
+export async function ajouterPushSubscription(p: { utilisateur: string; endpoint: string; p256dh: string; auth: string; user_agent?: string }): Promise<void> {
+  await run(
+    `INSERT OR REPLACE INTO push_subscriptions (utilisateur, endpoint, p256dh, auth, user_agent, date_creation) VALUES (?, ?, ?, ?, ?, ?)`,
+    [p.utilisateur, p.endpoint, p.p256dh, p.auth, p.user_agent || null, new Date().toISOString()]
+  );
+}
+export async function supprimerPushSubscription(endpoint: string): Promise<void> {
+  await run("DELETE FROM push_subscriptions WHERE endpoint = ?", [endpoint]);
+}
+export async function listerPushSubscriptionsUser(user: string): Promise<{ endpoint: string; p256dh: string; auth: string }[]> {
+  return await all<any>("SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE utilisateur = ?", [user]);
 }
 
 /** Réchauffement : initialise la connexion + une requête triviale (garde Turso chaud). */

@@ -110,6 +110,9 @@ export default function ParametresPage() {
           <p className="text-sm text-slate-600">Toutes les communications envoyées par l'app partent du compte <strong>revetementviking@gmail.com</strong> (variable Vercel <code className="bg-slate-100 px-1 rounded">GMAIL_USER</code>).</p>
         </section>
 
+        {/* Notifications push */}
+        <PushSection />
+
         {/* Déconnexion */}
         <section className="bg-white rounded-lg shadow p-5">
           <button onClick={deconnexion} className="w-full px-4 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold">
@@ -118,6 +121,107 @@ export default function ParametresPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+function PushSection() {
+  const [supporte, setSupporte] = useState(false);
+  const [actif, setActif] = useState(false);
+  const [permission, setPermission] = useState<NotificationPermission>("default");
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ok = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    setSupporte(ok);
+    if (!ok) return;
+    setPermission(Notification.permission);
+    navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => setActif(!!sub)).catch(() => {});
+  }, []);
+
+  const urlBase64ToUint8Array = (b64: string) => {
+    const padding = "=".repeat((4 - (b64.length % 4)) % 4);
+    const base64 = (b64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  };
+
+  const activer = async () => {
+    if (!supporte) return;
+    setBusy(true);
+    try {
+      const perm = await Notification.requestPermission();
+      setPermission(perm);
+      if (perm !== "granted") { toast("Permission refusée", "warning"); return; }
+      const { publicKey } = await fetch("/api/push/subscribe").then((r) => r.json());
+      if (!publicKey) { toast("Push pas configuré côté serveur (VAPID_PUBLIC_KEY manquant)", "warning"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      const r = await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sub) });
+      if ((await r.json()).ok) { setActif(true); toast("🔔 Notifications activées sur cet appareil", "success"); }
+      else toast("Échec activation", "error");
+    } catch (e: any) {
+      toast("Erreur : " + (e?.message || ""), "error");
+    } finally { setBusy(false); }
+  };
+
+  const desactiver = async () => {
+    if (!supporte) return;
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch("/api/push/subscribe", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+        await sub.unsubscribe();
+      }
+      setActif(false);
+      toast("Notifications désactivées sur cet appareil", "info");
+    } finally { setBusy(false); }
+  };
+
+  const tester = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/push/test", { method: "POST" });
+      const d = await r.json();
+      if (d.ok && d.envoyes > 0) toast(`✅ Notification envoyée (${d.envoyes} appareil)`, "success");
+      else if (d.raison === "push_non_configure") toast("Push non configuré côté serveur", "warning");
+      else toast("Aucun appareil abonné", "warning");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <section className="bg-white rounded-lg shadow p-5 space-y-3">
+      <h2 className="font-bold text-lg">🔔 Notifications push</h2>
+      {!supporte ? (
+        <p className="text-sm text-slate-600">Ton navigateur ne supporte pas les notifications push. Sur iOS, ouvre l'app depuis l'écran d'accueil (PWA installée).</p>
+      ) : (
+        <>
+          <p className="text-sm text-slate-600">Reçois les @mentions et les relances dues directement sur ton téléphone, même quand l'app est fermée.</p>
+          <div className="text-xs text-slate-500">
+            État : {actif ? <strong className="text-emerald-700">✓ activé sur cet appareil</strong> : <strong className="text-slate-500">Désactivé</strong>}
+            {permission === "denied" && <span className="text-red-600 ml-2">· permission bloquée dans les réglages du navigateur</span>}
+          </div>
+          <div className="flex gap-2 flex-wrap">
+            {!actif ? (
+              <button onClick={activer} disabled={busy || permission === "denied"} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-bold text-sm">🔔 Activer les notifications</button>
+            ) : (
+              <>
+                <button onClick={tester} disabled={busy} className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded font-bold text-sm">🧪 Envoyer un test</button>
+                <button onClick={desactiver} disabled={busy} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 rounded text-sm">Désactiver</button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </section>
   );
 }
 

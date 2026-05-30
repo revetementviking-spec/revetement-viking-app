@@ -64,3 +64,32 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+// === PUSH PWA ===
+self.addEventListener("push", (event) => {
+  let data = { title: "Revêtement Viking", body: "Notification", url: "/", icon: "/logo-viking.svg", badge: "/logo-viking.svg", tag: "viking-notif" };
+  try { if (event.data) data = Object.assign(data, event.data.json()); } catch (e) {}
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon,
+      badge: data.badge,
+      tag: data.tag,
+      data: { url: data.url },
+      vibrate: [80, 40, 80],
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientsList) => {
+      for (const c of clientsList) {
+        if ("focus" in c) { c.focus(); if ("navigate" in c) c.navigate(url); return; }
+      }
+      return self.clients.openWindow(url);
+    })
+  );
+});
