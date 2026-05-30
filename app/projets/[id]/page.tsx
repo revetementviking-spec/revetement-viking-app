@@ -263,6 +263,14 @@ ${VIKING_EMAIL}
               className="text-xs px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 rounded font-semibold"
               title="Supprimer le projet définitivement"
             >🗑 Supprimer</button>
+            <button onClick={async () => {
+              const r = await fetch(`/api/projets/lien-public?id=${projet.id}`);
+              const d = await r.json();
+              if (d.url) {
+                try { await navigator.clipboard.writeText(d.url); toast("Lien client copié ! 🔗", "success"); }
+                catch { prompt("Copier ce lien :", d.url); }
+              }
+            }} className="text-xs px-3 py-1 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 rounded font-semibold" title="Lien public à partager avec le client (vue épurée sans coûts)">🔗 Lien client</button>
             <button onClick={() => telechargerFeuilleTemps(projet)} className="text-xs px-3 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded font-semibold">⏱️ Feuille de temps PDF</button>
             <a href={`/api/rapports?projet_id=${id}&format=csv`} className="text-xs px-3 py-1 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded font-semibold">📊 Export CSV</a>
             {projet.reno_assistance ? (

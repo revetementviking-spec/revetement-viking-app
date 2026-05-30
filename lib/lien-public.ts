@@ -33,3 +33,15 @@ export async function verifierTokenSoumission(numero: string, token: string): Pr
   for (let i = 0; i < attendu.length; i++) diff |= attendu.charCodeAt(i) ^ token.charCodeAt(i);
   return diff === 0;
 }
+
+// === Liens publics PROJET (mode présentation client) ===
+export async function genererTokenProjet(id: number): Promise<string> {
+  return await hmac(secret(), `projet:${id}`);
+}
+export async function verifierTokenProjet(id: number, token: string): Promise<boolean> {
+  const attendu = await genererTokenProjet(id);
+  if (token.length !== attendu.length) return false;
+  let diff = 0;
+  for (let i = 0; i < attendu.length; i++) diff |= attendu.charCodeAt(i) ^ token.charCodeAt(i);
+  return diff === 0;
+}
