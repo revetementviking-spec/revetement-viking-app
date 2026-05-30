@@ -9,13 +9,13 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const b = await req.json();
   if (!b.client_id || !b.titre) return NextResponse.json({ error: "client_id et titre requis" }, { status: 400 });
-  const id = await ajouterTacheClient(+b.client_id, b.titre, b.assignee);
+  const id = await ajouterTacheClient(+b.client_id, b.titre, b.assignee, b.date_echeance);
   return NextResponse.json({ ok: true, id });
 }
 export async function PATCH(req: NextRequest) {
   const b = await req.json();
   if (!b.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
-  await modifierTacheClient(+b.id, { titre: b.titre, complete: typeof b.complete === "boolean" ? b.complete : undefined, assignee: b.assignee });
+  await modifierTacheClient(+b.id, { titre: b.titre, complete: typeof b.complete === "boolean" ? b.complete : undefined, assignee: b.assignee, date_echeance: b.date_echeance });
   return NextResponse.json({ ok: true });
 }
 export async function DELETE(req: NextRequest) {

@@ -37,6 +37,8 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   const [contrats, setContrats] = useState<any[]>([]);
   const [soumissions, setSoumissions] = useState<any[]>([]);
   const [nouvelleTache, setNouvelleTache] = useState("");
+  const [nouvelleAssignee, setNouvelleAssignee] = useState<string>("");
+  const [nouvelleEcheance, setNouvelleEcheance] = useState<string>("");
   const [nouveauComm, setNouveauComm] = useState("");
   const [uploadEnCours, setUploadEnCours] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -104,8 +106,10 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   const ajouterTache = async () => {
     const titre = nouvelleTache.trim();
     if (!titre) return;
-    await fetch("/api/client-taches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: client.id, titre }) });
+    await fetch("/api/client-taches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: client.id, titre, assignee: nouvelleAssignee || null, date_echeance: nouvelleEcheance || null }) });
     setNouvelleTache("");
+    setNouvelleAssignee("");
+    setNouvelleEcheance("");
     rechargerTaches();
   };
   const cocherTache = async (t: any) => {
@@ -653,16 +657,31 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
           {/* SOUS-TÂCHES (checklist) */}
           <section>
             <label className="block text-xs font-medium text-slate-600 mb-1">✅ Sous-tâches ({taches.filter((t) => t.complete).length}/{taches.length})</label>
-            <div className="flex gap-2 mb-2">
-              <input type="text" value={nouvelleTache} onChange={(e) => setNouvelleTache(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ajouterTache()} placeholder="Nouvelle sous-tâche…" className="flex-1 px-3 py-2 border rounded text-sm" />
-              <button onClick={ajouterTache} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">＋</button>
+            <div className="space-y-1.5 mb-2 bg-slate-50 border border-slate-200 rounded p-2">
+              <input type="text" value={nouvelleTache} onChange={(e) => setNouvelleTache(e.target.value)} onKeyDown={(e) => e.key === "Enter" && ajouterTache()} placeholder="Titre de la tâche…" className="w-full px-3 py-2 border rounded text-sm" />
+              <div className="flex gap-1.5">
+                <select value={nouvelleAssignee} onChange={(e) => setNouvelleAssignee(e.target.value)} className="flex-1 px-2 py-1.5 border rounded text-xs bg-white">
+                  <option value="">👤 Personne</option>
+                  <option value="Francis">Francis</option>
+                  <option value="Gabriel">Gabriel</option>
+                </select>
+                <input type="date" value={nouvelleEcheance} onChange={(e) => setNouvelleEcheance(e.target.value)} className="flex-1 px-2 py-1.5 border rounded text-xs" title="Échéance" />
+                <button onClick={ajouterTache} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold">＋ Ajouter</button>
+              </div>
             </div>
             {taches.length > 0 && (
               <ul className="space-y-1">
                 {taches.map((t) => (
-                  <li key={t.id} className="flex items-center gap-2 bg-slate-50 rounded p-2">
+                  <li key={t.id} className="flex items-center gap-2 bg-slate-50 rounded p-2 flex-wrap">
                     <input type="checkbox" checked={!!t.complete} onChange={() => cocherTache(t)} className="w-4 h-4" />
-                    <span className={`flex-1 text-sm ${t.complete ? "line-through text-slate-400" : "text-slate-800"}`}>{t.titre}</span>
+                    <span className={`flex-1 min-w-0 text-sm ${t.complete ? "line-through text-slate-400" : "text-slate-800"}`}>{t.titre}</span>
+                    {t.assignee && <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${t.assignee === "Francis" ? "bg-blue-100 text-blue-800" : "bg-purple-100 text-purple-800"}`}>👤 {t.assignee}</span>}
+                    {t.date_echeance && (() => {
+                      const ech = t.date_echeance;
+                      const auj = new Date().toISOString().slice(0, 10);
+                      const retard = ech < auj && !t.complete;
+                      return <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${retard ? "bg-red-100 text-red-800" : "bg-amber-100 text-amber-800"}`}>{retard ? "⚠️" : "📅"} {ech}</span>;
+                    })()}
                     <button onClick={() => supprimerTache(t.id)} className="text-xs text-red-600 hover:underline">🗑</button>
                   </li>
                 ))}

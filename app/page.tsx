@@ -37,6 +37,8 @@ export default function Home() {
   const [relances, setRelances] = useState<any[]>([]);
   const [annuel, setAnnuel] = useState<{ ca: number; depenses: number; mo: number } | null>(null);
   const [tableauBord, setTableauBord] = useState<any>(null);
+  const [mesTaches, setMesTaches] = useState<any[]>([]);
+  const [monUser, setMonUser] = useState<string>("");
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
   const [modalPhotos, setModalPhotos] = useState(false);
@@ -51,6 +53,11 @@ export default function Home() {
     fetch("/api/heures-sommaire?jours=7").then((r) => r.json()).then(setHeuresSemaine).catch(() => {});
     fetch("/api/relances").then((r) => r.json()).then(setRelances).catch(() => {});
     fetch("/api/dashboard").then((r) => r.json()).then(setTableauBord).catch(() => {});
+    fetch("/api/auth/me").then((r) => r.json()).then((d) => {
+      const u = d?.user || "";
+      setMonUser(u);
+      if (u) fetch(`/api/mes-taches?user=${u}`).then((r) => r.json()).then((arr) => setMesTaches(Array.isArray(arr) ? arr : [])).catch(() => {});
+    }).catch(() => {});
     // Totaux de l'année : chiffre d'affaires + dépenses (tous projets, pas juste actifs)
     fetch(`/api/finances?annee=${new Date().getFullYear()}`).then((r) => r.json()).then((d) => {
       const t = (d.mois || []).reduce((s: any, m: any) => ({
@@ -214,6 +221,40 @@ export default function Home() {
           <KPI label="Pipeline" value={formatCAD(stats.pipeline || 0)} couleur="text-blue-600" />
           <KPI label="Acceptées" value={formatCAD(stats.revenus_acceptes || 0)} couleur="text-emerald-600" />
         </div>
+
+        {/* === MES TÂCHES === */}
+        {monUser && mesTaches.length > 0 && (
+          <section className="bg-white border-l-4 border-emerald-500 rounded-lg shadow p-4">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="font-bold text-slate-900">📌 Mes tâches ({monUser})</h2>
+              <span className="text-xs text-slate-500">{mesTaches.length} à faire</span>
+            </div>
+            <ul className="space-y-1.5">
+              {mesTaches.slice(0, 8).map((t) => {
+                const auj = new Date().toISOString().slice(0, 10);
+                const retard = t.date_echeance && t.date_echeance < auj;
+                return (
+                  <li key={t.id} className={`flex items-center gap-2 p-2 rounded ${retard ? "bg-red-50 border border-red-200" : "bg-slate-50"}`}>
+                    <input type="checkbox" onChange={async () => {
+                      await fetch("/api/client-taches", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.id, complete: true }) });
+                      setMesTaches((arr) => arr.filter((x) => x.id !== t.id));
+                    }} className="w-4 h-4" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{t.titre}</div>
+                      {t.client_nom && <a href={`/clients/${t.client_id}`} className="text-[11px] text-blue-600 hover:underline">👤 {t.client_nom}</a>}
+                    </div>
+                    {t.date_echeance && (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${retard ? "bg-red-200 text-red-800" : "bg-amber-100 text-amber-800"}`}>
+                        {retard ? "⚠️ retard" : "📅"} {t.date_echeance}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {mesTaches.length > 8 && <p className="text-xs text-slate-500 mt-2">+ {mesTaches.length - 8} autre(s)…</p>}
+          </section>
+        )}
 
         {/* === SANTÉ BUSINESS — Tableau de bord enrichi === */}
         {tableauBord && (

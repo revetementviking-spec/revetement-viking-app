@@ -95,6 +95,9 @@ async function doInitDb() {
     date_creation TEXT NOT NULL, date_completion TEXT
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_client_taches_cli ON client_taches(client_id, ordre)");
+  // Échéance optionnelle sur les tâches client (affichée sur le tableau de bord par utilisateur)
+  await tryExec("ALTER TABLE client_taches ADD COLUMN date_echeance TEXT");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_client_taches_assignee ON client_taches(assignee, complete, date_echeance)");
   // Fil de commentaires
   await tryExec(`CREATE TABLE IF NOT EXISTS client_commentaires (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -894,22 +897,34 @@ export async function categoriesParFournisseur(): Promise<Record<string, string>
 export async function listerTachesClient(client_id: number): Promise<any[]> {
   return await all<any>("SELECT * FROM client_taches WHERE client_id = ? ORDER BY ordre, id", [client_id]);
 }
-export async function ajouterTacheClient(client_id: number, titre: string, assignee?: string): Promise<number> {
+export async function ajouterTacheClient(client_id: number, titre: string, assignee?: string, date_echeance?: string): Promise<number> {
   const o = (await one<{ n: number }>("SELECT COALESCE(MAX(ordre),0)+1 as n FROM client_taches WHERE client_id = ?", [client_id]))?.n || 1;
   const r = await run(
-    "INSERT INTO client_taches (client_id, titre, complete, assignee, ordre, date_creation) VALUES (?, ?, 0, ?, ?, ?)",
-    [client_id, titre.trim(), assignee || null, o, new Date().toISOString()]
+    "INSERT INTO client_taches (client_id, titre, complete, assignee, date_echeance, ordre, date_creation) VALUES (?, ?, 0, ?, ?, ?, ?)",
+    [client_id, titre.trim(), assignee || null, date_echeance || null, o, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
-export async function modifierTacheClient(id: number, champs: { titre?: string; complete?: boolean; assignee?: string | null }): Promise<void> {
+export async function modifierTacheClient(id: number, champs: { titre?: string; complete?: boolean; assignee?: string | null; date_echeance?: string | null }): Promise<void> {
   const sets: string[] = [], args: any[] = [];
   if (champs.titre !== undefined) { sets.push("titre = ?"); args.push(champs.titre); }
   if (champs.complete !== undefined) { sets.push("complete = ?"); sets.push("date_completion = ?"); args.push(champs.complete ? 1 : 0); args.push(champs.complete ? new Date().toISOString() : null); }
   if (champs.assignee !== undefined) { sets.push("assignee = ?"); args.push(champs.assignee || null); }
+  if (champs.date_echeance !== undefined) { sets.push("date_echeance = ?"); args.push(champs.date_echeance || null); }
   if (!sets.length) return;
   args.push(id);
   await run(`UPDATE client_taches SET ${sets.join(", ")} WHERE id = ?`, args);
+}
+
+// Liste les tâches d'un utilisateur précis (pour tableau de bord)
+export async function tachesPourUtilisateur(assignee: string): Promise<any[]> {
+  return await all<any>(`
+    SELECT t.*, c.nom AS client_nom
+    FROM client_taches t
+    LEFT JOIN clients c ON c.id = t.client_id
+    WHERE t.assignee = ? AND (t.complete IS NULL OR t.complete = 0)
+    ORDER BY (t.date_echeance IS NULL) ASC, t.date_echeance ASC, t.id DESC
+  `, [assignee]);
 }
 export async function supprimerTacheClient(id: number): Promise<void> {
   await run("DELETE FROM client_taches WHERE id = ?", [id]);
