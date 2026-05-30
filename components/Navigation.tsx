@@ -24,7 +24,9 @@ const LINKS_SECONDAIRES: NavLink[] = [
   { href: "/contrats", label: "Contrats", icon: "📝" },
   { href: "/soumissions", label: "Liste soum.", icon: "📋" },
   { href: "/employes", label: "Employés", icon: "👷" },
-  { href: "/outils", label: "Outils", icon: "🧰" }, // regroupe Synchros, Rapports, Journal, Diagnostic, À propos
+  { href: "/inventaire", label: "Inventaire", icon: "📦" },
+  { href: "/cameras", label: "Caméras", icon: "📹" },
+  { href: "/outils", label: "Outils", icon: "🧰" },
 ];
 
 interface Props {

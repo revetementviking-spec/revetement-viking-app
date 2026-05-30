@@ -544,19 +544,27 @@ info@entreprisesxpress.ca`;
         }
       />
 
-      {/* Barre d'actions directe (pas de dropdown "Actions") */}
-      <div className="sticky top-[var(--vk-nav-h,0)] z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-3 sm:px-4 md:px-6 py-2 flex gap-2 flex-wrap items-center">
-        <button onClick={sauvegarder} disabled={chargementSave} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold disabled:opacity-50">{chargementSave ? "..." : "💾 Sauver"}</button>
-        <button onClick={telechargerPDF} disabled={chargementPDF} className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-900 rounded text-sm font-bold disabled:opacity-50">{chargementPDF ? "..." : "📄 PDF"}</button>
-        <button onClick={envoyerEmail} className="px-3 py-1.5 bg-blue-500 hover:bg-blue-400 text-white rounded text-sm font-bold">✉️ Email</button>
-        <button onClick={telechargerCommande} disabled={chargementCmd} className="px-3 py-1.5 bg-orange-500 hover:bg-orange-400 text-white rounded text-sm font-bold disabled:opacity-50">{chargementCmd ? "..." : "🛒 Commande"}</button>
+      {/* Barre d'actions sobre, propre */}
+      <div className="sticky top-[var(--vk-nav-h,0)] z-20 bg-white/95 backdrop-blur border-b border-slate-200 px-3 sm:px-4 md:px-6 py-2.5 flex gap-2 flex-wrap items-center">
+        <button onClick={sauvegarder} disabled={chargementSave} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white rounded-lg text-sm font-bold disabled:opacity-50 shadow-sm transition">{chargementSave ? "⏳" : "💾 Sauver"}</button>
+        <button onClick={telechargerPDF} disabled={chargementPDF} className="px-3 py-2 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 border border-slate-300 rounded-lg text-sm font-semibold disabled:opacity-50 shadow-sm transition">{chargementPDF ? "⏳" : "📄 PDF"}</button>
+        <button onClick={envoyerEmail} className="px-3 py-2 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 border border-slate-300 rounded-lg text-sm font-semibold shadow-sm transition">✉️ Email</button>
+        <button onClick={telechargerCommande} disabled={chargementCmd} className="px-3 py-2 bg-white hover:bg-slate-50 active:scale-95 text-slate-800 border border-slate-300 rounded-lg text-sm font-semibold disabled:opacity-50 shadow-sm transition">{chargementCmd ? "⏳" : "🛒 Commande"}</button>
       </div>
 
       <main className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6 py-4 md:py-6 grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-6 pb-24">
         <div className="lg:col-span-2 space-y-4 md:space-y-6 min-w-0">
 
+          {/* OUTILS IA — collapsible pour ne pas dominer la vue */}
+          <details className="bg-gradient-to-r from-indigo-50 via-purple-50 to-pink-50 border border-indigo-200 rounded-xl shadow-sm group">
+            <summary className="cursor-pointer p-4 flex items-center justify-between font-bold text-indigo-900 hover:bg-indigo-100/40 rounded-xl">
+              <span className="flex items-center gap-2">✨ Outils IA <span className="text-xs font-normal text-slate-500">— Hover · Photos · Assistant</span></span>
+              <span className="text-xs text-indigo-600 group-open:rotate-180 transition-transform">▼</span>
+            </summary>
+            <div className="px-4 pb-4 space-y-3">
+
           {/* HOVER */}
-          <section className="bg-gradient-to-br from-indigo-50 to-purple-50 border-2 border-indigo-200 rounded-lg p-5">
+          <section className="bg-white border border-indigo-200 rounded-lg p-4">
             <h2 className="text-lg font-bold mb-1">🤖 1. Analyse Hover / photo / plan</h2>
             <p className="text-sm text-slate-600 mb-3">Téléverse un PDF Hover, plan ou photo. L'IA extrait tout.</p>
             <input ref={hoverFileRef} type="file" accept="application/pdf,image/*" onChange={uploadHover} disabled={hoverLoading} className="text-sm" />
@@ -773,10 +781,12 @@ info@entreprisesxpress.ca`;
               <button onClick={envoyerMessage} disabled={chatLoading || !chatInput.trim()} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold disabled:opacity-50">Envoyer</button>
             </div>
           </section>
+            </div>
+          </details>
 
           {/* CLIENT */}
-          <section className="bg-white rounded-lg shadow p-5">
-            <h2 className="text-lg font-semibold mb-3">Informations client</h2>
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2"><span className="bg-blue-100 text-blue-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">1</span> Informations client</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input label="Nom du client" value={client.nom} onChange={(v) => setClient({ ...client, nom: v })} />
               <Input label="Téléphone" value={client.telephone} onChange={(v) => setClient({ ...client, telephone: v })} />
@@ -787,9 +797,9 @@ info@entreprisesxpress.ca`;
           </section>
 
           {/* LIGNES */}
-          <section className="bg-white rounded-lg shadow p-5">
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-lg font-semibold">Matériaux ({lignes.length})</h2>
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2"><span className="bg-emerald-100 text-emerald-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">2</span> Matériaux <span className="text-xs font-normal text-slate-500">({lignes.length})</span></h2>
               {lignes.length > 0 && <button onClick={() => setLignes([])} className="text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded">Vider</button>}
             </div>
             {lignes.length === 0 ? (
@@ -870,8 +880,8 @@ info@entreprisesxpress.ca`;
           </details>
 
           {/* FRAIS */}
-          <section className="bg-white rounded-lg shadow p-5">
-            <h2 className="text-lg font-semibold mb-3">Frais forfaitaires</h2>
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+            <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2"><span className="bg-amber-100 text-amber-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">3</span> Frais forfaitaires</h2>
             <div className="space-y-2">
               {FRAIS_FORFAITAIRES.map((f) => {
                 const actif = fraisActifs.find((a) => a.id === f.id);
@@ -894,8 +904,8 @@ info@entreprisesxpress.ca`;
 
         {/* SOMMAIRE */}
         <aside className="lg:sticky lg:top-24 lg:self-start space-y-4 min-w-0">
-          <section className="bg-white rounded-lg shadow p-5">
-            <h2 className="text-lg font-semibold mb-3">Sommaire</h2>
+          <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 sticky top-32">
+            <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2"><span className="bg-purple-100 text-purple-700 w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold">∑</span> Sommaire</h2>
             <div className="space-y-2 text-sm">
               <Row label="Coût matériaux" value={formatCAD(calcul.totalCoutMateriaux)} />
               <Row label="Vente matériaux" value={formatCAD(calcul.totalVenteMateriaux)} />

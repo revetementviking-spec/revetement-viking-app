@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -98,6 +98,45 @@ async function doInitDb() {
   // Échéance optionnelle sur les tâches client (affichée sur le tableau de bord par utilisateur)
   await tryExec("ALTER TABLE client_taches ADD COLUMN date_echeance TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_client_taches_assignee ON client_taches(assignee, complete, date_echeance)");
+
+  // === INVENTAIRE matériaux en stock ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS inventaire (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT NOT NULL,
+    categorie TEXT,
+    quantite REAL DEFAULT 0,
+    unite TEXT DEFAULT 'u',
+    emplacement TEXT,
+    photo_data TEXT, photo_type TEXT,
+    notes TEXT,
+    cout_unit REAL,
+    date_creation TEXT,
+    date_modif TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_inventaire_emplacement ON inventaire(emplacement)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_inventaire_nom ON inventaire(nom)");
+  // Mouvements pour traçabilité (entree, sortie, ajustement)
+  await tryExec(`CREATE TABLE IF NOT EXISTS inventaire_mouvements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    inventaire_id INTEGER NOT NULL,
+    delta REAL NOT NULL,
+    type TEXT,
+    note TEXT,
+    par TEXT,
+    date_creation TEXT
+  )`);
+
+  // === CAMÉRAS de sécurité (URL embed ou stream) ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS cameras (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT NOT NULL,
+    emplacement TEXT,
+    url_embed TEXT,
+    type TEXT,
+    actif INTEGER DEFAULT 1,
+    ordre INTEGER DEFAULT 0,
+    date_creation TEXT
+  )`);
   // Fil de commentaires
   await tryExec(`CREATE TABLE IF NOT EXISTS client_commentaires (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
