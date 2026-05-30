@@ -9,6 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { MATERIAUX } from "@/data/materiaux";
 import { PRESETS } from "@/data/presets-soumission";
 import { jobsSimilaires } from "@/lib/db";
+import { REGLES_METIER_VIKING, MODELES, fewShotExemples, trouverProjetsSimilaires, resumeFeedbackHistorique } from "@/lib/viking-ai";
 
 const SYSTEME = `Tu es l'expert estimateur en revêtement extérieur d'Revêtement Viking Inc. (RBQ 5811-4299-01, taux 90$/h facturé client).
 
@@ -89,7 +90,20 @@ export async function POST(req: NextRequest) {
     if (!extraction) return NextResponse.json({ error: "extraction Hover requise" }, { status: 400 });
 
     const client = new Anthropic({ apiKey });
-    const systemPrompt = SYSTEME.replace("{{CATALOGUE}}", catalogueResume()).replace("{{PRESETS}}", presetsResume());
+
+    // Charge en parallèle : few-shot exemples soumissions acceptées + projets similaires + corrections apprises
+    const [exemples, feedbackHist] = await Promise.all([
+      fewShotExemples(2).catch(() => ""),
+      resumeFeedbackHistorique().catch(() => ""),
+    ]);
+
+    const systemPrompt = `${SYSTEME.replace("{{CATALOGUE}}", catalogueResume()).replace("{{PRESETS}}", presetsResume())}
+
+${REGLES_METIER_VIKING}
+
+${exemples ? `=== EXEMPLES DE SOUMISSIONS ACCEPTÉES — INSPIRE-TOI DE LEUR STRUCTURE ===\n${exemples}\n` : ""}
+${feedbackHist || ""}
+`.trim();
 
     // === ENRICHISSEMENT par bibliothèque de référence ===
     const surface = extraction?.mesures_globales?.parement_net_pi2 || extraction?.mesures_globales?.parement_total_pi2 || 0;
@@ -107,7 +121,7 @@ ${refTexte}
 Construis la soumission complète maintenant. Sélectionne les matériaux exacts du catalogue, calcule les quantités depuis les mesures, estime les heures, et CALIBRE par rapport aux jobs similaires si disponibles.`;
 
     const response = await client.messages.create({
-      model: "claude-opus-4-7",
+      model: MODELES.construction,
       max_tokens: 4096,
       system: systemPrompt,
       messages: [{ role: "user", content: userMessage }],
@@ -147,7 +161,7 @@ Construis la soumission complète maintenant. Sélectionne les matériaux exacts
       if (!mat) continue;
       try {
         const resp = await client.messages.create({
-          model: "claude-opus-4-7",
+          model: MODELES.construction,
           max_tokens: 1024,
           tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 3 } as any],
           messages: [

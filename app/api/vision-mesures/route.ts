@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELES } from "@/lib/viking-ai";
 
 const SYSTEME = `Tu es un expert en estimation de revêtement extérieur résidentiel pour Revêtement Viking (Québec).
 
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest) {
     });
 
     const response = await client.messages.create({
-      model: "claude-opus-4-7",
+      model: MODELES.vision_photos,
       max_tokens: 4096,
       system: SYSTEME,
       messages: [{ role: "user", content }],

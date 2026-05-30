@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELES } from "@/lib/viking-ai";
 
 const PROMPT_HOVER = `Tu es un expert en estimation de revêtement extérieur résidentiel (soffite, fascia, solin, parement) au Québec.
 
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
     content.push({ type: "text", text: PROMPT_HOVER });
 
     const response = await client.messages.create({
-      model: "claude-opus-4-7",
+      model: MODELES.parse_hover,
       max_tokens: 8192,
       messages: [{ role: "user", content }],
     });

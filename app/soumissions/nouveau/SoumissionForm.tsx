@@ -306,7 +306,8 @@ export default function SoumissionForm() {
       if (Array.isArray(d.frais_forfaitaires)) {
         setFraisActifs(d.frais_forfaitaires.map((f: any) => ({ id: f.id, heures: f.heures })));
       }
-      setAutoRapport(d);
+      // Snapshot initial pour le feedback loop : on sauve les lignes telles que générées par l'IA
+      setAutoRapport({ ...d, _snapshot_initial: { articles: d.lignes_generees || [], total: d.total_avant_taxes } });
     } catch (e: any) {
       toast('Erreur : ' + e.message, 'error');
     } finally {
@@ -437,6 +438,14 @@ export default function SoumissionForm() {
       if (d.numero) {
         setNumeroSoumission(d.numero);
         effacerBrouillon();
+        // === FEEDBACK LOOP IA ===
+        // Si l'auto-estimateur a généré une version initiale et que l'humain l'a modifiée → log
+        if (autoRapport && autoRapport._snapshot_initial) {
+          fetch("/api/ia-feedback", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ numero: d.numero, avant: autoRapport._snapshot_initial, apres: { articles: lignes, total: calcul.total } }),
+          }).catch(() => {});
+        }
       }
       toast(`Sauvegardée : ${d.numero}`, "success");
     } finally { setChargementSave(false); }

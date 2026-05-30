@@ -117,6 +117,7 @@ export async function proxy(req: NextRequest) {
     (path === "/api/relances/email" && req.method === "GET") || // cron Vercel relances (CRON_SECRET aussi)
     (path === "/api/soumissions/relances-auto" && req.method === "GET") || // cron Vercel
     (path === "/api/rapport-hebdo" && req.method === "GET") || // cron Vercel hebdo
+    (path === "/api/prix-web/precalcul" && req.method === "GET") || // cron Vercel pre-calc prix
     path === "/api/ping" ||                                   // réchauffement anti cold-start (public, sans données)
     path.startsWith("/soumission/") ||                        // signature publique (token HMAC)
     path === "/api/soumission-publique" ||

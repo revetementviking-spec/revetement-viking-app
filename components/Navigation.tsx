@@ -310,10 +310,6 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
             )}
           </div>
 
-          {/* Dark mode toggle */}
-          <button onClick={toggleDark} className="p-2 rounded hover:bg-slate-700 transition flex-shrink-0 text-lg" title={dark ? "Mode clair" : "Mode sombre"}>
-            {dark ? "☀️" : "🌙"}
-          </button>
 
           {/* Actions desktop inline */}
           {actions && <div className="hidden lg:flex gap-2 ml-2 border-l border-slate-700 pl-3">{actions}</div>}

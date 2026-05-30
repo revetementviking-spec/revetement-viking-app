@@ -3,6 +3,7 @@
     { "path": "/api/backup", "schedule": "0 8 * * *" },
     { "path": "/api/relances/email", "schedule": "0 12 * * *" },
     { "path": "/api/soumissions/relances-auto", "schedule": "0 13 * * *" },
-    { "path": "/api/rapport-hebdo", "schedule": "0 21 * * 0" }
+    { "path": "/api/rapport-hebdo", "schedule": "0 21 * * 0" },
+    { "path": "/api/prix-web/precalcul", "schedule": "0 3 * * *" }
   ]
 }

@@ -121,8 +121,8 @@ export default function FinancesPage() {
                     const revenu = p.prix_contrat || p.budget_estime || 0;
                     const aRecevoir = (p.total_facture || 0) - (p.total_paye || 0);
                     return (
-                      <tr key={p.id} className="border-t hover:bg-emerald-50">
-                        <td className="p-2"><a href={`/projets/${p.id}`} className="font-medium hover:underline">{p.nom}</a><div className="text-[10px] text-slate-500">{p.client_nom || "—"}</div></td>
+                      <tr key={p.id} onClick={() => { window.location.href = `/projets/${p.id}`; }} className="border-t hover:bg-emerald-50 cursor-pointer">
+                        <td className="p-2"><span className="font-medium">{p.nom}</span><div className="text-[10px] text-slate-500">{p.client_nom || "—"}</div></td>
                         <td className="p-2 text-xs">{p.statut}</td>
                         <td className="p-2 text-right font-bold">{formatCAD(revenu)}</td>
                         <td className="p-2 text-right text-blue-700">{formatCAD(p.total_facture || 0)}</td>

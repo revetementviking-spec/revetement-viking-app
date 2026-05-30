@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -125,6 +125,31 @@ async function doInitDb() {
     par TEXT,
     date_creation TEXT
   )`);
+
+  // === CACHE PRIX WEB (Maibec/Canexel/Hardie) — TTL 7 jours ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS prix_cache_v2 (
+    cle TEXT PRIMARY KEY,
+    produit TEXT,
+    prix_unit REAL,
+    unite TEXT,
+    source TEXT,
+    note TEXT,
+    date_creation TEXT,
+    date_expire TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_prix_cache_expire ON prix_cache_v2(date_expire)");
+
+  // === FEEDBACK IA : corrections apportées par l'humain sur les outputs auto-estimateur ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS ia_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    soumission_numero TEXT,
+    avant_json TEXT,
+    apres_json TEXT,
+    differences TEXT,
+    par TEXT,
+    date_creation TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_ia_feedback_date ON ia_feedback(date_creation DESC)");
 
   // === CAMÉRAS de sécurité (URL embed ou stream) ===
   await tryExec(`CREATE TABLE IF NOT EXISTS cameras (

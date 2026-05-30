@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { MODELES } from "@/lib/viking-ai";
 
 const PROMPT_EXTRACTION = `Tu es expert en estimation de revêtement extérieur (soffite, fascia, solin, parement).
 
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
 
     const client = new Anthropic({ apiKey });
     const response = await client.messages.create({
-      model: "claude-opus-4-7",
+      model: MODELES.vision_photos,
       max_tokens: 4096,
       messages: [
         {
