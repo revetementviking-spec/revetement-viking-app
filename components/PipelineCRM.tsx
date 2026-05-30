@@ -257,6 +257,20 @@ function CarteContenu({ client, stats, onOuvrir }: { client: any; stats?: any; o
   const nbTD = stats?.taches_done || 0;
   const nbC = stats?.commentaires || 0;
   const nbF = stats?.fichiers || 0;
+
+  // Suggestion intelligente "prochaine action" basée sur l'étape + ancienneté
+  const joursDepuis = client.date_modif_pipeline ? Math.round((Date.now() - new Date(client.date_modif_pipeline).getTime()) / 86400000) : 0;
+  const SUGGESTIONS: Record<string, { seuilJours: number; texte: string }> = {
+    info_1: { seuilJours: 3, texte: "Planifier le RDV" },
+    rdv: { seuilJours: 5, texte: "Relancer pour fixer la date" },
+    mesures: { seuilJours: 7, texte: "Faire les mesures cette semaine" },
+    soum_envoyer: { seuilJours: 3, texte: "Envoyer la soumission" },
+    attente: { seuilJours: 7, texte: "Relancer pour décision" },
+    accepte: { seuilJours: 0, texte: "Générer & envoyer le contrat" },
+  };
+  const stage = client.pipeline_stage;
+  const sug = stage && SUGGESTIONS[stage];
+  const aSugg = sug && (sug.seuilJours === 0 || joursDepuis >= sug.seuilJours);
   return (
     <>
       <div className="flex justify-between items-start gap-1">
@@ -272,6 +286,9 @@ function CarteContenu({ client, stats, onOuvrir }: { client: any; stats?: any; o
         {client.telephone && client.adresse && <span> · </span>}
         {client.adresse && <span className="truncate">📍 {client.adresse}</span>}
       </div>
+      {aSugg && (
+        <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mt-1" title="Suggestion automatique">💡 {sug!.texte}</div>
+      )}
       {(client.date_relance || tagsList.length > 0 || nbT + nbC + nbF > 0) && (
         <div className="flex flex-wrap items-center gap-1 mt-1">
           {client.date_relance && (

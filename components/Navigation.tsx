@@ -109,9 +109,10 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
   };
 
   const lienResultat = (r: any) =>
-    r.type === "client" ? `/clients` :
+    r.type === "client" ? `/clients/${r.id}` :
     r.type === "projet" ? `/projets/${r.id}` :
-    r.type === "soumission" ? `/soumissions/${r.id}` : "/";
+    r.type === "soumission" ? `/soumissions/${r.id}` :
+    r.type === "commentaire" || r.type === "sous-tâche" || r.type === "fichier" ? `/clients/${r.id}` : "/";
 
   return (
     <>

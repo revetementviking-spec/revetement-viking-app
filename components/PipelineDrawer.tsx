@@ -37,9 +37,42 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
   const [nouveauComm, setNouveauComm] = useState("");
   const [uploadEnCours, setUploadEnCours] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [autoSaveStatut, setAutoSaveStatut] = useState<"idle" | "saving" | "saved">("idle");
   const [moiUtilisateur, setMoiUtilisateur] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement | null>(null);
   const { toast } = useToast();
+  const firstRender = useRef(true);
+  const autoSaveT = useRef<any>(null);
+
+  // Auto-save : debounce 1.2 s après le dernier changement du form
+  useEffect(() => {
+    if (firstRender.current) { firstRender.current = false; return; }
+    if (busy) return; // si on est déjà en train de sauver, ignore
+    setAutoSaveStatut("saving");
+    if (autoSaveT.current) clearTimeout(autoSaveT.current);
+    autoSaveT.current = setTimeout(async () => {
+      try {
+        await fetch("/api/clients", {
+          method: "PATCH", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: client.id, ...form,
+            projet_lien_id: form.projet_lien_id ? +form.projet_lien_id : null,
+            date_relance: form.date_relance || null,
+            assignee: form.assignee || null,
+            pipeline_stage: form.pipeline_stage || null,
+            instructions_speciales: form.instructions_speciales || null,
+          }),
+        });
+        setAutoSaveStatut("saved");
+        onUpdate();
+        setTimeout(() => setAutoSaveStatut("idle"), 2000);
+      } catch {
+        setAutoSaveStatut("idle");
+      }
+    }, 1200);
+    return () => { if (autoSaveT.current) clearTimeout(autoSaveT.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.nom, form.adresse, form.telephone, form.courriel, form.assignee, form.date_relance, form.projet_lien_id, form.tags, form.notes, form.instructions_speciales]);
 
   const rechargerTaches = () => fetch(`/api/client-taches?client_id=${client.id}`).then((r) => r.json()).then((t) => Array.isArray(t) && setTaches(t)).catch(() => {});
   const rechargerComm = () => fetch(`/api/client-commentaires?client_id=${client.id}`).then((r) => r.json()).then((c) => Array.isArray(c) && setCommentaires(c)).catch(() => {});
@@ -379,7 +412,10 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
           <div className="min-w-0 flex-1">
             <h2 className="font-bold text-lg truncate">👤 {form.nom}</h2>
             <div className="text-xs opacity-90 truncate">{form.adresse || "Sans adresse"}</div>
-            {moiUtilisateur && <div className="text-[10px] opacity-75 mt-0.5">Connecté en tant que <strong>{moiUtilisateur}</strong></div>}
+            {moiUtilisateur && <div className="text-[10px] opacity-75 mt-0.5">Connecté en tant que <strong>{moiUtilisateur}</strong>
+              {autoSaveStatut === "saving" && <span className="ml-2 text-amber-200">· ⏳ sauvegarde…</span>}
+              {autoSaveStatut === "saved" && <span className="ml-2 text-emerald-200">· ✓ auto-sauvé</span>}
+            </div>}
           </div>
           <button
             onClick={accepterEtContrat}

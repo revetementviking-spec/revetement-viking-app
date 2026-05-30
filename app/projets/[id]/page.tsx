@@ -102,6 +102,15 @@ export default function ProjetDetail() {
       toast(`${hForm.heures} h ajoutées pour ${hForm.employe}`, "success");
       setHForm({ ...hForm, heures: "", description: "" });
       charger();
+      // Suggestion photo : si >2h saisies aujourd'hui et 0 photo du jour → propose
+      setTimeout(() => {
+        const today = new Date().toISOString().slice(0, 10);
+        const totalToday = heures.filter((h: any) => h.date === today).reduce((s: number, h: any) => s + (h.heures || 0), 0) + (+hForm.heures || 0);
+        const photosToday = photos.filter((p: any) => p.date === today).length;
+        if (totalToday >= 2 && photosToday === 0) {
+          toast(`📸 ${totalToday.toFixed(1)}h saisies aujourd'hui sans photo — pense à en prendre quelques-unes du chantier !`, "info");
+        }
+      }, 600);
     }
   };
 

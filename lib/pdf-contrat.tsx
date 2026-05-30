@@ -70,9 +70,9 @@ const s = StyleSheet.create({
   nomClient: { fontSize: 16, fontWeight: 700, textAlign: "center", marginTop: 8, color: COULEUR_TEXTE },
   numContrat: { fontSize: 9, textAlign: "center", color: COULEUR_GRIS_CLAIR, marginTop: 80, letterSpacing: 1 },
 
-  // SECTIONS
-  h1: { fontSize: 13, fontWeight: 700, color: COULEUR_PRIMAIRE, marginTop: 16, marginBottom: 10, paddingBottom: 4, borderBottom: "1pt solid " + COULEUR_PRIMAIRE },
-  h2: { fontSize: 11, fontWeight: 700, color: COULEUR_TEXTE, marginTop: 12, marginBottom: 6 },
+  // SECTIONS — style sobre du contrat original (titre numéroté simple, ligne sous)
+  h1: { fontSize: 12, fontWeight: 700, color: COULEUR_TEXTE, marginTop: 14, marginBottom: 8, paddingBottom: 3, borderBottom: "0.75pt solid " + COULEUR_TEXTE },
+  h2: { fontSize: 10.5, fontWeight: 700, color: COULEUR_TEXTE, marginTop: 10, marginBottom: 4 },
 
   twoCol: { flexDirection: "row", gap: 24, marginVertical: 4 },
   col: { flex: 1 },
@@ -80,8 +80,8 @@ const s = StyleSheet.create({
   label: { fontSize: 8, color: COULEUR_GRIS, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 },
   valeur: { fontSize: 10, fontWeight: 700, marginBottom: 7, color: COULEUR_TEXTE },
 
-  row: { flexDirection: "row", justifyContent: "space-between", padding: 8, borderBottom: "0.5pt solid #cbd5e1" },
-  rowFort: { flexDirection: "row", justifyContent: "space-between", padding: 10, backgroundColor: COULEUR_PRIMAIRE, color: "white", marginTop: 6, borderRadius: 3 },
+  row: { flexDirection: "row", justifyContent: "space-between", padding: 6, borderBottom: "0.5pt solid #cbd5e1" },
+  rowFort: { flexDirection: "row", justifyContent: "space-between", padding: 8, borderTop: "1pt solid " + COULEUR_TEXTE, borderBottom: "1pt solid " + COULEUR_TEXTE, marginTop: 4, fontWeight: 700 },
 
   para: { marginVertical: 4, fontSize: 10 },
   paraGras: { fontWeight: 700 },
@@ -103,30 +103,36 @@ const s = StyleSheet.create({
   piedTxt: { fontSize: 7, color: COULEUR_GRIS_CLAIR },
 });
 
-// === Logo Drakkar Viking (fidèle au logo officiel : voile + tête de dragon + coque rayée) ===
+// === Logo Drakkar Viking (fidèle au logo officiel — drakkar long avec boucliers) ===
 const LogoSvg = ({ size = 50 }: { size?: number }) => (
-  <Svg width={size} height={size} viewBox="0 0 200 200">
-    {/* Drapeau au sommet */}
-    <Path d="M100 25 L120 30 L100 38 Z" fill={COULEUR_PRIMAIRE} />
+  <Svg width={size * 1.2} height={size} viewBox="0 0 240 200">
     {/* Mât */}
-    <Path d="M100 22 L100 135" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
+    <Path d="M120 20 L120 130" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
+    {/* Drapeau */}
+    <Path d="M120 22 L142 28 L120 36 Z" fill={COULEUR_PRIMAIRE} />
     {/* Vergue */}
-    <Path d="M62 55 L138 55" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
-    {/* Voile pleine bleu marine */}
-    <Path d="M70 55 L130 55 L130 120 L70 120 Z" fill={COULEUR_PRIMAIRE} />
+    <Path d="M78 52 L162 52" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} />
+    {/* Voile carrée pleine */}
+    <Path d="M85 52 L155 52 L155 118 L85 118 Z" fill={COULEUR_PRIMAIRE} />
     {/* Cordages */}
-    <Path d="M70 55 L40 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
-    <Path d="M130 55 L160 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
-    {/* Coque (forme drakkar) */}
-    <Path d="M28 132 L35 130 L165 130 L172 132 L160 165 L150 172 L70 172 L40 165 Z" stroke={COULEUR_PRIMAIRE} strokeWidth={3} fill="none" />
+    <Path d="M85 52 L50 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    <Path d="M155 52 L190 115" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    {/* Coque (bord supérieur + galbe inférieur) */}
+    <Path d="M30 132 L40 130 L200 130 L210 132" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} fill="none" />
+    <Path d="M30 132 L40 168 L70 176 L170 176 L200 168 L210 132" stroke={COULEUR_PRIMAIRE} strokeWidth={2.5} fill="none" />
     {/* Planches horizontales */}
-    <Path d="M50 148 L150 148" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
-    <Path d="M55 158 L145 158" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
-    {/* Tête de dragon avant */}
-    <Path d="M168 130 L180 128 L184 120 L188 118 L184 124 L178 131 Z" fill={COULEUR_PRIMAIRE} />
-    <Path d="M186 117 L192 115 L188 122 Z" fill={COULEUR_PRIMAIRE} />
-    {/* Queue arrière recourbée */}
-    <Path d="M32 130 L22 128 L18 120 L14 113 L22 113 L26 124 Z" fill={COULEUR_PRIMAIRE} />
+    <Path d="M50 142 L190 142" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    <Path d="M55 154 L185 154" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    <Path d="M58 164 L182 164" stroke={COULEUR_PRIMAIRE} strokeWidth={1} />
+    {/* Boucliers carrés sur la rangée — 10 boucliers */}
+    {[55, 68, 81, 94, 107, 120, 133, 146, 159, 172].map((x) => (
+      <Path key={x} d={`M${x} 144 L${x + 6} 144 L${x + 6} 153 L${x} 153 Z`} fill={COULEUR_PRIMAIRE} />
+    ))}
+    {/* Tête de dragon avant (droite) */}
+    <Path d="M210 132 L224 130 L224 118 L218 110 L220 116 L214 122 L212 126 Z" fill={COULEUR_PRIMAIRE} />
+    <Path d="M222 110 L230 108 L226 116 Z" fill={COULEUR_PRIMAIRE} />
+    {/* Queue arrière recourbée (gauche) */}
+    <Path d="M30 132 L16 130 L16 118 L22 110 L20 116 L26 122 L28 126 Z" fill={COULEUR_PRIMAIRE} />
   </Svg>
 );
 

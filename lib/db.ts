@@ -1157,6 +1157,30 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
   for (const p of projets) out.push({ type: "projet", id: p.id, titre: p.nom, sous: p.adresse_chantier || "" });
   const soums = await all<any>(`SELECT numero, client_nom, total FROM soumissions WHERE LOWER(numero) LIKE ? OR LOWER(client_nom) LIKE ? LIMIT 5`, [like, like]);
   for (const s of soums) out.push({ type: "soumission", id: s.numero, titre: s.numero, sous: s.client_nom || "" });
+  // Recherche étendue : commentaires pipeline + sous-tâches + fichiers attachés
+  try {
+    const comms = await all<any>(
+      `SELECT cc.id, cc.client_id, cc.texte, cc.auteur, cl.nom as client_nom
+       FROM client_commentaires cc LEFT JOIN clients cl ON cl.id = cc.client_id
+       WHERE LOWER(cc.texte) LIKE ? LIMIT 4`,
+      [like]
+    );
+    for (const c of comms) out.push({ type: "commentaire", id: c.client_id, titre: `💬 ${String(c.texte).slice(0, 60)}…`, sous: `${c.auteur || "—"} → ${c.client_nom || "?"}` });
+    const taches = await all<any>(
+      `SELECT ct.id, ct.client_id, ct.titre, ct.complete, cl.nom as client_nom
+       FROM client_taches ct LEFT JOIN clients cl ON cl.id = ct.client_id
+       WHERE LOWER(ct.titre) LIKE ? LIMIT 4`,
+      [like]
+    );
+    for (const t of taches) out.push({ type: "sous-tâche", id: t.client_id, titre: `${t.complete ? "✅" : "☐"} ${t.titre}`, sous: t.client_nom || "?" });
+    const fichiers = await all<any>(
+      `SELECT cf.id, cf.client_id, cf.nom, cl.nom as client_nom
+       FROM client_fichiers cf LEFT JOIN clients cl ON cl.id = cf.client_id
+       WHERE LOWER(cf.nom) LIKE ? LIMIT 4`,
+      [like]
+    );
+    for (const f of fichiers) out.push({ type: "fichier", id: f.client_id, titre: `📎 ${f.nom}`, sous: f.client_nom || "?" });
+  } catch { /* tables peuvent ne pas exister sur anciennes bases */ }
   return out;
 }
 export async function finances(annee: number): Promise<any> {

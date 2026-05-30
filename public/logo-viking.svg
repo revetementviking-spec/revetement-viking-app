@@ -1,32 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" fill="none" stroke="#1e3a5f" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round">
-  <!-- Drapeau au sommet du mât -->
-  <path d="M100 25 L120 30 L100 38 Z" fill="#1e3a5f" stroke="none"/>
-  <line x1="100" y1="22" x2="100" y2="135" stroke-width="2.5"/>
-  <!-- Vergue (barre horizontale en haut de voile) -->
-  <line x1="62" y1="55" x2="138" y2="55" stroke-width="2.5"/>
-  <!-- Voile carrée bleu marine pleine -->
-  <path d="M70 55 L130 55 L130 120 L70 120 Z" fill="#1e3a5f" stroke="none"/>
-  <!-- Cordages diagonaux -->
-  <line x1="70" y1="55" x2="40" y2="115" stroke-width="1.5"/>
-  <line x1="130" y1="55" x2="160" y2="115" stroke-width="1.5"/>
-  <!-- Coque principale du drakkar -->
-  <path d="M28 132 Q30 130 35 130 L165 130 Q170 130 172 132 L160 165 Q150 172 130 173 L70 173 Q50 172 40 165 Z" fill="none" stroke-width="3.5"/>
-  <!-- Lignes horizontales coque (planches) -->
-  <line x1="50" y1="148" x2="150" y2="148" stroke-width="1.5"/>
-  <line x1="55" y1="158" x2="145" y2="158" stroke-width="1.5"/>
-  <!-- Boucliers ronds entre les lignes -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 200" fill="none" stroke="#1e3a5f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Mât central -->
+  <line x1="120" y1="20" x2="120" y2="130" stroke-width="2.5"/>
+  <!-- Drapeau triangulaire au sommet -->
+  <path d="M120 22 L142 28 L120 36 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Petit drapeau supplémentaire au-dessus -->
+  <line x1="120" y1="18" x2="120" y2="22" stroke-width="2"/>
+  <!-- Vergue (barre horizontale haut de voile) -->
+  <line x1="78" y1="52" x2="162" y2="52" stroke-width="2.5"/>
+  <!-- Voile carrée pleine -->
+  <path d="M85 52 L155 52 L155 118 L85 118 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Cordages diagonaux (tirants depuis la voile) -->
+  <line x1="85" y1="52" x2="50" y2="115" stroke-width="1.2"/>
+  <line x1="155" y1="52" x2="190" y2="115" stroke-width="1.2"/>
+  <!-- Bord supérieur de la coque (long, élégant) -->
+  <path d="M30 132 Q35 130 45 130 L195 130 Q205 130 210 132" stroke-width="3"/>
+  <!-- Bord inférieur de la coque (galbé) -->
+  <path d="M30 132 L40 168 Q50 175 70 176 L170 176 Q190 175 200 168 L210 132" stroke-width="3"/>
+  <!-- Planches horizontales de la coque -->
+  <line x1="50" y1="142" x2="190" y2="142" stroke-width="1.2"/>
+  <line x1="55" y1="154" x2="185" y2="154" stroke-width="1.2"/>
+  <line x1="58" y1="164" x2="182" y2="164" stroke-width="1.2"/>
+  <!-- Boucliers ronds sur la rangée supérieure (carrés petits comme dans le logo) -->
   <g stroke-width="1">
-    <line x1="60" y1="153" x2="60" y2="158"/>
-    <line x1="72" y1="153" x2="72" y2="158"/>
-    <line x1="84" y1="153" x2="84" y2="158"/>
-    <line x1="96" y1="153" x2="96" y2="158"/>
-    <line x1="108" y1="153" x2="108" y2="158"/>
-    <line x1="120" y1="153" x2="120" y2="158"/>
-    <line x1="132" y1="153" x2="132" y2="158"/>
+    <rect x="55" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="68" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="81" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="94" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="107" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="120" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="133" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="146" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="159" y="144" width="6" height="9" fill="#1e3a5f"/>
+    <rect x="172" y="144" width="6" height="9" fill="#1e3a5f"/>
   </g>
-  <!-- Tête de dragon à l'avant (côté droit) -->
-  <path d="M168 130 Q180 128 184 120 L188 118 L184 124 Q183 128 178 131 Z" fill="#1e3a5f" stroke="none"/>
-  <path d="M186 117 L192 115 L188 122 Z" fill="#1e3a5f" stroke="none"/>
-  <!-- Queue arrière (côté gauche, recourbée) -->
-  <path d="M32 130 Q22 128 18 120 Q14 113 22 113 Q20 118 26 124 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Tête de dragon stylisée à l'avant (droite) — courbée comme dans le logo officiel -->
+  <path d="M210 132 Q224 130 224 118 Q224 110 218 110 Q220 116 214 122 Q212 126 210 132 Z" fill="#1e3a5f" stroke="none"/>
+  <path d="M222 110 L230 108 L226 116 Z" fill="#1e3a5f" stroke="none"/>
+  <!-- Queue arrière recourbée (gauche) — symétrique à la proue -->
+  <path d="M30 132 Q16 130 16 118 Q16 110 22 110 Q20 116 26 122 Q28 126 30 132 Z" fill="#1e3a5f" stroke="none"/>
 </svg>
