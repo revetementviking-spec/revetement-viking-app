@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
@@ -21,6 +21,7 @@ const SOURCES = ["Référence", "Réno Assistance", "Site web", "Facebook", "Goo
 
 export default function ClientDetail() {
   const params = useParams();
+  const router = useRouter();
   const id = +(params.id as string);
   const { toast } = useToast();
 
@@ -102,7 +103,18 @@ export default function ClientDetail() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <Navigation titre={`👤 ${client.nom}`} soustitre={client.statut || "prospect"} />
+      <Navigation titre={`👤 ${client.nom}`} soustitre={client.statut || "prospect"} actions={
+        <button
+          onClick={async () => {
+            if (!confirm(`Supprimer définitivement la fiche client « ${client.nom} » ?\n\n⚠️ Action irréversible. Les projets liés ne seront PAS supprimés.`)) return;
+            const r = await fetch(`/api/clients?id=${client.id}`, { method: "DELETE" });
+            if (r.ok) { toast("Fiche client supprimée", "success"); router.push("/clients"); }
+            else toast("Erreur suppression", "error");
+          }}
+          className="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-bold"
+          title="Supprimer la fiche client"
+        >🗑 Supprimer</button>
+      } />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Colonne gauche: infos + édition */}

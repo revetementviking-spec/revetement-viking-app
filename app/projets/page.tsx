@@ -28,7 +28,16 @@ export default function ProjetsPage() {
   const [creerOuvert, setCreerOuvert] = useState(false);
   const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_fin_prevue: "", statut: "actif", reno_assistance: false });
   const [facture, setFacture] = useState<{ data: string; type: string; nom: string } | null>(null);
+  const [clientsExistants, setClientsExistants] = useState<any[]>([]);
+  const [suggClient, setSuggClient] = useState(false);
   const { toast } = useToast();
+
+  // Charge la liste des clients existants pour suggestion dans le modal Nouveau projet
+  useEffect(() => {
+    if (creerOuvert && clientsExistants.length === 0) {
+      fetch("/api/clients", { cache: "no-store" }).then((r) => r.json()).then((d) => setClientsExistants(Array.isArray(d) ? d : []));
+    }
+  }, [creerOuvert]);
 
   const charger = async () => {
     setLoading(true);
@@ -237,7 +246,33 @@ export default function ProjetsPage() {
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Nouveau projet</h3>
             <Input label="Nom du projet *" value={nouveau.nom} onChange={(v) => setNouveau({ ...nouveau, nom: v })} />
-            <Input label="Client" value={nouveau.client_nom} onChange={(v) => setNouveau({ ...nouveau, client_nom: v })} placeholder="(crée automatiquement si nouveau)" />
+            <div className="relative">
+              <Input label="Client" value={nouveau.client_nom} onChange={(v) => { setNouveau({ ...nouveau, client_nom: v }); setSuggClient(true); }} placeholder="Tapez pour rechercher ou créer..." />
+              {suggClient && nouveau.client_nom.trim().length > 0 && (() => {
+                const q = nouveau.client_nom.toLowerCase().trim();
+                const matches = clientsExistants.filter((c: any) => (c.nom || "").toLowerCase().includes(q) || (c.courriel || "").toLowerCase().includes(q) || (c.telephone || "").includes(q)).slice(0, 6);
+                if (matches.length === 0) return null;
+                return (
+                  <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-slate-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                    {matches.map((c: any) => (
+                      <button key={c.id} type="button" onClick={() => {
+                        setNouveau({ ...nouveau, client_nom: c.nom, adresse_chantier: nouveau.adresse_chantier || c.adresse || "" });
+                        setSuggClient(false);
+                        toast(`Client existant sélectionné : ${c.nom}`, "success");
+                      }} className="w-full text-left px-3 py-2 hover:bg-emerald-50 border-b border-slate-100 last:border-0">
+                        <div className="font-semibold text-sm text-slate-900">{c.nom}</div>
+                        <div className="text-[11px] text-slate-500 flex gap-3 flex-wrap">
+                          {c.telephone && <span>📞 {c.telephone}</span>}
+                          {c.courriel && <span className="truncate">✉️ {c.courriel}</span>}
+                          {c.adresse && <span className="truncate">📍 {c.adresse}</span>}
+                        </div>
+                      </button>
+                    ))}
+                    <div className="px-3 py-1.5 text-[10px] text-slate-400 border-t bg-slate-50">💡 Cliquer un client existant pour pré-remplir, ou continuer pour créer un nouveau</div>
+                  </div>
+                );
+              })()}
+            </div>
             <Input label="Adresse chantier" value={nouveau.adresse_chantier} onChange={(v) => setNouveau({ ...nouveau, adresse_chantier: v })} />
             <Input label="💰 Prix total du contrat $ *" value={nouveau.prix_contrat} onChange={(v) => setNouveau({ ...nouveau, prix_contrat: v })} type="number" placeholder="Ex: 45000" />
             <p className="text-[10px] text-slate-500 -mt-2">Ce prix devient la référence pour calculer la marge et la rentabilité du projet.</p>

@@ -273,8 +273,7 @@ export default function ClientsPage() {
                           <td className="p-2 text-right font-bold">{pc.length}</td>
                           <td className="p-2 text-right font-bold text-emerald-700 whitespace-nowrap">{formatCAD(totalPaye)}</td>
                           <td className="p-2 text-right whitespace-nowrap">
-                            <a href={`/clients/${c.id}`} className="text-xs text-emerald-700 hover:underline mr-2">✏️</a>
-                            <button onClick={() => supprimer(c.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                            <a href={`/clients/${c.id}`} className="text-xs text-emerald-700 hover:underline">✏️ Ouvrir</a>
                           </td>
                         </tr>
                       );
@@ -310,7 +309,6 @@ export default function ClientsPage() {
                     <span className="text-emerald-700 font-bold">{formatCAD(totalPaye)}</span>
                   </div>
                   {tachesClient.length > 0 && <div className="text-[10px] text-amber-700">📌 {tachesClient.length} tâche(s) ouverte(s)</div>}
-                  <div onClick={(e) => { e.preventDefault(); supprimer(c.id); }} className="text-[10px] text-red-600 text-right cursor-pointer hover:underline">Supprimer</div>
                 </a>
               );
             })}
