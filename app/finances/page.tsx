@@ -193,26 +193,6 @@ export default function FinancesPage() {
           </div>
         </section>
 
-        {/* Tableau détaillé */}
-        <section className="bg-white rounded-lg shadow overflow-x-auto">
-          <table className="w-full text-sm min-w-max">
-            <thead className="bg-slate-100">
-              <tr><th className="p-2 text-left">Mois</th><th className="p-2 text-right">Facturé</th><th className="p-2 text-right">Encaissé</th><th className="p-2 text-right">Dépenses</th><th className="p-2 text-right">MO</th><th className="p-2 text-right">Marge</th></tr>
-            </thead>
-            <tbody>
-              {data.mois.map((m: any) => (
-                <tr key={m.mois} className="border-t">
-                  <td className="p-2 font-bold">{MOIS[m.mois]}</td>
-                  <td className="p-2 text-right">{formatCAD(m.facture)}</td>
-                  <td className="p-2 text-right text-emerald-700">{formatCAD(m.paye)}</td>
-                  <td className="p-2 text-right text-orange-700">{formatCAD(m.depenses)}</td>
-                  <td className="p-2 text-right text-amber-700">{formatCAD(m.mo)}</td>
-                  <td className={`p-2 text-right font-bold ${m.marge >= 0 ? "text-emerald-700" : "text-red-700"}`}>{formatCAD(m.marge)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
       </main>
       <FAB />
     </div>

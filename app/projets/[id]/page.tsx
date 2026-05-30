@@ -348,14 +348,21 @@ ${VIKING_EMAIL}
           </div>
         )}
 
-        {/* RENTABILITÉ TEMPS RÉEL */}
+        {/* RENTABILITÉ TEMPS RÉEL — inclut 15% frais fixes structurels (admin/véhicules/assurance/loyer) */}
+        {(() => {
+          const revenu = projet.revenu || 0;
+          const fraisFixes = Math.round(revenu * 0.15);
+          const coutTotalAvecFixes = projet.cout_total + fraisFixes;
+          const margeReelle = revenu - coutTotalAvecFixes;
+          const margeReellePct = revenu > 0 ? (margeReelle / revenu) * 100 : 0;
+          return (
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white rounded-lg p-5 shadow-lg">
-          <h2 className="text-sm font-semibold text-slate-300 uppercase mb-3">💰 Rentabilité temps réel</h2>
+          <h2 className="text-sm font-semibold text-slate-300 uppercase mb-3">💰 Rentabilité temps réel <span className="text-[10px] font-normal text-slate-400">— inclut 15% frais fixes</span></h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label={projet.prix_contrat ? "Prix contrat" : "Budget initial"} value={formatCAD(projet.revenu || 0)} sub={projet.prix_contrat && projet.budget_estime && projet.prix_contrat !== projet.budget_estime ? `Budget est. : ${formatCAD(projet.budget_estime)}` : ""} />
-            <Stat label="Coût réel" value={formatCAD(projet.cout_total)} couleur={projet.cout_total > (projet.revenu || 0) ? "text-red-300" : "text-amber-200"} />
-            <Stat label="Marge brute" value={formatCAD(projet.marge)} couleur={projet.marge < 0 ? "text-red-300" : "text-emerald-300"} sub={`${projet.marge_pct.toFixed(0)}%`} />
-            <Stat label="Restant" value={formatCAD((projet.revenu || 0) - projet.cout_total)} couleur={(projet.revenu || 0) - projet.cout_total < 0 ? "text-red-300" : "text-slate-200"} />
+            <Stat label={projet.prix_contrat ? "Prix contrat" : "Budget initial"} value={formatCAD(revenu)} sub={projet.prix_contrat && projet.budget_estime && projet.prix_contrat !== projet.budget_estime ? `Budget est. : ${formatCAD(projet.budget_estime)}` : ""} />
+            <Stat label="Coût total" value={formatCAD(coutTotalAvecFixes)} couleur={coutTotalAvecFixes > revenu ? "text-red-300" : "text-amber-200"} sub={`Direct ${formatCAD(projet.cout_total)} + Fixes ${formatCAD(fraisFixes)}`} />
+            <Stat label="Profit net" value={formatCAD(margeReelle)} couleur={margeReelle < 0 ? "text-red-300" : "text-emerald-300"} sub={`${margeReellePct.toFixed(0)}% net`} />
+            <Stat label="Restant" value={formatCAD(revenu - coutTotalAvecFixes)} couleur={revenu - coutTotalAvecFixes < 0 ? "text-red-300" : "text-slate-200"} />
           </div>
 
           {projet.budget_estime > 0 && (
@@ -394,10 +401,14 @@ ${VIKING_EMAIL}
                       <div key={cat} className="flex justify-between"><span className="text-slate-300 capitalize">📦 {cat}</span><span className="font-bold text-white">{formatCAD(montant)}</span></div>
                     ));
               })()}
-              <div className="flex justify-between pt-1.5 border-t border-slate-600"><span className="font-bold text-slate-200">Coût total engagé</span><span className="font-bold text-amber-300">{formatCAD(projet.cout_total)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-300">🏢 Frais fixes structurels (15%)</span><span className="font-bold text-white">{formatCAD(fraisFixes)}</span></div>
+              <div className="text-[10px] text-slate-400 italic pl-5">Admin, véhicules, assurance RBQ, comptable, téléphone, etc.</div>
+              <div className="flex justify-between pt-1.5 border-t border-slate-600"><span className="font-bold text-slate-200">Coût total (direct + fixes)</span><span className="font-bold text-amber-300">{formatCAD(coutTotalAvecFixes)}</span></div>
             </div>
           )}
         </div>
+          );
+        })()}
 
         {/* CONTRAT + FACTURE FINALE */}
         <ContratFactureSection projet={projet} onUpdate={charger} />

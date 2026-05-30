@@ -232,16 +232,22 @@ export default function ProjetsPage() {
 
                 <div className="grid grid-cols-2 gap-1 text-xs pt-2 border-t">
                   <div><span className="text-slate-500">MO :</span> <strong>{p.total_heures.toFixed(1)} h</strong></div>
-                  <div><span className="text-slate-500">Coût :</span> <strong>{formatCAD(p.cout_total)}</strong></div>
+                  <div><span className="text-slate-500">Coût direct :</span> <strong>{formatCAD(p.cout_total)}</strong></div>
                   <div><span className="text-slate-500">Facturé :</span> <strong>{formatCAD(p.total_facture)}</strong></div>
                   <div><span className="text-slate-500">Payé :</span> <strong className="text-emerald-700">{formatCAD(p.total_paye)}</strong></div>
                 </div>
 
-                {p.marge !== undefined && p.budget_estime > 0 && (
-                  <div className={`text-xs font-bold text-center py-1 rounded ${p.marge < 0 ? "bg-red-50 text-red-700" : p.marge_pct < 15 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`}>
-                    Marge : {formatCAD(p.marge)} ({p.marge_pct.toFixed(0)}%)
-                  </div>
-                )}
+                {p.marge !== undefined && p.budget_estime > 0 && (() => {
+                  const revenu = p.revenu || p.budget_estime || 0;
+                  const fraisFixes = Math.round(revenu * 0.15);
+                  const profitNet = revenu - p.cout_total - fraisFixes;
+                  const pctNet = revenu > 0 ? (profitNet / revenu) * 100 : 0;
+                  return (
+                    <div className={`text-xs font-bold text-center py-1 rounded ${profitNet < 0 ? "bg-red-50 text-red-700" : pctNet < 15 ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700"}`} title="Profit net = Revenu − Coût direct − 15% frais fixes structurels">
+                      Profit net : {formatCAD(profitNet)} ({pctNet.toFixed(0)}%) <span className="font-normal opacity-70">après 15% fixes</span>
+                    </div>
+                  );
+                })()}
               </Link>
             ))}
           </div>

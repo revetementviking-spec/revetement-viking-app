@@ -22,7 +22,9 @@ export async function GET(_req: NextRequest) {
       const rCouts = await db.execute({ sql: `SELECT COALESCE(SUM(montant),0) AS d FROM depenses_projet WHERE projet_id = ?`, args: [p.id] }).catch(() => ({ rows: [{ d: 0 }] }));
       const rHeures = await db.execute({ sql: `SELECT COALESCE(SUM(heures * COALESCE(taux_horaire, 35)), 0) AS m FROM heures_projet WHERE projet_id = ?`, args: [p.id] }).catch(() => ({ rows: [{ m: 0 }] }));
       const cout = (+(rCouts.rows[0] as any).d || 0) + (+(rHeures.rows[0] as any).m || 0);
-      if (prix > 0) { totalMarge += (prix - cout); nbAvecMarge++; }
+      // Profit net = revenu − coût direct − 15% frais fixes structurels (admin, véhicules, assurance, etc.)
+      const fraisFixes = prix * 0.15;
+      if (prix > 0) { totalMarge += (prix - cout - fraisFixes); nbAvecMarge++; }
       if (p.date_fin_prevue && p.date_fin_prevue < aujourdhui) nbEnRetard++;
     }
     const margeMoyennePct = totalContrat > 0 ? (totalMarge / totalContrat) * 100 : 0;
