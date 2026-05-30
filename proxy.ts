@@ -115,10 +115,14 @@ export async function proxy(req: NextRequest) {
     estAssetPublic(path) ||
     (path === "/api/backup" && req.method === "GET") ||      // cron Vercel (route exige CRON_SECRET)
     (path === "/api/relances/email" && req.method === "GET") || // cron Vercel relances (CRON_SECRET aussi)
+    (path === "/api/soumissions/relances-auto" && req.method === "GET") || // cron Vercel
+    (path === "/api/rapport-hebdo" && req.method === "GET") || // cron Vercel hebdo
     path === "/api/ping" ||                                   // réchauffement anti cold-start (public, sans données)
     path.startsWith("/soumission/") ||                        // signature publique (token HMAC)
     path === "/api/soumission-publique" ||
     path.startsWith("/contrat/") ||                            // page publique de signature du contrat pipeline
+    path.startsWith("/projet/") ||                             // mode présentation client (token HMAC)
+    path === "/api/projet-public" ||                           // endpoint mode présentation
     /^\/api\/contrats-pipeline\/[^/]+(\/pdf)?$/.test(path)     // GET infos + GET PDF + POST signature (token = secret)
   ) {
     return avecHeaders(NextResponse.next());
