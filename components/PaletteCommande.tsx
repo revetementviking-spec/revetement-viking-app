@@ -37,6 +37,7 @@ const NAVIGATION = [
   { titre: "💸 Dépenses", route: "/depenses" },
   { titre: "⏱️ Horaire", route: "/heures" },
   { titre: "👷 Employés", route: "/employes" },
+  { titre: "📚 Catalogue matériaux", route: "/catalogue" },
   { titre: "📦 Inventaire", route: "/inventaire" },
   { titre: "📹 Caméras", route: "/cameras" },
   { titre: "⚙️ Paramètres", route: "/parametres" },

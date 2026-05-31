@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -150,6 +150,26 @@ async function doInitDb() {
     date_creation TEXT
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_ia_feedback_date ON ia_feedback(date_creation DESC)");
+
+  // === CATALOGUE MATÉRIAUX (modifiable manuellement, source officielle des prix) ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS catalogue_materiaux (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT NOT NULL,
+    type TEXT,
+    fournisseur TEXT,
+    unite TEXT NOT NULL,
+    format_paquet REAL,
+    format_paquet_label TEXT,
+    prix_coutant REAL,
+    majoration_pct REAL DEFAULT 20,
+    prix_vente REAL,
+    notes TEXT,
+    actif INTEGER DEFAULT 1,
+    date_creation TEXT,
+    date_modif TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_catalogue_type ON catalogue_materiaux(type, actif)");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_catalogue_nom ON catalogue_materiaux(nom)");
 
   // === NOTES RAPIDES (vocales ou texte) attachées à un projet ===
   await tryExec(`CREATE TABLE IF NOT EXISTS notes_rapides (
