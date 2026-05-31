@@ -9,14 +9,15 @@ import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
+  en_cours: { label: "En cours", couleur: "bg-emerald-100 text-emerald-900" },
   a_venir: { label: "À venir", couleur: "bg-violet-100 text-violet-900" },
-  actif: { label: "Actif", couleur: "bg-emerald-100 text-emerald-900" },
+  actif: { label: "Actif", couleur: "bg-cyan-100 text-cyan-900" },
   en_pause: { label: "En pause", couleur: "bg-amber-100 text-amber-900" },
   complete: { label: "Complété", couleur: "bg-blue-100 text-blue-900" },
   annule: { label: "Annulé", couleur: "bg-red-100 text-red-900" },
 };
 
-type TriMode = "recent" | "nom" | "marge_pct" | "budget" | "cout" | "marge_montant";
+type TriMode = "recent" | "nom" | "marge_pct" | "budget" | "cout" | "marge_montant" | "date_debut";
 
 export default function ProjetsPage() {
   const [projets, setProjets] = useState<any[]>([]);
@@ -26,7 +27,7 @@ export default function ProjetsPage() {
   const [triAsc, setTriAsc] = useState(false);
   const [loading, setLoading] = useState(true);
   const [creerOuvert, setCreerOuvert] = useState(false);
-  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "actif", reno_assistance: false });
+  const [nouveau, setNouveau] = useState({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "a_venir", reno_assistance: false });
   const [facture, setFacture] = useState<{ data: string; type: string; nom: string } | null>(null);
   const [clientsExistants, setClientsExistants] = useState<any[]>([]);
   const [suggClient, setSuggClient] = useState(false);
@@ -75,7 +76,7 @@ export default function ProjetsPage() {
       }
       toast("Projet créé", "success");
       setCreerOuvert(false);
-      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "actif", reno_assistance: false });
+      setNouveau({ nom: "", client_nom: "", adresse_chantier: "", prix_contrat: "", description: "", date_debut: new Date().toISOString().slice(0, 10), date_fin_prevue: "", statut: "a_venir", reno_assistance: false });
       setFacture(null);
       charger();
     }
@@ -101,18 +102,28 @@ export default function ProjetsPage() {
       marge_montant: (a, b) => (b.marge || 0) - (a.marge || 0),
       budget: (a, b) => (b.budget_estime || 0) - (a.budget_estime || 0),
       cout: (a, b) => (b.cout_total || 0) - (a.cout_total || 0),
+      // Date de début ASC : les projets sans date_debut tombent en fin
+      date_debut: (a, b) => {
+        const da = a.date_debut || "9999-12-31";
+        const db = b.date_debut || "9999-12-31";
+        return da.localeCompare(db);
+      },
     };
-    list.sort(cmp[tri]);
-    if (triAsc) list.reverse();
+    // Filtre vide ("Tous") + tri par défaut → on bascule auto sur date_debut ASC
+    const triEffectif: TriMode = (!filtre && tri === "recent") ? "date_debut" : tri;
+    list.sort(cmp[triEffectif]);
+    if (triAsc && triEffectif !== "date_debut") list.reverse();
     return list;
   })();
 
+  // Considère "en_cours" et "actif" comme des projets en activité
+  const estActif = (p: any) => p.statut === 'actif' || p.statut === 'en_cours';
   const stats = {
-    actifs: projets.filter((p) => p.statut === 'actif').length,
-    budget_total: projets.filter((p) => p.statut === 'actif').reduce((s, p) => s + (p.budget_estime || 0), 0),
-    cout_total: projets.filter((p) => p.statut === 'actif').reduce((s, p) => s + (p.cout_total || 0), 0),
-    facture_total: projets.filter((p) => p.statut === 'actif').reduce((s, p) => s + (p.total_facture || 0), 0),
-    paye_total: projets.filter((p) => p.statut === 'actif').reduce((s, p) => s + (p.total_paye || 0), 0),
+    actifs: projets.filter(estActif).length,
+    budget_total: projets.filter(estActif).reduce((s, p) => s + (p.budget_estime || 0), 0),
+    cout_total: projets.filter(estActif).reduce((s, p) => s + (p.cout_total || 0), 0),
+    facture_total: projets.filter(estActif).reduce((s, p) => s + (p.total_facture || 0), 0),
+    paye_total: projets.filter(estActif).reduce((s, p) => s + (p.total_paye || 0), 0),
   };
 
   return (
@@ -157,6 +168,7 @@ export default function ProjetsPage() {
             />
             <select value={tri} onChange={(e) => setTri(e.target.value as TriMode)} className="px-3 py-2 border rounded text-sm bg-white">
               <option value="recent">Plus récent</option>
+              <option value="date_debut">Date de début</option>
               <option value="nom">Nom (A→Z)</option>
               <option value="marge_pct">Marge %</option>
               <option value="marge_montant">Marge $</option>
