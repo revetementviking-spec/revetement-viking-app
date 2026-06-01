@@ -273,7 +273,7 @@ export default function Home() {
               <div className="text-xl md:text-2xl font-bold text-red-900 mt-1">{formatCAD(tableauBord.factures_impayees_montant)}</div>
               <div className="text-[10px] text-red-600">{tableauBord.factures_impayees_nb} facture(s)</div>
             </a>
-            <a href="/employes" className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-lg p-3 hover:shadow-md transition">
+            <a href="/finances/paye" className="bg-gradient-to-br from-amber-50 to-amber-100 border border-amber-200 rounded-lg p-3 hover:shadow-md transition">
               <div className="text-[10px] uppercase font-bold text-amber-700">🏦 Banque d'heures</div>
               <div className="text-xl md:text-2xl font-bold text-amber-900 mt-1">{(tableauBord.banque_heures || 0).toFixed(1)} h</div>
               <div className="text-[10px] text-amber-600">à utiliser plus tard</div>

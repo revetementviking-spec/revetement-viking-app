@@ -1126,6 +1126,7 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
   const [edit, setEdit] = useState(false);
   const [prix, setPrix] = useState(projet.prix_contrat ? String(projet.prix_contrat) : "");
   const [contratOuvert, setContratOuvert] = useState(false);
+  const [factureOuverte, setFactureOuverte] = useState(false);
   const sauver = async () => {
     const valeur = prix ? +prix : null;
     // Sync les deux champs pour que toutes les pages (liste, détail, finances) reflètent le changement
@@ -1150,13 +1151,27 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
     };
     reader.readAsDataURL(file);
   };
+  const uploadFacture = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { alert("Fichier > 5 MB"); return; }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      await fetch("/api/projets", {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: projet.id, facture_finale_data: reader.result, facture_finale_type: file.type }),
+      });
+      onUpdate();
+    };
+    reader.readAsDataURL(file);
+  };
   return (
     <section className="bg-white rounded-lg shadow p-4 md:p-5 space-y-3">
       <div className="flex justify-between items-center">
         <h2 className="font-bold">📄 Contrat</h2>
         {!edit && <button onClick={() => setEdit(true)} className="text-xs text-emerald-700 hover:underline">✏️ Modifier</button>}
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <div className="text-xs text-slate-500 uppercase font-semibold mb-1">Prix total du contrat</div>
           {edit ? (
@@ -1192,6 +1207,25 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
             </label>
           )}
         </div>
+        {/* Facture projet */}
+        <div>
+          <div className="text-xs text-slate-500 uppercase font-semibold mb-1">Facture projet</div>
+          {projet.facture_finale_data || projet.a_facture_finale ? (
+            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded p-2">
+              <div className="w-12 h-12 bg-slate-200 rounded flex items-center justify-center text-2xl">{projet.facture_finale_type?.startsWith("image/") ? "🧾" : "📄"}</div>
+              <button onClick={() => setFactureOuverte(true)} className="flex-1 text-left text-sm text-emerald-700 hover:underline font-semibold">📎 Ouvrir la facture</button>
+              <label className="cursor-pointer text-xs text-emerald-700 hover:underline">
+                Remplacer
+                <input type="file" accept="image/*,application/pdf" className="hidden" onChange={uploadFacture} />
+              </label>
+            </div>
+          ) : (
+            <label className="cursor-pointer bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded p-3 text-center transition flex items-center justify-center gap-2 text-sm font-semibold text-slate-700">
+              🧾 Joindre la facture
+              <input type="file" accept="image/*,application/pdf" className="hidden" onChange={uploadFacture} />
+            </label>
+          )}
+        </div>
       </div>
 
       {/* Visualiseur contrat signé plein écran avec bouton retour */}
@@ -1209,6 +1243,26 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
               </div>
             ) : (
               <iframe src={`/api/projets/${projet.id}/contrat#view=FitH&toolbar=1`} title="Contrat signé" className="w-full h-full border-0" />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Visualiseur facture plein écran */}
+      {factureOuverte && (
+        <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
+          <div className="flex items-center justify-between p-3 text-white safe-top">
+            <button onClick={() => setFactureOuverte(false)} className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold text-sm">← Retour</button>
+            <span className="text-sm opacity-80">Facture — {projet.nom}</span>
+            <a href={`/api/projets/${projet.id}/facture`} target="_blank" rel="noreferrer" download className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">⬇</a>
+          </div>
+          <div className="flex-1 bg-white">
+            {projet.facture_finale_type?.startsWith("image/") ? (
+              <div className="w-full h-full flex items-center justify-center bg-black" onClick={() => setFactureOuverte(false)}>
+                <img src={`/api/projets/${projet.id}/facture`} alt="Facture" onClick={(e) => e.stopPropagation()} className="max-h-full max-w-full object-contain" />
+              </div>
+            ) : (
+              <iframe src={`/api/projets/${projet.id}/facture#view=FitH&toolbar=1`} title="Facture" className="w-full h-full border-0" />
             )}
           </div>
         </div>
