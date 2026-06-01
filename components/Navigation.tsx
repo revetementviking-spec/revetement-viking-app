@@ -25,6 +25,7 @@ const LINKS_SECONDAIRES: NavLink[] = [
   { href: "/soumissions", label: "Liste soum.", icon: "📋" },
   { href: "/employes", label: "Employés", icon: "👷" },
   { href: "/catalogue", label: "Catalogue", icon: "📚" },
+  { href: "/parametres-ia", label: "Paramètres IA", icon: "🤖" },
   { href: "/inventaire", label: "Inventaire", icon: "📦" },
   { href: "/cameras", label: "Caméras", icon: "📹" },
   { href: "/outils", label: "Outils", icon: "🧰" },

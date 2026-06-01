@@ -38,6 +38,7 @@ const NAVIGATION = [
   { titre: "⏱️ Horaire", route: "/heures" },
   { titre: "👷 Employés", route: "/employes" },
   { titre: "📚 Catalogue matériaux", route: "/catalogue" },
+  { titre: "🤖 Paramètres IA (règles + documents)", route: "/parametres-ia" },
   { titre: "📦 Inventaire", route: "/inventaire" },
   { titre: "📹 Caméras", route: "/cameras" },
   { titre: "⚙️ Paramètres", route: "/parametres" },

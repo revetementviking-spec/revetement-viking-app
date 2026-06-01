@@ -16,7 +16,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -150,6 +150,31 @@ async function doInitDb() {
     date_creation TEXT
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_ia_feedback_date ON ia_feedback(date_creation DESC)");
+
+  // === PARAMÈTRES IA modifiables par l'utilisateur (règles métier injectées dans les prompts) ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS parametres_ia (
+    cle TEXT PRIMARY KEY,
+    valeur TEXT NOT NULL,
+    label TEXT,
+    description TEXT,
+    type TEXT DEFAULT 'text',
+    date_modif TEXT
+  )`);
+
+  // === DOCUMENTS DE RÉFÉRENCE (PDF, Excel, prix fournisseurs) lus par l'IA lors des soumissions ===
+  await tryExec(`CREATE TABLE IF NOT EXISTS documents_ia (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nom TEXT NOT NULL,
+    type_mime TEXT,
+    taille INTEGER,
+    data_b64 TEXT NOT NULL,
+    contenu_texte TEXT,
+    tags TEXT,
+    actif INTEGER DEFAULT 1,
+    par TEXT,
+    date_creation TEXT
+  )`);
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_documents_ia_actif ON documents_ia(actif, date_creation DESC)");
 
   // === CATALOGUE MATÉRIAUX (modifiable manuellement, source officielle des prix) ===
   await tryExec(`CREATE TABLE IF NOT EXISTS catalogue_materiaux (

@@ -9,7 +9,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { MATERIAUX } from "@/data/materiaux";
 import { PRESETS } from "@/data/presets-soumission";
 import { jobsSimilaires } from "@/lib/db";
-import { REGLES_METIER_VIKING, MODELES, fewShotExemples, trouverProjetsSimilaires, resumeFeedbackHistorique } from "@/lib/viking-ai";
+import { REGLES_METIER_VIKING, MODELES, fewShotExemples, trouverProjetsSimilaires, resumeFeedbackHistorique, reglesMetierDynamiques, documentsReferenceActifs } from "@/lib/viking-ai";
 
 const SYSTEME = `Tu es l'expert estimateur en revêtement extérieur d'Revêtement Viking Inc. (RBQ 5811-4299-01, taux 90$/h facturé client).
 
@@ -91,15 +91,19 @@ export async function POST(req: NextRequest) {
 
     const client = new Anthropic({ apiKey });
 
-    // Charge en parallèle : few-shot exemples soumissions acceptées + projets similaires + corrections apprises
-    const [exemples, feedbackHist] = await Promise.all([
+    // Charge en parallèle : règles métier dynamiques (DB), few-shot, projets similaires, corrections, documents de référence
+    const [regles, exemples, feedbackHist, docs] = await Promise.all([
+      reglesMetierDynamiques().catch(() => REGLES_METIER_VIKING),
       fewShotExemples(2).catch(() => ""),
       resumeFeedbackHistorique().catch(() => ""),
+      documentsReferenceActifs().catch(() => ""),
     ]);
 
     const systemPrompt = `${SYSTEME.replace("{{CATALOGUE}}", catalogueResume()).replace("{{PRESETS}}", presetsResume())}
 
-${REGLES_METIER_VIKING}
+${regles}
+
+${docs || ""}
 
 ${exemples ? `=== EXEMPLES DE SOUMISSIONS ACCEPTÉES — INSPIRE-TOI DE LEUR STRUCTURE ===\n${exemples}\n` : ""}
 ${feedbackHist || ""}

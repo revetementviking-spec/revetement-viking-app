@@ -20,9 +20,54 @@ export const MODELES = {
   chat_simple: "claude-haiku-4-5",
 } as const;
 
-// === RÈGLES MÉTIER VIKING ===
-// Injectées dans tous les prompts auto-estimateur / construction.
-// Mises à jour ici → effet immédiat partout.
+// === RÈGLES MÉTIER VIKING — version dynamique (lit DB parametres_ia) ===
+/** Construit les règles métier à partir des paramètres modifiables en DB.
+ *  Tombe sur les valeurs Viking par défaut si la table est vide. */
+export async function reglesMetierDynamiques(): Promise<string> {
+  const r = await c().execute({ sql: "SELECT cle, valeur FROM parametres_ia", args: [] }).catch(() => ({ rows: [] }));
+  const p: Record<string, string> = {};
+  for (const row of r.rows as any[]) p[row.cle] = row.valeur;
+  const v = (k: string, def: string) => p[k] || def;
+
+  return `
+=== RÈGLES MÉTIER VIKING — VALEURS COURANTES (modifiables dans /parametres-ia) ===
+
+MARGES & COÛTS
+- Marge plancher visée : ${v("marge_plancher_pct", "30")} %
+- Frais fixes structurels (admin/véhicules/RBQ/assurance) : ${v("frais_fixes_pct", "15")} %
+- Conditions générales : ${v("conditions_generales_pct", "5")} %
+- Profit et administration : ${v("profit_admin_pct", "7")} %
+- Taux MO interne : ${v("taux_mo_interne", "55")} $/h coûtant
+
+MAJORATIONS MATÉRIAUX (sur prix coûtant brut)
+- Maibec / cèdre véritable : ${v("majoration_maibec", "18")} %
+- Canexel / fibrociment Hardie : ${v("majoration_canexel", "22")} %
+- Vinyle / aluminium : ${v("majoration_vinyle", "25")} %
+- Quincaillerie, vis, clous : ${v("majoration_quincaillerie", "30")} %
+- Membrane, isolant : ${v("majoration_membrane", "20")} %
+
+RENDEMENTS MAIN-D'ŒUVRE
+- Démolition : ${v("rendement_demolition", "0.8")} h / 100 pi²
+- Pose Maibec : ${v("rendement_pose_maibec", "1.2")} h / 100 pi²
+- Pose Canexel/Hardie : ${v("rendement_pose_canexel", "1.5")} h / 100 pi²
+- Soffite/fascia : ${v("rendement_soffite_fascia", "0.6")} h / pi linéaire
+- Habillage porte/fenêtre : ${v("rendement_habillage", "1.5")} h / unité
+
+MODALITÉS
+- Acompte signature : ${v("acompte_signature_pct", "30")} %
+- Acompte mi-projet : ${v("acompte_mi_projet_pct", "40")} %
+- Solde livraison : ${v("acompte_livraison_pct", "30")} %
+- Validité soumission : ${v("validite_soumission_jours", "30")} jours
+- RBQ : 5811-4299-01
+
+INCLUSIONS STANDARD : démolition, disposition, membrane pare-air, tasseaux, revêtement, moulures, coins, habillage portes/fenêtres, soffites+fascia, calfeutrage OSI Quad Max, nettoyage.
+EXCLUSIONS À MENTIONNER : charpente, isolation rigide extérieure (option), peinture, gypse intérieur.
+
+${p["regles_libres"]?.trim() ? `\n=== RÈGLES MÉTIER ADDITIONNELLES (de Francis) ===\n${p["regles_libres"]}\n` : ""}
+`.trim();
+}
+
+// Version statique gardée pour rétrocompat — utiliser reglesMetierDynamiques() de préférence
 export const REGLES_METIER_VIKING = `
 === RÈGLES MÉTIER VIKING — TOUJOURS APPLIQUER ===
 
@@ -111,6 +156,24 @@ export const SCHEMA_SOUMISSION = {
   required: ["resume_strategie", "heures_totales_estimees", "articles", "total_avant_taxes"],
   additionalProperties: false,
 };
+
+// === DOCUMENTS DE RÉFÉRENCE actifs (PDF, Excel uploadés par l'utilisateur) ===
+/** Retourne la liste des documents de référence actifs (sans le binaire),
+ *  formatée pour inclusion dans le prompt système. */
+export async function documentsReferenceActifs(): Promise<string> {
+  const r = await c().execute({
+    sql: "SELECT nom, type_mime, tags, contenu_texte FROM documents_ia WHERE actif = 1 ORDER BY date_creation DESC LIMIT 10",
+    args: [],
+  }).catch(() => ({ rows: [] }));
+  if (r.rows.length === 0) return "";
+
+  const lignes: string[] = ["=== DOCUMENTS DE RÉFÉRENCE FOURNIS PAR FRANCIS ==="];
+  for (const row of r.rows as any[]) {
+    lignes.push(`• ${row.nom}${row.tags ? ` [${row.tags}]` : ""}${row.contenu_texte ? `\n  Extrait : ${String(row.contenu_texte).slice(0, 300)}...` : ""}`);
+  }
+  lignes.push("(Si tu as besoin du contenu complet d'un document, signale-le dans tes notes — Francis pourra te le fournir.)");
+  return lignes.join("\n");
+}
 
 // === CACHE PRIX WEB 7 jours ===
 const TTL_PRIX_MS = 7 * 24 * 60 * 60 * 1000;
