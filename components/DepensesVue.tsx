@@ -5,6 +5,7 @@ import FAB from "@/components/FAB";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import { exporterCSV } from "@/lib/csv";
+import Pagination, { usePagination } from "@/components/Pagination";
 
 type TriCol = "date" | "fournisseur" | "categorie" | "projet" | "montant";
 type TriSens = "asc" | "desc";
@@ -82,6 +83,13 @@ export default function DepensesVue() {
     if (triCol === col) setTriSens(triSens === "asc" ? "desc" : "asc");
     else { setTriCol(col); setTriSens(col === "montant" ? "desc" : "asc"); }
   };
+
+  // Pagination de l'AFFICHAGE — les KPIs/totaux/CSV ci-dessous restent sur `filtrees` (jeu complet).
+  const pg = usePagination(filtrees.length, 50);
+  const visibles = useMemo(() => filtrees.slice(pg.debut, pg.fin), [filtrees, pg.debut, pg.fin]);
+  // Revenir à la 1re page dès qu'un filtre change.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { pg.reset(); }, [recherche, filtreCat, filtreProj, depuis, jusqu]);
 
   const total = filtrees.reduce((s, d) => s + (d.montant || 0), 0);
   const totalAvecRecu = filtrees.filter((d) => (d as any).a_recu || d.recu_data).reduce((s, d) => s + d.montant, 0);
@@ -225,7 +233,8 @@ export default function DepensesVue() {
         )}
 
         {/* Tableau */}
-        <section className="bg-white rounded-lg shadow overflow-x-auto">
+        <section className="bg-white rounded-lg shadow">
+          <div className="overflow-x-auto">
           {filtrees.length === 0 ? (
             <div className="p-12 text-center text-slate-500 text-sm">Aucune dépense pour ces critères.</div>
           ) : (
@@ -247,7 +256,7 @@ export default function DepensesVue() {
                 </tr>
               </thead>
               <tbody>
-                {filtrees.map((d) => {
+                {visibles.map((d) => {
                   const sel = selection.has(d.id);
                   return (
                     <tr key={d.id} className={`border-t hover:bg-slate-50 vk-lazy-render ${sel ? "bg-blue-50" : ""}`}>
@@ -288,6 +297,10 @@ export default function DepensesVue() {
                 </tr>
               </tfoot>
             </table>
+          )}
+          </div>
+          {filtrees.length > 0 && (
+            <Pagination total={filtrees.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="dépenses" />
           )}
         </section>
 

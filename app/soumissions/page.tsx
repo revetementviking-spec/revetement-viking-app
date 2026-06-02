@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+import Pagination, { usePagination } from "@/components/Pagination";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
   brouillon: { label: "Brouillon", couleur: "bg-slate-200 text-slate-800" },
@@ -62,6 +63,13 @@ export default function SoumissionsPage() {
   };
 
   useEffect(() => { charger(); }, [statutFiltre]);
+
+  // Pagination de l'affichage (la liste peut grandir avec le temps).
+  const pg = usePagination(data.length, 50);
+  const visibles = useMemo(() => data.slice(pg.debut, pg.fin), [data, pg.debut, pg.fin]);
+  // Revenir à la 1re page quand on change de filtre de statut.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { pg.reset(); }, [statutFiltre]);
 
   const changerStatut = async (numero: string, statut: string) => {
     await fetch("/api/soumissions", {
@@ -135,7 +143,7 @@ export default function SoumissionsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((s) => (
+                  {visibles.map((s) => (
                     <tr key={s.id} className="border-t hover:bg-slate-50">
                       <td className="p-3 font-mono text-xs">{s.numero}</td>
                       <td className="p-3 text-xs">{new Date(s.date_creation).toLocaleDateString("fr-CA")}</td>
@@ -169,11 +177,12 @@ export default function SoumissionsPage() {
                   ))}
                 </tbody>
               </table>
+              <Pagination total={data.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="soumissions" />
             </div>
 
             {/* Cards MOBILE */}
             <div className="md:hidden space-y-3">
-              {data.map((s) => (
+              {visibles.map((s) => (
                 <div key={s.id} className="bg-white rounded-lg shadow p-4 space-y-2">
                   <div className="flex justify-between items-start gap-2">
                     <div className="min-w-0 flex-1">
@@ -202,6 +211,9 @@ export default function SoumissionsPage() {
                   )}
                 </div>
               ))}
+              <div className="bg-white rounded-lg shadow">
+                <Pagination total={data.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="soumissions" />
+              </div>
             </div>
           </>
         )}

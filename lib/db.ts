@@ -678,9 +678,12 @@ export async function rendementsMoyens(): Promise<Record<string, { qty: number; 
 // Utilisé pour les listes et les stats. Récupérer payload_json via charger(numero).
 const SOUM_COLS_LITES = "id, numero, date_creation, date_modif, client_nom, client_adresse, client_telephone, client_courriel, projet, statut, total, heures_estimees, heures_reelles, date_envoi, date_acceptation, date_refus, date_facturation";
 
+// LIMIT 5000 : colonnes "lites" (sans payload_json) → transfert léger. La pagination
+// se fait côté client (composant Pagination) ; ce plafond évite juste une requête
+// non bornée. Au-delà de 5000 soumissions, passer à une vraie pagination serveur.
 export async function lister(statut?: Statut): Promise<SoumissionDB[]> {
-  if (statut) return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions WHERE statut=? ORDER BY date_creation DESC LIMIT 500`, [statut]);
-  return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions ORDER BY date_creation DESC LIMIT 500`);
+  if (statut) return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions WHERE statut=? ORDER BY date_creation DESC LIMIT 5000`, [statut]);
+  return await all<SoumissionDB>(`SELECT ${SOUM_COLS_LITES} FROM soumissions ORDER BY date_creation DESC LIMIT 5000`);
 }
 export async function charger(numero: string): Promise<SoumissionDB | null> {
   return await one<SoumissionDB>("SELECT * FROM soumissions WHERE numero = ?", [numero]);
@@ -1403,9 +1406,11 @@ export async function listerDepensesProjet(projet_id: number | null, options: { 
   if (projet_id === null) return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id IS NULL ORDER BY date DESC`);
   return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id = ? ORDER BY date DESC`, [projet_id]);
 }
+// LIMIT 5000 : la vue Dépenses charge en mode "lite" (sansData) puis pagine côté
+// client. Ce plafond borne la requête sans tronquer en pratique (années de données).
 export async function listerToutesDepenses(options: { sansData?: boolean } = {}) {
   const cols = options.sansData ? DEPENSES_COLS_LITES : "*";
-  return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet ORDER BY date DESC LIMIT 500`);
+  return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet ORDER BY date DESC LIMIT 5000`);
 }
 export async function fournisseursConnus(): Promise<string[]> {
   const rows = await all<{ fournisseur: string }>("SELECT DISTINCT fournisseur FROM depenses_projet WHERE fournisseur IS NOT NULL AND fournisseur != '' ORDER BY fournisseur ASC");
