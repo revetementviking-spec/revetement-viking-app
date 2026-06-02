@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
+import MicVocal from "@/components/MicVocal";
 import { compresserImage, genererVignette } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
@@ -134,7 +135,10 @@ export default function ModalPhotos({ ouvert, onClose, onSuccess, projetIdInitia
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Description</label>
-                <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: avant travaux" className="w-full px-3 py-3 border rounded-lg text-sm" />
+                <div className="flex gap-2">
+                  <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex: avant travaux… ou micro →" className="flex-1 px-3 py-3 border rounded-lg text-sm" />
+                  <MicVocal taille="sm" onTranscript={(t) => setDescription((d) => (d ? d + " " : "") + t)} titre="Dicter la description de la photo" />
+                </div>
               </div>
             </div>
 
