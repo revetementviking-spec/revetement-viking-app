@@ -113,6 +113,9 @@ export default function ParametresPage() {
         {/* Notifications push */}
         <PushSection />
 
+        {/* Mode maintenance */}
+        <MaintenanceSection />
+
         {/* Déconnexion */}
         <section className="bg-white rounded-lg shadow p-5">
           <button onClick={deconnexion} className="w-full px-4 py-3 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold">
@@ -121,6 +124,52 @@ export default function ParametresPage() {
         </section>
       </main>
     </div>
+  );
+}
+
+function MaintenanceSection() {
+  const [actif, setActif] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    fetch("/api/maintenance").then((r) => (r.ok ? r.json() : null)).then((d) => setActif(!!d?.actif)).catch(() => setActif(false));
+  }, []);
+
+  const basculer = async (valeur: boolean) => {
+    setBusy(true);
+    try {
+      const r = await fetch("/api/maintenance", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ actif: valeur }) });
+      if ((await r.json()).ok) {
+        setActif(valeur);
+        toast(valeur ? "🛠️ Mode maintenance ACTIVÉ — les autres voient une page d'attente, toi tu continues." : "✅ Mode maintenance désactivé — l'app est de nouveau accessible à tous.", valeur ? "warning" : "success");
+      } else toast("Erreur", "error");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <section className={`bg-white rounded-lg shadow p-5 space-y-3 border-l-4 ${actif ? "border-amber-500" : "border-slate-200"}`}>
+      <h2 className="font-bold text-lg">🛠️ Mode maintenance</h2>
+      <p className="text-sm text-slate-600">
+        Quand tu fais des modifications, active ce mode : tout le monde voit une page
+        « mise à jour en cours », sauf <strong>ton navigateur</strong> qui continue à
+        fonctionner normalement. Désactive-le quand tu as terminé.
+      </p>
+      {actif === null ? (
+        <p className="text-sm text-slate-400">Chargement…</p>
+      ) : actif ? (
+        <div className="flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded p-3">
+          <span className="text-sm font-bold text-amber-900">🔴 Maintenance ACTIVE</span>
+          <button onClick={() => basculer(false)} disabled={busy} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-bold text-sm">
+            {busy ? "…" : "Désactiver"}
+          </button>
+        </div>
+      ) : (
+        <button onClick={() => basculer(true)} disabled={busy} className="w-full px-4 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-white rounded-lg font-bold">
+          {busy ? "…" : "🛠️ Activer le mode maintenance"}
+        </button>
+      )}
+    </section>
   );
 }
 

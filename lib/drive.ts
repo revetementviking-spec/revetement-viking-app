@@ -264,6 +264,51 @@ export async function uploaderFichier(params: {
   return { id: d.id, webViewLink: d.webViewLink };
 }
 
+/** Crée OU met à jour un Google Sheet (identifié par son nom) dans le dossier racine
+ *  Viking, à partir d'un contenu CSV. Garde un seul fichier qu'on rafraîchit. */
+export async function sauvegarderClasseurCSV(nom: string, csv: string, description?: string): Promise<{ id: string; webViewLink: string; cree: boolean }> {
+  const dossier = await resolveRootFolder();
+  if (!dossier) throw new Error("Dossier Drive introuvable");
+  const csvBuf = Buffer.from(csv, "utf-8");
+  const nomEscape = nom.replace(/'/g, "\\'");
+  // Existe déjà ?
+  const q = `name='${nomEscape}' and '${dossier}' in parents and trashed=false`;
+  const liste = await driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,name)`);
+  const existant = (liste.files || [])[0];
+  const token = await getAccessToken();
+  if (existant) {
+    // Met à jour le contenu du Sheet existant (réimport du CSV)
+    const r = await fetch(`${DRIVE_UPLOAD}/files/${existant.id}?uploadType=media&fields=id,webViewLink`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/csv" },
+      body: csvBuf as any,
+    });
+    if (!r.ok) throw new Error(`Drive maj Sheet ${r.status}: ${(await r.text()).slice(0, 300)}`);
+    const d = await r.json();
+    return { id: d.id, webViewLink: d.webViewLink, cree: false };
+  }
+  // Crée un nouveau Google Sheet à partir du CSV (Drive convertit text/csv → spreadsheet)
+  const metadata = {
+    name: nom, parents: [dossier],
+    mimeType: "application/vnd.google-apps.spreadsheet",
+    description: description || "Sauvegarde des heures — Revêtement Viking",
+  };
+  const boundary = `vk-${Date.now()}`;
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: text/csv\r\n\r\n`),
+    csvBuf,
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=multipart&fields=id,webViewLink`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": `multipart/related; boundary=${boundary}` },
+    body: body as any,
+  });
+  if (!r.ok) throw new Error(`Drive création Sheet ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const d = await r.json();
+  return { id: d.id, webViewLink: d.webViewLink, cree: true };
+}
+
 export async function testerConnexion(): Promise<{ ok: boolean; mode?: string; folder?: string; email?: string; message?: string }> {
   const oauthCreds = getOAuthClientCreds();
   const oauthTokens = oauthCreds ? await getOAuthTokens("google_drive") : null;

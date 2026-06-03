@@ -282,6 +282,8 @@ async function doInitDb() {
   // détecter qu'un autre utilisateur a modifié la ligne entre le chargement et la sauvegarde.
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN version INTEGER NOT NULL DEFAULT 0");
   await tryExec("ALTER TABLE heures_projet ADD COLUMN version INTEGER NOT NULL DEFAULT 0");
+  // Réglages applicatifs clé/valeur (ex. mode maintenance)
+  await tryExec("CREATE TABLE IF NOT EXISTS parametres_app (cle TEXT PRIMARY KEY, valeur TEXT)");
   await tryExec("ALTER TABLE projets ADD COLUMN prix_contrat REAL");
   await tryExec("ALTER TABLE projets ADD COLUMN numero TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN contrat_signe_data TEXT");
@@ -1400,6 +1402,24 @@ export async function heuresParEmploye(depuis: string): Promise<{ employe: strin
      GROUP BY employe ORDER BY total_heures DESC`,
     [depuis]
   );
+}
+
+/** TOUTES les heures (sans limite) avec nom de projet — pour l'export Drive (back-up). */
+export async function toutesHeuresPourExport(): Promise<any[]> {
+  return await all<any>(
+    `SELECT h.date, h.employe, p.nom as projet_nom, h.heures, h.taux_horaire, h.description, h.ajoute_par
+     FROM heures_projet h LEFT JOIN projets p ON p.id = h.projet_id
+     ORDER BY h.date DESC, h.id DESC`
+  );
+}
+
+// === RÉGLAGES APPLICATIFS (clé/valeur) ===
+export async function getParametre(cle: string): Promise<string | null> {
+  const r = await one<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = ?", [cle]);
+  return r?.valeur ?? null;
+}
+export async function setParametre(cle: string, valeur: string): Promise<void> {
+  await run("INSERT INTO parametres_app (cle, valeur) VALUES (?, ?) ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur", [cle, valeur]);
 }
 
 // === FACTURES ===
