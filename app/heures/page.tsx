@@ -61,15 +61,13 @@ export default function HoraireePage() {
     if (filtreEmp) params.set("employe", filtreEmp);
     params.set("depuis", debut);
     params.set("jusqu_a", fin);
-    const [h, p, e] = await Promise.all([
-      fetch(`/api/heures?${params.toString()}`).then((r) => r.json()),
-      fetch("/api/projets").then((r) => r.json()),
-      fetch("/api/employes").then((r) => r.json()),
-    ]);
-    setHeures(Array.isArray(h) ? h : []);
-    setProjets(Array.isArray(p) ? p : []);
-    setEmployes(Array.isArray(e) ? e : []);
     setSelection(new Set());
+    // Fetchs INDÉPENDANTS (pas de Promise.all) : les heures s'affichent dès qu'elles
+    // arrivent, sans attendre la liste des projets/employés. Projets en mode "lite"
+    // (juste id/nom, sans les coûts/marges lourds) car on n'en a besoin que pour les menus.
+    fetch(`/api/heures?${params.toString()}`).then((r) => r.json()).then((h) => setHeures(Array.isArray(h) ? h : [])).catch(() => {});
+    fetch("/api/projets?lite=1").then((r) => r.json()).then((p) => setProjets(Array.isArray(p) ? p : [])).catch(() => {});
+    fetch("/api/employes").then((r) => r.json()).then((e) => setEmployes(Array.isArray(e) ? e : [])).catch(() => {});
   };
 
   useEffect(() => { charger(); }, [filtreEmp, debut, fin]);

@@ -1207,6 +1207,19 @@ export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]
     return rows.map(calculerTotaux);
   });
 }
+// Version LÉGÈRE pour les menus déroulants : pas de sous-requêtes coûts/marges
+// (PROJ_SQL en fait 5 par projet). Beaucoup plus rapide quand on n'a besoin que
+// de l'id + nom + statut (page Heures, filtres, etc.).
+export async function listerProjetsLite(statut?: string): Promise<any[]> {
+  return cacheLecture(`projets_lite:${statut || "all"}`, 10000, async () => {
+    let sql = `SELECT p.id, p.numero, p.nom, p.adresse_chantier, p.statut, p.date_creation, c.nom as client_nom
+               FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
+    const args: any[] = [];
+    if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
+    sql += ` ORDER BY p.date_creation DESC`;
+    return await all<any>(sql, args);
+  });
+}
 export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
   // PERF : on ne charge PAS les blobs facture/contrat (plusieurs Mo) dans le JSON.
   // Les flags a_facture_finale / a_contrat_signe + les types suffisent pour l'UI ;

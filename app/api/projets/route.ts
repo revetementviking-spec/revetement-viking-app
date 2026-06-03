@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerProjets, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
+import { listerProjets, listerProjetsLite, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { utilisateurActif } from "@/lib/authUser";
 import { journaliser } from "@/lib/audit";
@@ -23,6 +23,9 @@ export async function GET(req: NextRequest) {
       if (!p) return NextResponse.json({ error: "not found" }, { status: 404 });
       return ok(p);
     }
+    // lite=1 : liste légère (id/nom/statut) pour les menus déroulants — bien plus rapide
+    // que la liste complète avec coûts/marges (PROJ_SQL = 5 sous-requêtes par projet).
+    if (req.nextUrl.searchParams.get("lite") === "1") return ok(await listerProjetsLite(statut));
     return ok(await listerProjets(statut));
   } catch (e) { return fail(e); }
 }
