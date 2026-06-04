@@ -69,6 +69,10 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     if (!body.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
     const user = await utilisateurActif(req);
+    // Complétion : pose la date de fin réelle (sert à reconnaître le CA au bon mois).
+    if (body.statut === "complete" && body.date_fin_reelle === undefined) {
+      body.date_fin_reelle = aujourdhuiMontreal();
+    }
     await modifierProjet(body.id, { ...body, modifie_par: user });
     journaliser("projet.statut_change", { ref_type: "projet", ref_id: body.id, utilisateur: user || undefined, description: `Modif ${Object.keys(body).filter(k => k !== "id").join(", ")}` });
     return ok({ ok: true });
