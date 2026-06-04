@@ -4,21 +4,28 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import FAB from "@/components/FAB";
 import DepensesVue from "@/components/DepensesVue";
+import ExtrasVue from "@/components/ExtrasVue";
 import { formatCAD } from "@/lib/calculateur";
 
 const MOIS = ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
 
 export default function FinancesPage() {
-  const [onglet, setOnglet] = useState<"apercu" | "depenses">("apercu");
+  const [onglet, setOnglet] = useState<"apercu" | "depenses" | "extras">("apercu");
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [data, setData] = useState<any>(null);
   const [projets, setProjets] = useState<any[]>([]);
+  const [extrasInfo, setExtrasInfo] = useState<{ n: number; total: number }>({ n: 0, total: 0 });
 
-  // Permet d'ouvrir directement l'onglet Dépenses via /finances?tab=depenses
+  // Permet d'ouvrir directement un onglet via /finances?tab=depenses ou ?tab=extras
   useEffect(() => {
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("tab") === "depenses") {
-      setOnglet("depenses");
-    }
+    if (typeof window === "undefined") return;
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    if (tab === "depenses" || tab === "extras") setOnglet(tab);
+  }, []);
+
+  // Compteur d'extras à facturer (pour l'onglet + le KPI)
+  useEffect(() => {
+    fetch("/api/extras?compteur=1").then((r) => r.json()).then((d) => setExtrasInfo({ n: d?.n || 0, total: d?.total || 0 })).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -31,6 +38,20 @@ export default function FinancesPage() {
     <div className="flex gap-2 border-b">
       <button onClick={() => setOnglet("apercu")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "apercu" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>💰 Vue d'ensemble</button>
       <button onClick={() => setOnglet("depenses")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "depenses" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>💸 Dépenses</button>
+      <button onClick={() => setOnglet("extras")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "extras" ? "border-amber-600 text-amber-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+        💲 Extras{extrasInfo.n > 0 ? <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-amber-500 text-white rounded-full text-[10px] font-bold">{extrasInfo.n}</span> : ""}
+      </button>
+    </div>
+  );
+
+  // Onglet EXTRAS
+  if (onglet === "extras") return (
+    <div className="min-h-screen bg-slate-50">
+      <Navigation titre="💰 Finances" soustitre="Vue d'ensemble · Dépenses · Extras" />
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        {Tabs}
+        <ExtrasVue />
+      </main>
     </div>
   );
 
@@ -87,6 +108,19 @@ export default function FinancesPage() {
           <span className="px-3 py-1.5 bg-emerald-100 text-emerald-900 rounded text-sm font-bold">{annee}</span>
           <button onClick={() => setAnnee(annee + 1)} className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm font-bold">{annee + 1} →</button>
         </div>
+
+        {/* === EXTRAS À FACTURER (revenu en attente) === */}
+        {extrasInfo.n > 0 && (
+          <button onClick={() => setOnglet("extras")} className="w-full text-left bg-amber-50 border-2 border-amber-300 rounded-lg p-3 md:p-4 hover:bg-amber-100 transition flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[10px] md:text-xs text-amber-700 uppercase font-bold">💲 Extras à facturer</div>
+              <div className="text-lg md:text-2xl font-bold text-amber-900 mt-1">{extrasInfo.total > 0 ? formatCAD(extrasInfo.total) : `${extrasInfo.n} extra(s)`}</div>
+              <div className="text-[10px] text-amber-700">{extrasInfo.n} en attente · à charger au client (hors soumission)</div>
+            </div>
+            <span className="text-amber-700 font-bold text-sm whitespace-nowrap">Gérer →</span>
+          </button>
+        )}
+
         {/* === REVENUS DES PROJETS (somme prix_contrat) === */}
         <section className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-lg p-4 md:p-5">
           <h2 className="font-bold text-emerald-900 mb-3">💰 Revenus des projets</h2>
