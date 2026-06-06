@@ -859,7 +859,7 @@ ${VIKING_EMAIL}
       </main>
 
       {lightboxId !== null && (() => {
-        const liste = photos.map((p: any) => ({ id: p.id, description: p.description, date: p.date }));
+        const liste = photos.filter((p: any) => !(p.photo_type || "").startsWith("video")).map((p: any) => ({ id: p.id, description: p.description, date: p.date }));
         const idx = liste.findIndex((p) => p.id === lightboxId);
         if (idx < 0) return null;
         return (
@@ -977,17 +977,29 @@ function DescriptionTab({ projet, photos, heures, onUpdate, onOpenPhoto }: { pro
                 {/* Photos du jour */}
                 {jour.photos.length > 0 && (
                   <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                    {jour.photos.map((p: any) => (
+                    {jour.photos.map((p: any) => {
+                      const estVideo = (p.photo_type || "").startsWith("video");
+                      return (
                       <div key={p.id} className="relative group">
-                        <button type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
-                          <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
-                        </button>
+                        {estVideo ? (
+                          <a href={p.drive_file_id ? `https://drive.google.com/file/d/${p.drive_file_id}/view` : "#"} target="_blank" rel="noreferrer" className="block w-full" title={p.description || "Vidéo"}>
+                            <div className="w-full aspect-square rounded border bg-slate-800 text-white flex flex-col items-center justify-center hover:opacity-90">
+                              <span className="text-2xl">▶️</span>
+                              <span className="text-[9px] mt-1">Vidéo</span>
+                            </div>
+                          </a>
+                        ) : (
+                          <button type="button" onClick={() => onOpenPhoto(p.id)} className="block w-full">
+                            <img src={`/api/photos/${p.id}?thumb=1`} alt={p.description || ""} loading="lazy" decoding="async" className="w-full aspect-square object-cover rounded border hover:opacity-90" />
+                          </button>
+                        )}
                         <button
-                          onClick={async () => { if (confirm("Supprimer cette photo ?")) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); onUpdate(); } }}
+                          onClick={async () => { if (confirm(`Supprimer cette ${estVideo ? "vidéo" : "photo"} ?`)) { await fetch(`/api/photos?id=${p.id}`, { method: "DELETE" }); onUpdate(); } }}
                           className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
                         >✕</button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

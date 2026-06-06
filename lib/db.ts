@@ -1565,7 +1565,7 @@ export async function listerPhotosChantier(projet_id?: number, options: { sansDa
   // les vignettes via /api/photos/[id]?thumb=1, donc thumb_data ici alourdit inutilement
   // le JSON — ~30 ko × N photos). On ne garde que les métadonnées + flags.
   const cols = options.sansData
-    ? "id, projet_id, date, employes, photo_type, description, date_saisie, (thumb_data IS NOT NULL) as a_thumb"
+    ? "id, projet_id, date, employes, photo_type, description, date_saisie, drive_file_id, (thumb_data IS NOT NULL) as a_thumb"
     : "*";
   if (projet_id) {
     return await all<any>(`SELECT ${cols} FROM photos_chantier WHERE projet_id = ? ORDER BY date DESC, id DESC`, [projet_id]);

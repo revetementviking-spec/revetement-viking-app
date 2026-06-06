@@ -309,6 +309,39 @@ export async function sauvegarderClasseurCSV(nom: string, csv: string, descripti
   return { id: d.id, webViewLink: d.webViewLink, cree: true };
 }
 
+/** Crée une session d'upload RÉSUMABLE Drive (pour gros fichiers, ex. vidéos).
+ *  Retourne l'URL de session à laquelle le navigateur enverra le fichier par morceaux.
+ *  Le navigateur n'a JAMAIS le token — l'URL de session est déjà autorisée. */
+export async function creerSessionUploadResumable(params: { nom: string; mimeType: string; dossierId?: string; description?: string }): Promise<{ uploadUrl: string }> {
+  const dossier = params.dossierId || await resolveRootFolder();
+  if (!dossier) throw new Error("Dossier Drive introuvable");
+  const token = await getAccessToken();
+  const metadata = { name: params.nom, parents: [dossier], description: params.description || "Vidéo chantier — Revêtement Viking" };
+  const r = await fetch(`${DRIVE_UPLOAD}/files?uploadType=resumable&fields=id,webViewLink`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json; charset=UTF-8",
+      "X-Upload-Content-Type": params.mimeType || "application/octet-stream",
+    },
+    body: JSON.stringify(metadata),
+  });
+  if (!r.ok) throw new Error(`Drive session ${r.status}: ${(await r.text()).slice(0, 300)}`);
+  const uploadUrl = r.headers.get("location") || r.headers.get("Location");
+  if (!uploadUrl) throw new Error("Drive n'a pas renvoyé d'URL de session");
+  return { uploadUrl };
+}
+
+/** Retrouve un fichier par nom exact dans un dossier (le plus récent). */
+export async function trouverFichierParNom(nom: string, dossierId?: string): Promise<{ id: string; webViewLink: string } | null> {
+  const dossier = dossierId || await resolveRootFolder();
+  if (!dossier) return null;
+  const q = `name='${nom.replace(/'/g, "\\'")}' and '${dossier}' in parents and trashed=false`;
+  const r = await driveFetch(`/files?q=${encodeURIComponent(q)}&fields=files(id,webViewLink)&orderBy=createdTime desc&pageSize=1`);
+  const f = (r.files || [])[0];
+  return f ? { id: f.id, webViewLink: f.webViewLink } : null;
+}
+
 export async function testerConnexion(): Promise<{ ok: boolean; mode?: string; folder?: string; email?: string; message?: string }> {
   const oauthCreds = getOAuthClientCreds();
   const oauthTokens = oauthCreds ? await getOAuthTokens("google_drive") : null;
