@@ -10,6 +10,7 @@ import ModalPhotos from "@/components/ModalPhotos";
 import ModalExtra from "@/components/ModalExtra";
 import FAB from "@/components/FAB";
 import Meteo from "@/components/Meteo";
+import { fetchInstantane } from "@/lib/cacheClient";
 
 /** Lundi de la semaine courante (date locale, format YYYY-MM-DD). Le dashboard
  *  regarde les heures PAR SEMAINE (lundi → aujourd'hui), pas une fenêtre glissante. */
@@ -58,27 +59,27 @@ export default function Home() {
   const { toast } = useToast();
 
   const charger = async () => {
-    // Streaming progressif : chaque section apparaît dès que son fetch arrive,
-    // au lieu d'attendre que tous les 4 soient terminés.
-    // Streaming progressif : chaque fetch met à jour son state indépendamment
-    fetch("/api/soumissions?stats=1").then((r) => r.json()).then(setStats).catch(() => {});
-    fetch("/api/projets?statut=actif").then((r) => r.json()).then(setProjetsActifs).catch(() => {});
-    fetch(`/api/heures-sommaire?depuis=${lundiSemaineISO()}`).then((r) => r.json()).then(setHeuresSemaine).catch(() => {});
-    fetch("/api/relances").then((r) => r.json()).then(setRelances).catch(() => {});
-    fetch("/api/dashboard").then((r) => r.json()).then(setTableauBord).catch(() => {});
-    fetch("/api/extras?statut=a_charger").then((r) => r.json()).then((d) => setExtras(Array.isArray(d) ? d : [])).catch(() => {});
+    // Affichage INSTANTANÉ : chaque section montre ses dernières données connues
+    // (cache local) tout de suite, puis se rafraîchit en arrière-plan. Plus de
+    // spinner d'attente sur cold start / réseau lent.
+    fetchInstantane("/api/soumissions?stats=1", setStats, { cle: "dash:stats" });
+    fetchInstantane("/api/projets?statut=actif", (d: any) => setProjetsActifs(Array.isArray(d) ? d : []), { cle: "dash:projetsActifs" });
+    fetchInstantane(`/api/heures-sommaire?depuis=${lundiSemaineISO()}`, (d: any) => setHeuresSemaine(Array.isArray(d) ? d : []), { cle: "dash:heuresSemaine" });
+    fetchInstantane("/api/relances", (d: any) => setRelances(Array.isArray(d) ? d : []), { cle: "dash:relances" });
+    fetchInstantane("/api/dashboard", setTableauBord, { cle: "dash:tableauBord" });
+    fetchInstantane("/api/extras?statut=a_charger", (d: any) => setExtras(Array.isArray(d) ? d : []), { cle: "dash:extras" });
     fetch("/api/auth/me").then((r) => r.json()).then((d) => {
       const u = d?.user || "";
       setMonUser(u);
-      if (u) fetch(`/api/mes-taches?user=${u}`).then((r) => r.json()).then((arr) => setMesTaches(Array.isArray(arr) ? arr : [])).catch(() => {});
+      if (u) fetchInstantane(`/api/mes-taches?user=${u}`, (arr: any) => setMesTaches(Array.isArray(arr) ? arr : []), { cle: `dash:taches:${u}` });
     }).catch(() => {});
     // Totaux de l'année : chiffre d'affaires + dépenses (tous projets, pas juste actifs)
-    fetch(`/api/finances?annee=${new Date().getFullYear()}`).then((r) => r.json()).then((d) => {
-      const t = (d.mois || []).reduce((s: any, m: any) => ({
+    fetchInstantane(`/api/finances?annee=${new Date().getFullYear()}`, setAnnuel, {
+      cle: "dash:annuel",
+      transform: (d: any) => (d.mois || []).reduce((s: any, m: any) => ({
         ca: s.ca + (m.revenu || 0), depenses: s.depenses + (m.depenses || 0), mo: s.mo + (m.mo || 0),
-      }), { ca: 0, depenses: 0, mo: 0 });
-      setAnnuel(t);
-    }).catch(() => {});
+      }), { ca: 0, depenses: 0, mo: 0 }),
+    });
   };
 
 

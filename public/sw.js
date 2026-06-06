@@ -1,14 +1,25 @@
 // Service Worker — Revêtement Viking
 // Cache-first pour les assets, network-first pour les pages, fallback offline
 
-const CACHE_VERSION = "viking-v3";
+const CACHE_VERSION = "viking-v4";
 const STATIC_CACHE = `${CACHE_VERSION}-static`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
+const API_CACHE = `${CACHE_VERSION}-api`;
 
 // Assets à pré-cacher pour démarrage rapide
 const PRECACHE_URLS = [
   "/manifest.json",
 ];
+
+// Endpoints API en LECTURE SEULE (GET) servis en stale-while-revalidate :
+// affichage instantané même en réseau faible/chantier. (Pas d'auth ni de mutations.)
+const API_LECTURE = [
+  "/api/dashboard", "/api/finances", "/api/soumissions", "/api/heures-sommaire",
+  "/api/extras", "/api/projets", "/api/relances", "/api/mes-taches",
+];
+function estApiLecture(pathname) {
+  return API_LECTURE.includes(pathname);
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -33,8 +44,28 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
 
-  // Don't cache API or auth routes
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/login")) return;
+  if (url.pathname.startsWith("/login")) return;
+
+  // API : stale-while-revalidate pour les endpoints de lecture (instantané),
+  // réseau direct pour le reste (mutations, auth, photos binaires…).
+  if (url.pathname.startsWith("/api/")) {
+    if (estApiLecture(url.pathname)) {
+      event.respondWith(
+        caches.open(API_CACHE).then((cache) =>
+          cache.match(request).then((cached) => {
+            const reseau = fetch(request)
+              .then((res) => {
+                if (res && res.status === 200 && res.type === "basic") cache.put(request, res.clone());
+                return res;
+              })
+              .catch(() => cached);
+            return cached || reseau;
+          })
+        )
+      );
+    }
+    return;
+  }
 
   // Network-first for HTML pages
   if (request.mode === "navigate") {

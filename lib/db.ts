@@ -1387,6 +1387,10 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
   return out;
 }
 export async function finances(annee: number): Promise<any> {
+  // Cache 30 s invalidé par toute écriture (cacheLecture) : finances() fait ~60 requêtes
+  // (12 mois × 5). Les ouvertures répétées du dashboard/finances deviennent instantanées,
+  // et le cache se rafraîchit dès qu'on saisit heures/dépense/projet.
+  return cacheLecture(`finances:${annee}`, 30000, async () => {
   const mois: any[] = [];
   for (let m = 1; m <= 12; m++) {
     const debut = `${annee}-${String(m).padStart(2, "0")}-01`;
@@ -1408,6 +1412,7 @@ export async function finances(annee: number): Promise<any> {
     mois.push({ mois: m, facture, paye, depenses, mo, contrats: revenu, revenu, marge: revenu - depenses - mo });
   }
   return { annee, mois };
+  });
 }
 export async function heuresParEmploye(depuis: string): Promise<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[]> {
   return await all<any>(
