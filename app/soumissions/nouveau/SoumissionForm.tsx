@@ -10,6 +10,7 @@ import { sauvegarderBrouillon, chargerBrouillon, effacerBrouillon } from "@/lib/
 import dynamic from "next/dynamic";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
+import AdresseAutocomplete from "@/components/AdresseAutocomplete";
 
 // Lazy load — composant lourd avec SpeechRecognition + UI complète
 const NotesVocales = dynamic(() => import("@/components/NotesVocales"), { ssr: false });
@@ -801,7 +802,7 @@ info@entreprisesxpress.ca`;
               <Input label="Téléphone" value={client.telephone} onChange={(v) => setClient({ ...client, telephone: v })} />
               <Input label="Courriel" value={client.courriel} onChange={(v) => setClient({ ...client, courriel: v })} />
               <Input label="Projet" value={client.projet} onChange={(v) => setClient({ ...client, projet: v })} />
-              <div className="md:col-span-2"><Input label="Adresse" value={client.adresse} onChange={(v) => setClient({ ...client, adresse: v })} /></div>
+              <div className="md:col-span-2"><AdresseAutocomplete label="Adresse" value={client.adresse} onChange={(v) => setClient({ ...client, adresse: v })} placeholder="Commence à taper l'adresse du chantier…" /></div>
             </div>
           </section>
 

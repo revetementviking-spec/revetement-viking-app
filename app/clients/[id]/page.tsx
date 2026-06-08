@@ -6,6 +6,7 @@ import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
+import AdresseAutocomplete from "@/components/AdresseAutocomplete";
 
 const TYPES_INTERACTION = [
   { v: "appel", l: "📞 Appel" },
@@ -126,7 +127,7 @@ export default function ClientDetail() {
                 <In label="Nom" v={editForm.nom || ""} o={(v) => setEditForm({ ...editForm, nom: v })} />
                 <In label="Téléphone" v={editForm.telephone || ""} o={(v) => setEditForm({ ...editForm, telephone: v })} />
                 <In label="Courriel" v={editForm.courriel || ""} o={(v) => setEditForm({ ...editForm, courriel: v })} />
-                <In label="Adresse" v={editForm.adresse || ""} o={(v) => setEditForm({ ...editForm, adresse: v })} />
+                <AdresseAutocomplete label="Adresse" value={editForm.adresse || ""} onChange={(v) => setEditForm({ ...editForm, adresse: v })} placeholder="Commence à taper l'adresse…" />
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="block text-xs font-medium text-slate-600 mb-1">Statut</label>

@@ -6,6 +6,7 @@ import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
 import PipelineCRM from "@/components/PipelineCRM";
+import AdresseAutocomplete from "@/components/AdresseAutocomplete";
 import { exporterCSV } from "@/lib/csv";
 
 const STATUTS_CRM: Record<string, { label: string; couleur: string }> = {
@@ -326,7 +327,7 @@ export default function ClientsPage() {
               <In label="Téléphone" v={nouveau.telephone} o={(v) => setNouveau({ ...nouveau, telephone: v })} />
               <In label="Courriel" v={nouveau.courriel} o={(v) => setNouveau({ ...nouveau, courriel: v })} />
             </div>
-            <In label="Adresse" v={nouveau.adresse} o={(v) => setNouveau({ ...nouveau, adresse: v })} />
+            <AdresseAutocomplete label="Adresse" value={nouveau.adresse} onChange={(v) => setNouveau({ ...nouveau, adresse: v })} placeholder="Commence à taper l'adresse…" />
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Statut</label>
