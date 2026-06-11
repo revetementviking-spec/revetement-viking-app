@@ -20,8 +20,16 @@ export default function Garde401() {
 
     window.fetch = async (...args) => {
       const res = await originalFetch(...args);
+      // Ne réagit QU'aux 401 de NOTRE serveur (même origine) — jamais aux fetchs
+      // tiers (OpenStreetMap, météo, Drive…) pour éviter toute fausse redirection.
+      let memeOrigine = true;
+      try {
+        const u = typeof args[0] === "string" ? args[0] : (args[0] as Request)?.url || "";
+        if (u && /^https?:\/\//i.test(u)) memeOrigine = u.startsWith(window.location.origin);
+      } catch { /* défaut : on considère même origine */ }
       if (
         res.status === 401 &&
+        memeOrigine &&
         !redirige &&
         !window.location.pathname.startsWith("/login")
       ) {
