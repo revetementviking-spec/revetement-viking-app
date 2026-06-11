@@ -29,6 +29,7 @@ const LINKS_SECONDAIRES: NavLink[] = [
   { href: "/inventaire", label: "Inventaire", icon: "📦" },
   { href: "/cameras", label: "Caméras", icon: "📹" },
   { href: "/outils", label: "Outils", icon: "🧰" },
+  { href: "/admin/journal", label: "Journal d'activité", icon: "📜" },
 ];
 
 interface Props {
