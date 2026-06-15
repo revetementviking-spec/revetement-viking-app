@@ -1,22 +1,24 @@
 import { describe, it, expect } from "vitest";
 import {
-  calculerMargeProjet, dateISOLocale, periodeBiHebdo,
+  calculerMargeProjet, revenuAvantTaxes, dateISOLocale, periodeBiHebdo,
   calculerHeuresPaye, calculerPaye, indexJourSemaine,
 } from "./calculs";
 
-describe("calculerMargeProjet", () => {
-  it("calcule la marge à partir du prix de contrat", () => {
+describe("calculerMargeProjet (rentabilité AVANT taxes)", () => {
+  it("revenu reste taxes incluses, mais la marge se calcule avant taxes", () => {
     const r = calculerMargeProjet({ prix_contrat: 36258.52, cout_main_oeuvre: 6641.25, total_depenses: 15702.15 });
-    expect(r.revenu).toBe(36258.52);
+    expect(r.revenu).toBe(36258.52); // affichage = taxes incluses
+    expect(r.revenu_avant_taxes).toBeCloseTo(36258.52 / 1.14975, 2);
     expect(r.cout_total).toBeCloseTo(22343.4, 2);
-    expect(r.marge).toBeCloseTo(13915.12, 2);
-    expect(r.marge_pct).toBeCloseTo(38.38, 1);
+    expect(r.marge).toBeCloseTo(36258.52 / 1.14975 - 22343.4, 2); // profit avant taxes
+    expect(r.marge).toBeLessThan(36258.52 - 22343.4); // < marge taxes incluses (corrigé)
+    expect(r.marge_pct).toBeCloseTo((r.marge / r.revenu_avant_taxes) * 100, 2);
   });
   it("retombe sur budget_estime si pas de prix_contrat", () => {
-    const r = calculerMargeProjet({ budget_estime: 10000, total_depenses: 4000 });
-    expect(r.revenu).toBe(10000);
-    expect(r.marge).toBe(6000);
-    expect(r.marge_pct).toBe(60);
+    const r = calculerMargeProjet({ budget_estime: 11497.5, total_depenses: 4000 });
+    expect(r.revenu).toBe(11497.5);
+    expect(r.revenu_avant_taxes).toBeCloseTo(10000, 0); // 11497.5 / 1.14975 ≈ 10000
+    expect(r.marge).toBeCloseTo(6000, 0); // 10000 − 4000
   });
   it("ne divise pas par zéro si aucun revenu", () => {
     const r = calculerMargeProjet({ total_depenses: 500 });
@@ -28,6 +30,9 @@ describe("calculerMargeProjet", () => {
     const apres = calculerMargeProjet({ prix_contrat: 36258.52, cout_main_oeuvre: 6221.25, total_depenses: 16702.15 });
     expect(apres.marge).toBeLessThan(avant.marge);
     expect(apres.marge_pct).toBeLessThan(avant.marge_pct);
+  });
+  it("revenuAvantTaxes retire bien TPS+TVQ", () => {
+    expect(revenuAvantTaxes(1149.75)).toBeCloseTo(1000, 4);
   });
 });
 

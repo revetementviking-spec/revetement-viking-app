@@ -3,7 +3,7 @@
 import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
-import { calculerMargeProjet, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
+import { calculerMargeProjet, revenuAvantTaxes, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "soumissions.db");
@@ -1409,7 +1409,10 @@ export async function finances(annee: number): Promise<any> {
          AND COALESCE(date_fin_reelle, date_fin_prevue, date_debut, date_creation) < ?`,
       [debut, finM]
     ))?.v || 0;
-    mois.push({ mois: m, facture, paye, depenses, mo, contrats: revenu, revenu, marge: revenu - depenses - mo });
+    // `revenu` = taxes incluses (CA, contrats). `revenu_avant_taxes` = base de rentabilité.
+    // La marge (profit net) se calcule AVANT taxes : revenu_avant_taxes − dépenses − MO.
+    const revenu_avant_taxes = revenuAvantTaxes(revenu);
+    mois.push({ mois: m, facture, paye, depenses, mo, contrats: revenu, revenu, revenu_avant_taxes, marge: revenu_avant_taxes - depenses - mo });
   }
   return { annee, mois };
   });

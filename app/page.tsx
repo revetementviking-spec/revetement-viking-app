@@ -47,7 +47,7 @@ export default function Home() {
   const [projetsActifs, setProjetsActifs] = useState<any[]>([]);
   const [heuresSemaine, setHeuresSemaine] = useState<any[]>([]);
   const [relances, setRelances] = useState<any[]>([]);
-  const [annuel, setAnnuel] = useState<{ ca: number; depenses: number; mo: number } | null>(null);
+  const [annuel, setAnnuel] = useState<{ ca: number; ca_at?: number; depenses: number; mo: number } | null>(null);
   const [tableauBord, setTableauBord] = useState<any>(null);
   const [mesTaches, setMesTaches] = useState<any[]>([]);
   const [monUser, setMonUser] = useState<string>("");
@@ -77,8 +77,9 @@ export default function Home() {
     fetchInstantane(`/api/finances?annee=${new Date().getFullYear()}`, setAnnuel, {
       cle: "dash:annuel",
       transform: (d: any) => (d.mois || []).reduce((s: any, m: any) => ({
-        ca: s.ca + (m.revenu || 0), depenses: s.depenses + (m.depenses || 0), mo: s.mo + (m.mo || 0),
-      }), { ca: 0, depenses: 0, mo: 0 }),
+        ca: s.ca + (m.revenu || 0), ca_at: s.ca_at + (m.revenu_avant_taxes || 0),
+        depenses: s.depenses + (m.depenses || 0), mo: s.mo + (m.mo || 0),
+      }), { ca: 0, ca_at: 0, depenses: 0, mo: 0 }),
     });
   };
 
@@ -111,8 +112,8 @@ export default function Home() {
             <div className="text-lg md:text-2xl font-bold text-orange-700 mt-1">{annuel ? formatCAD(annuel.depenses) : "…"}</div>
           </div>
           <div className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-blue-500">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Marge nette {new Date().getFullYear()}</div>
-            <div className={`text-lg md:text-2xl font-bold mt-1 ${annuel && (annuel.ca - annuel.depenses - annuel.mo) < 0 ? "text-red-600" : "text-blue-700"}`}>{annuel ? formatCAD(annuel.ca - annuel.depenses - annuel.mo) : "…"}</div>
+            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Marge nette {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes)</span></div>
+            <div className={`text-lg md:text-2xl font-bold mt-1 ${annuel && ((annuel.ca_at ?? annuel.ca) - annuel.depenses - annuel.mo) < 0 ? "text-red-600" : "text-blue-700"}`}>{annuel ? formatCAD((annuel.ca_at ?? annuel.ca) - annuel.depenses - annuel.mo) : "…"}</div>
           </div>
         </section>
 

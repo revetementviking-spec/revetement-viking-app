@@ -6,17 +6,28 @@ export const TAUX_SUP = 1.5;        // heures supplémentaires ×1.5
 export const SEUIL_SUP_PERIODE = 80; // au-delà de 80h sur la quinzaine = supplémentaire
 export const DAS_DEFAUT = 0.15;     // déductions à la source 15%
 
-/** Marge d'un projet : revenu (prix contrat ou budget) − coûts (MO + dépenses). */
+// Taxes Québec : TPS 5 % + TVQ 9,975 % = 14,975 %. Les montants de contrat sont
+// gérés TAXES INCLUSES (affichage/facturation), mais la RENTABILITÉ (marge, profit)
+// se calcule sur le revenu AVANT taxes — les taxes perçues ne sont pas un revenu.
+export const TAUX_TAXES_QC = 0.05 + 0.09975;
+/** Convertit un montant taxes incluses en montant avant taxes. */
+export function revenuAvantTaxes(montantTaxesIncluses: number): number {
+  return (montantTaxesIncluses || 0) / (1 + TAUX_TAXES_QC);
+}
+
+/** Marge d'un projet. `revenu` = prix contrat/budget (taxes incluses, pour l'affichage).
+ *  La marge et le % sont calculés sur le revenu AVANT taxes (rentabilité réelle). */
 export function calculerMargeProjet(input: {
   prix_contrat?: number | null; budget_estime?: number | null;
   cout_main_oeuvre?: number | null; total_depenses?: number | null;
 }) {
-  const revenu = input.prix_contrat || input.budget_estime || 0;
+  const revenu = input.prix_contrat || input.budget_estime || 0;        // taxes incluses
+  const revenu_avant_taxes = revenuAvantTaxes(revenu);                  // base de rentabilité
   const cout_total = (input.cout_main_oeuvre || 0) + (input.total_depenses || 0);
-  const marge = revenu - cout_total;
-  const marge_pct = revenu ? (marge / revenu) * 100 : 0;
+  const marge = revenu_avant_taxes - cout_total;                       // profit AVANT taxes
+  const marge_pct = revenu_avant_taxes ? (marge / revenu_avant_taxes) * 100 : 0;
   const pct_budget_consomme = revenu ? Math.min(100, (cout_total / revenu) * 100) : 0;
-  return { revenu, cout_total, marge, marge_pct, pct_budget_consomme };
+  return { revenu, revenu_avant_taxes, cout_total, marge, marge_pct, pct_budget_consomme };
 }
 
 /** Parse 'YYYY-MM-DD' comme MINUIT LOCAL (évite le décalage UTC qui change le jour). */
