@@ -29,6 +29,7 @@ export default function DepensesVue() {
   const [triCol, setTriCol] = useState<TriCol>("date");
   const [triSens, setTriSens] = useState<TriSens>("desc");
   const [editing, setEditing] = useState<any>(null);
+  const [recuOuvert, setRecuOuvert] = useState<{ id: number; type?: string } | null>(null);
   const [selection, setSelection] = useState<Set<number>>(new Set());
   const { toast } = useToast();
 
@@ -281,7 +282,7 @@ export default function DepensesVue() {
                       <td className="p-2 text-right font-bold text-orange-700 whitespace-nowrap">{formatCAD(d.montant)}</td>
                       <td className="p-2 text-center">
                         {(d as any).a_recu || d.recu_data ? (
-                          <a href={`/api/depenses/${d.id}/recu`} target="_blank" rel="noreferrer" className="text-emerald-700 hover:underline text-xs">📎 Voir</a>
+                          <button onClick={() => setRecuOuvert({ id: d.id, type: d.recu_type })} className="text-emerald-700 hover:underline text-xs font-semibold">📎 Voir</button>
                         ) : (
                           <span className="text-slate-300">—</span>
                         )}
@@ -365,6 +366,24 @@ export default function DepensesVue() {
               <button onClick={() => setEditing(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
               <button onClick={sauverEdit} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Sauver</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* VISIONNEUSE DE REÇU (avec bouton Retour) */}
+      {recuOuvert && (
+        <div className="fixed inset-0 bg-black/85 z-50 flex flex-col" onClick={() => setRecuOuvert(null)}>
+          <div className="flex items-center justify-between gap-2 p-3 bg-slate-900 text-white flex-shrink-0">
+            <button onClick={() => setRecuOuvert(null)} className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg font-bold text-sm">← Retour</button>
+            <span className="text-sm font-semibold">Reçu</span>
+            <a href={`/api/depenses/${recuOuvert.id}/recu`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-xs underline opacity-80 hover:opacity-100">Ouvrir ↗</a>
+          </div>
+          <div className="flex-1 overflow-auto flex items-center justify-center p-3" onClick={(e) => e.stopPropagation()}>
+            {(recuOuvert.type || "").includes("pdf") ? (
+              <iframe src={`/api/depenses/${recuOuvert.id}/recu`} className="w-full h-full bg-white rounded" title="Reçu PDF" />
+            ) : (
+              <img src={`/api/depenses/${recuOuvert.id}/recu`} alt="Reçu" className="max-w-full max-h-full object-contain rounded shadow-lg" />
+            )}
           </div>
         </div>
       )}
