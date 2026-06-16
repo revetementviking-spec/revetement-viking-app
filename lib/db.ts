@@ -1224,7 +1224,7 @@ export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]
 // de l'id + nom + statut (page Heures, filtres, etc.).
 export async function listerProjetsLite(statut?: string): Promise<any[]> {
   return cacheLecture(`projets_lite:${statut || "all"}`, 10000, async () => {
-    let sql = `SELECT p.id, p.numero, p.nom, p.adresse_chantier, p.statut, p.date_creation, p.budget_estime, c.nom as client_nom
+    let sql = `SELECT p.id, p.numero, p.nom, p.adresse_chantier, p.statut, p.date_creation, p.budget_estime, p.date_fin_reelle, p.date_fin_prevue, c.nom as client_nom
                FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
     const args: any[] = [];
     if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }

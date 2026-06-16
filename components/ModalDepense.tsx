@@ -68,8 +68,15 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
   useEffect(() => {
     if (!ouvert) return;
     fetch("/api/projets?lite=1").then((r) => r.json()).then((tous: any[]) => {
+      const DELAI = 14 * 86400000; // 2 semaines après la complétion : factures fournisseurs en retard
       const dispo = (Array.isArray(tous) ? tous : [])
-        .filter((p) => p.statut !== "complete" && p.statut !== "annule")
+        .filter((p) => {
+          if (p.statut === "annule") return false;
+          if (p.statut !== "complete") return true; // actifs / à venir / en cours
+          // Complété : on le garde 2 semaines après la date de fin (pour les dépenses tardives).
+          const fin = p.date_fin_reelle || p.date_fin_prevue;
+          return fin ? (Date.now() - new Date(fin).getTime()) <= DELAI : false;
+        })
         .sort((a, b) => (a.statut === "actif" ? -1 : 1) - (b.statut === "actif" ? -1 : 1));
       setProjets(dispo);
       if (dispo.length > 0 && !form.projet_id) setForm((f) => ({ ...f, projet_id: projetIdInitial || 0 }));
@@ -136,7 +143,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
             <label className="block text-xs font-medium text-slate-600 mb-1">Projet (optionnel)</label>
             <select value={form.projet_id} onChange={(e) => setForm({ ...form, projet_id: +e.target.value })} className="w-full px-3 py-3 border rounded-lg text-sm bg-white">
               <option value={0}>— Aucun (dépense générale, ex: outils)</option>
-              {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}</option>)}
+              {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}{p.statut === "complete" ? " [complété]" : ""}</option>)}
             </select>
             {projet && (
               <div className="text-xs text-slate-500 mt-1 flex justify-between">
