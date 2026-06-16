@@ -57,7 +57,20 @@ export default function Home() {
   const [modalExtra, setModalExtra] = useState(false);
   const [extras, setExtras] = useState<any[]>([]);
   const [detailFin, setDetailFin] = useState<null | "ca" | "depenses" | "marge">(null);
+  const [moDetail, setMoDetail] = useState<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[] | null>(null);
+  const [moBusy, setMoBusy] = useState(false);
   const { toast } = useToast();
+
+  const fermerDetail = () => { setDetailFin(null); setMoDetail(null); };
+  const chargerMO = async () => {
+    if (moDetail) { setMoDetail(null); return; } // re-clic = replier
+    setMoBusy(true);
+    try {
+      const an = new Date().getFullYear();
+      const d = await fetch(`/api/heures-sommaire?depuis=${an}-01-01`).then((r) => r.json());
+      setMoDetail(Array.isArray(d) ? d : []);
+    } catch { setMoDetail([]); } finally { setMoBusy(false); }
+  };
 
   const charger = async () => {
     // Affichage INSTANTANÉ : chaque section montre ses dernières données connues
@@ -383,11 +396,11 @@ export default function Home() {
         const marge = caAt - depAt - mo;
         const titre = detailFin === "ca" ? `💰 Chiffre d'affaires ${an}` : detailFin === "depenses" ? `💸 Dépenses ${an}` : `📊 Marge nette ${an}`;
         return (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setDetailFin(null)}>
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={fermerDetail}>
             <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-2.5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex justify-between items-start mb-1">
                 <h3 className="text-lg font-bold">{titre}</h3>
-                <button onClick={() => setDetailFin(null)} className="text-2xl text-slate-400 hover:text-slate-700 leading-none">×</button>
+                <button onClick={fermerDetail} className="text-2xl text-slate-400 hover:text-slate-700 leading-none">×</button>
               </div>
               {detailFin === "ca" && (<>
                 <p className="text-xs text-slate-500">Valeur des projets marqués <strong>complétés</strong> en {an}. Les projets en cours ne comptent pas encore.</p>
@@ -410,6 +423,27 @@ export default function Home() {
                 <Lc label="Chiffre d'affaires (avant taxes)" value={"+ " + formatCAD(caAt)} couleur="text-emerald-700" />
                 <Lc label="− Dépenses (av. taxes, incl. M.O.)" value={"− " + formatCAD(depAt + mo)} couleur="text-orange-700" />
                 <div className="text-[10px] text-slate-400 pl-1">dont matériaux/fournisseurs {formatCAD(depAt)} + main-d'œuvre {formatCAD(mo)}</div>
+                <button onClick={chargerMO} className="w-full text-left text-[11px] text-amber-700 hover:underline pl-1 font-semibold">
+                  {moBusy ? "⏳ chargement…" : moDetail ? "▾ masquer le détail main-d'œuvre" : "👷 voir la main-d'œuvre par employé →"}
+                </button>
+                {moDetail && (
+                  <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1">
+                    {moDetail.length === 0 ? (
+                      <div className="text-[11px] text-slate-500 italic">Aucune heure saisie cette année.</div>
+                    ) : (<>
+                      {moDetail.map((e, i) => (
+                        <div key={i} className="flex justify-between items-baseline text-[11px]">
+                          <span className="text-slate-700 font-medium truncate mr-2">{e.employe}</span>
+                          <span className="text-slate-600 whitespace-nowrap">{(e.total_heures || 0).toFixed(1)} h · <strong className="text-amber-800">{formatCAD(e.cout_total || 0)}</strong></span>
+                        </div>
+                      ))}
+                      {(() => { const somme = moDetail.reduce((s, e) => s + (e.cout_total || 0), 0); const autres = mo - somme; return autres > 1 ? (
+                        <div className="flex justify-between text-[10px] text-slate-400"><span>Autres (heures sans employé)</span><span>{formatCAD(autres)}</span></div>
+                      ) : null; })()}
+                      <div className="flex justify-between text-[11px] font-bold border-t border-amber-200 pt-1"><span>Total main-d'œuvre</span><span className="text-amber-800">{formatCAD(mo)}</span></div>
+                    </>)}
+                  </div>
+                )}
                 <div className="border-t pt-2" />
                 <Lc label="= Marge nette (avant taxes)" value={formatCAD(marge)} gras couleur={marge >= 0 ? "text-blue-700" : "text-red-600"} />
                 <p className="text-[11px] text-slate-600 bg-emerald-50 border border-emerald-200 rounded p-2 mt-1">✅ Maintenant le calcul est simple : <strong>CA − Dépenses = Marge nette</strong> (la M.O. est dans les dépenses).</p>
