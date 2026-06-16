@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
 import MicVocal from "@/components/MicVocal";
+import ProjetPicker from "@/components/ProjetPicker";
 import { compresserImage, genererVignette } from "@/lib/img";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
@@ -87,10 +88,7 @@ export default function ModalExtra({ ouvert, onClose, onSuccess, projetIdInitial
       <div className="space-y-3">
         <div>
           <label className="block text-xs font-medium text-slate-600 mb-1">Projet</label>
-          <select value={projet_id} onChange={(e) => setProjetId(+e.target.value)} className="w-full px-3 py-3 border rounded-lg text-sm bg-white">
-            <option value={0}>— Sans projet —</option>
-            {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}</option>)}
-          </select>
+          <ProjetPicker value={projet_id} onChange={(pid) => setProjetId(pid)} projets={projets} aucunLabel="— Sans projet —" />
         </div>
 
         <div>

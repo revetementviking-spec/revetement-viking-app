@@ -8,6 +8,7 @@ import { compresserImage } from "@/lib/img";
 
 const ScannerRecu = lazy(() => import("@/components/ScannerRecu"));
 import MicVocal from "@/components/MicVocal";
+import ProjetPicker from "@/components/ProjetPicker";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
 const CATEGORIES_FALLBACK = ["matériaux", "outils", "location", "sous-traitant", "transport", "permis", "essence", "autre"];
@@ -141,10 +142,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
       <div className="space-y-3">
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Projet (optionnel)</label>
-            <select value={form.projet_id} onChange={(e) => setForm({ ...form, projet_id: +e.target.value })} className="w-full px-3 py-3 border rounded-lg text-sm bg-white">
-              <option value={0}>— Aucun (dépense générale, ex: outils)</option>
-              {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` (${p.client_nom})` : ""}{p.statut === "complete" ? " [complété]" : ""}</option>)}
-            </select>
+            <ProjetPicker value={form.projet_id || 0} onChange={(pid) => setForm({ ...form, projet_id: pid })} projets={projets} aucunLabel="— Aucun (dépense générale, ex: outils)" />
             {projet && (
               <div className="text-xs text-slate-500 mt-1 flex justify-between">
                 <span>Budget : <strong>{formatCAD(projet.budget_estime || 0)}</strong></span>

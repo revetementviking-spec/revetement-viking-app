@@ -6,6 +6,7 @@ import { useToast } from "@/components/Toasts";
 import BottomSheet from "@/components/BottomSheet";
 import { compresserImage, genererVignette } from "@/lib/img";
 import MicVocal from "@/components/MicVocal";
+import ProjetPicker from "@/components/ProjetPicker";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; onExtra?: () => void; }
 interface LigneJour {
@@ -301,9 +302,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
                   <div className="flex gap-2 items-end">
                     <div className="flex-1">
                       <label className="block text-xs font-medium text-slate-600 mb-1">Projet</label>
-                      <select value={l.projet_id} onChange={(e) => modifier(i, { projet_id: +e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm bg-white">
-                        {projets.map((p) => <option key={p.id} value={p.id}>{p.nom}{p.client_nom ? ` · ${p.client_nom}` : ""}{p.statut && p.statut !== "actif" ? ` [${p.statut}]` : ""}</option>)}
-                      </select>
+                      <ProjetPicker value={l.projet_id} onChange={(pid) => modifier(i, { projet_id: pid })} projets={projets} />
                     </div>
                     <div className="w-36">
                       <label className="block text-xs font-medium text-slate-600 mb-1">Date {l.date && l.date !== date && <span className="text-amber-600">⚠</span>}</label>
