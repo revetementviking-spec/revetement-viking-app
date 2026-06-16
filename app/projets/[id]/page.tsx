@@ -58,6 +58,23 @@ export default function ProjetDetail() {
     d.setDate(d.getDate() + diff); d.setHours(0, 0, 0, 0); return d;
   });
   const [selectionH, setSelectionH] = useState<Set<number>>(new Set());
+  // Édition du nom / client du projet
+  const [editInfo, setEditInfo] = useState<null | { nom: string; client_id: number | null }>(null);
+  const [clients, setClients] = useState<any[]>([]);
+  const ouvrirEditInfo = () => {
+    setEditInfo({ nom: projet?.nom || "", client_id: projet?.client_id ?? null });
+    if (clients.length === 0) fetch("/api/clients").then((r) => r.json()).then((d) => setClients(Array.isArray(d) ? d : [])).catch(() => {});
+  };
+  const sauverEditInfo = async () => {
+    if (!editInfo) return;
+    if (!editInfo.nom.trim()) { toast("Le nom du projet est requis", "warning"); return; }
+    const r = await fetch("/api/projets", {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, nom: editInfo.nom.trim(), client_id: editInfo.client_id }),
+    });
+    if ((await r.json()).ok) { toast("Projet mis à jour", "success"); setEditInfo(null); charger(); }
+    else toast("Erreur", "error");
+  };
   const [coutDetail, setCoutDetail] = useState(false);
   const [lightboxId, setLightboxId] = useState<number | null>(null);
   const [resumeIa, setResumeIa] = useState<string | null>(null);
@@ -252,7 +269,10 @@ ${VIKING_EMAIL}
 
             {/* Client */}
             <div className="border-t md:border-t-0 md:border-l border-slate-200 md:pl-4 pt-3 md:pt-0">
-              <div className="text-xs uppercase font-bold text-slate-500 mb-1">👤 Client</div>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-xs uppercase font-bold text-slate-500">👤 Client</div>
+                <button onClick={ouvrirEditInfo} className="text-xs text-emerald-700 hover:underline font-semibold">✏️ Nom / client</button>
+              </div>
               {projet.client_id ? (
                 <a href={`/clients/${projet.client_id}`} className="text-lg font-bold text-slate-900 hover:underline">{projet.client_nom || "—"}</a>
               ) : (
@@ -851,6 +871,31 @@ ${VIKING_EMAIL}
           </div>
         )}
       </main>
+
+      {/* MODAL ÉDITION nom / client du projet */}
+      {editInfo && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEditInfo(null)}>
+          <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">✏️ Modifier le projet</h3>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Nom du projet</label>
+              <input type="text" value={editInfo.nom} onChange={(e) => setEditInfo({ ...editInfo, nom: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Client</label>
+              <select value={editInfo.client_id ?? ""} onChange={(e) => setEditInfo({ ...editInfo, client_id: e.target.value ? +e.target.value : null })} className="w-full px-3 py-2 border rounded text-sm bg-white">
+                <option value="">— Sans client —</option>
+                {clients.map((c) => <option key={c.id} value={c.id}>{c.nom}</option>)}
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1">Pour un nouveau client, crée-le d'abord dans l'onglet CRM.</p>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button onClick={() => setEditInfo(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
+              <button onClick={sauverEditInfo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Enregistrer</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {lightboxId !== null && (() => {
         const liste = photos.filter((p: any) => !(p.photo_type || "").startsWith("video")).map((p: any) => ({ id: p.id, description: p.description, date: p.date }));
