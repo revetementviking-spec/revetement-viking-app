@@ -56,6 +56,7 @@ export default function Home() {
   const [modalPhotos, setModalPhotos] = useState(false);
   const [modalExtra, setModalExtra] = useState(false);
   const [extras, setExtras] = useState<any[]>([]);
+  const [aFacturer, setAFacturer] = useState<any[]>([]);
   const [detailFin, setDetailFin] = useState<null | "ca" | "depenses" | "marge">(null);
   const [moDetail, setMoDetail] = useState<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[] | null>(null);
   const [moBusy, setMoBusy] = useState(false);
@@ -101,6 +102,7 @@ export default function Home() {
     fetchInstantane("/api/relances", (d: any) => setRelances(Array.isArray(d) ? d : []), { cle: "dash:relances" });
     fetchInstantane("/api/dashboard", setTableauBord, { cle: "dash:tableauBord" });
     fetchInstantane("/api/extras?statut=a_charger", (d: any) => setExtras(Array.isArray(d) ? d : []), { cle: "dash:extras" });
+    fetchInstantane("/api/projets?a_facturer=1", (d: any) => setAFacturer(Array.isArray(d) ? d : []), { cle: "dash:aFacturer" });
     fetch("/api/auth/me").then((r) => r.json()).then((d) => {
       const u = d?.user || "";
       setMonUser(u);
@@ -153,6 +155,36 @@ export default function Home() {
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
         </section>
+
+        {/* 🧾 PROJETS À FACTURER — rappel persistant (projets complétés non facturés) */}
+        {aFacturer.length > 0 && (
+          <section className="bg-purple-50 border-2 border-purple-400 rounded-lg p-4 md:p-5">
+            <h2 className="font-bold text-purple-900 mb-2">🧾 Projets à facturer ({aFacturer.length})</h2>
+            <p className="text-xs text-purple-800 mb-3">Projets marqués <strong>complétés</strong> mais pas encore facturés. Marque « facturé » une fois la facture faite (ex. QuickBooks).</p>
+            <div className="space-y-1.5">
+              {aFacturer.slice(0, 6).map((p) => {
+                const valeur = p.prix_contrat || p.budget_estime || 0;
+                return (
+                  <div key={p.id} className="flex items-center justify-between gap-2 bg-white rounded px-3 py-2 border border-purple-200">
+                    <a href={`/projets/${p.id}`} className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{p.nom}</div>
+                      <div className="text-[11px] text-slate-500 truncate">{p.client_nom || "—"}{p.date_fin_reelle ? ` · complété ${p.date_fin_reelle}` : ""}{valeur ? ` · ${formatCAD(valeur)}` : ""}</div>
+                    </a>
+                    <button
+                      onClick={async () => {
+                        await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: p.id, facturee: 1 }) });
+                        toast("✓ Projet marqué facturé", "success");
+                        setAFacturer((arr) => arr.filter((x) => x.id !== p.id));
+                      }}
+                      className="flex-shrink-0 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold whitespace-nowrap"
+                    >✓ Facturé</button>
+                  </div>
+                );
+              })}
+            </div>
+            {aFacturer.length > 6 && <p className="text-xs text-purple-700 mt-2">+ {aFacturer.length - 6} autre(s)…</p>}
+          </section>
+        )}
 
         {/* 💲 EXTRAS À FACTURER — alerte persistante */}
         {extras.length > 0 && (

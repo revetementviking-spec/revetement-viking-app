@@ -294,6 +294,8 @@ async function doInitDb() {
   await tryExec("CREATE INDEX IF NOT EXISTS idx_extras_statut ON extras(statut, date DESC)");
   await tryExec("ALTER TABLE projets ADD COLUMN prix_contrat REAL");
   await tryExec("ALTER TABLE projets ADD COLUMN numero TEXT");
+  // Suivi facturation : 0 = à facturer (rappel dashboard), 1 = facturé
+  await tryExec("ALTER TABLE projets ADD COLUMN facturee INTEGER NOT NULL DEFAULT 0");
   await tryExec("ALTER TABLE projets ADD COLUMN contrat_signe_data TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN contrat_signe_type TEXT");
   // Signature en ligne des soumissions par le client
@@ -1230,6 +1232,15 @@ export async function listerProjetsLite(statut?: string): Promise<any[]> {
     return await all<any>(sql, args);
   });
 }
+/** Projets complétés mais PAS encore marqués facturés (rappel "à facturer"). */
+export async function listerProjetsAFacturer(): Promise<any[]> {
+  return await all<any>(
+    `SELECT p.id, p.nom, p.prix_contrat, p.budget_estime, p.date_fin_reelle, c.nom as client_nom
+     FROM projets p LEFT JOIN clients c ON c.id = p.client_id
+     WHERE p.statut = 'complete' AND COALESCE(p.facturee, 0) = 0
+     ORDER BY COALESCE(p.date_fin_reelle, p.date_fin_prevue, p.date_creation) DESC LIMIT 50`
+  );
+}
 export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
   // PERF : on ne charge PAS les blobs facture/contrat (plusieurs Mo) dans le JSON.
   // Les flags a_facture_finale / a_contrat_signe + les types suffisent pour l'UI ;
@@ -1267,7 +1278,7 @@ export async function ajouterProjet(p: Projet): Promise<number> {
   return r.lastInsertRowid;
 }
 export async function modifierProjet(id: number, p: Partial<Projet>) {
-  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'modifie_par'];
+  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'facturee', 'modifie_par'];
   const definis = champs.filter(k => (p as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');

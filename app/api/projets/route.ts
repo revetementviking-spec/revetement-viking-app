@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerProjets, listerProjetsLite, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
+import { listerProjets, listerProjetsLite, listerProjetsAFacturer, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, charger } from "@/lib/db";
+import { envoyerPushUtilisateur } from "@/lib/push";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { utilisateurActif } from "@/lib/authUser";
 import { journaliser } from "@/lib/audit";
@@ -23,6 +24,8 @@ export async function GET(req: NextRequest) {
       if (!p) return NextResponse.json({ error: "not found" }, { status: 404 });
       return ok(p);
     }
+    // a_facturer=1 : projets complétés pas encore facturés (rappel dashboard)
+    if (req.nextUrl.searchParams.get("a_facturer") === "1") return ok(await listerProjetsAFacturer());
     // lite=1 : liste légère (id/nom/statut) pour les menus déroulants — bien plus rapide
     // que la liste complète avec coûts/marges (PROJ_SQL = 5 sous-requêtes par projet).
     if (req.nextUrl.searchParams.get("lite") === "1") return ok(await listerProjetsLite(statut));
@@ -69,12 +72,25 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     if (!body.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
     const user = await utilisateurActif(req);
-    // Complétion : pose la date de fin réelle (sert à reconnaître le CA au bon mois).
-    if (body.statut === "complete" && body.date_fin_reelle === undefined) {
-      body.date_fin_reelle = aujourdhuiMontreal();
+    const avant = await getProjet(+body.id);
+    const nouvelleCompletion = body.statut === "complete" && avant?.statut !== "complete";
+    if (nouvelleCompletion) {
+      // Pose la date de fin réelle (reconnaissance du CA) + remet "à facturer".
+      if (body.date_fin_reelle === undefined) body.date_fin_reelle = aujourdhuiMontreal();
+      body.facturee = 0;
     }
     await modifierProjet(body.id, { ...body, modifie_par: user });
     journaliser("projet.statut_change", { ref_type: "projet", ref_id: body.id, utilisateur: user || undefined, description: `Modif ${Object.keys(body).filter(k => k !== "id").join(", ")}` });
+    // Rappel à Francis : projet complété → à facturer (pour ne rien oublier).
+    if (nouvelleCompletion) {
+      const valeur = (avant as any)?.prix_contrat || (avant as any)?.budget_estime || 0;
+      envoyerPushUtilisateur("Francis", {
+        title: "🧾 Projet à facturer",
+        body: `« ${avant?.nom || "Projet"} » est complété — pense à le facturer${valeur ? ` (${(+valeur).toLocaleString("fr-CA")} $)` : ""}.`,
+        url: "/",
+        tag: "facturer-" + body.id,
+      }).catch(() => {});
+    }
     return ok({ ok: true });
   } catch (e) { return fail(e); }
 }
