@@ -111,8 +111,8 @@ export default function Home() {
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
           <button onClick={() => annuel && setDetailFin("depenses")} className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-orange-500 text-left hover:shadow-md transition relative">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Dépenses {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes)</span></div>
-            <div className="text-lg md:text-2xl font-bold text-orange-700 mt-1">{annuel ? formatCAD(annuel.dep_at ?? annuel.depenses) : "…"}</div>
+            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Dépenses {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes, incl. M.O.)</span></div>
+            <div className="text-lg md:text-2xl font-bold text-orange-700 mt-1">{annuel ? formatCAD((annuel.dep_at ?? annuel.depenses) + annuel.mo) : "…"}</div>
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
           <button onClick={() => annuel && setDetailFin("marge")} className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-blue-500 text-left hover:shadow-md transition relative">
@@ -397,20 +397,22 @@ export default function Home() {
                 <Lc label="= Chiffre d'affaires (avant taxes)" value={formatCAD(caAt)} gras couleur="text-emerald-700" />
               </>)}
               {detailFin === "depenses" && (<>
-                <p className="text-xs text-slate-500">Total des dépenses enregistrées en {an} (matériaux, fournisseurs…).</p>
+                <p className="text-xs text-slate-500">Tous les coûts de {an} : dépenses (matériaux, fournisseurs) avant taxes + main-d'œuvre.</p>
                 <Lc label="Dépenses (taxes incl.)" value={formatCAD(depTi)} />
                 <Lc label="− Taxes (récupérables, CTI/RTI)" value={"− " + formatCAD(depTi - depAt)} couleur="text-slate-500" />
+                <Lc label="= Dépenses (avant taxes)" value={formatCAD(depAt)} />
+                <Lc label="+ Main-d'œuvre (salaires : heures × taux)" value={"+ " + formatCAD(mo)} couleur="text-amber-700" />
                 <div className="border-t pt-2" />
-                <Lc label="= Dépenses (avant taxes)" value={formatCAD(depAt)} gras couleur="text-orange-700" />
+                <Lc label="= Total dépenses (incl. M.O.)" value={formatCAD(depAt + mo)} gras couleur="text-orange-700" />
               </>)}
               {detailFin === "marge" && (<>
-                <p className="text-xs text-slate-500">Profit réel = revenu avant taxes, moins TOUS les coûts (dépenses + salaires).</p>
+                <p className="text-xs text-slate-500">Profit réel = revenu avant taxes − toutes les dépenses (la main-d'œuvre est maintenant incluse dedans).</p>
                 <Lc label="Chiffre d'affaires (avant taxes)" value={"+ " + formatCAD(caAt)} couleur="text-emerald-700" />
-                <Lc label="− Dépenses (avant taxes)" value={"− " + formatCAD(depAt)} couleur="text-orange-700" />
-                <Lc label="− Main-d'œuvre (salaires : heures × taux)" value={"− " + formatCAD(mo)} couleur="text-amber-700" />
+                <Lc label="− Dépenses (av. taxes, incl. M.O.)" value={"− " + formatCAD(depAt + mo)} couleur="text-orange-700" />
+                <div className="text-[10px] text-slate-400 pl-1">dont matériaux/fournisseurs {formatCAD(depAt)} + main-d'œuvre {formatCAD(mo)}</div>
                 <div className="border-t pt-2" />
                 <Lc label="= Marge nette (avant taxes)" value={formatCAD(marge)} gras couleur={marge >= 0 ? "text-blue-700" : "text-red-600"} />
-                <p className="text-[11px] text-slate-600 bg-amber-50 border border-amber-200 rounded p-2 mt-1">💡 La <strong>main-d'œuvre</strong> ({formatCAD(mo)}) est un vrai coût mais n'est PAS dans la case « Dépenses ». C'est pourquoi « CA − Dépenses » seul ne donne pas la marge.</p>
+                <p className="text-[11px] text-slate-600 bg-emerald-50 border border-emerald-200 rounded p-2 mt-1">✅ Maintenant le calcul est simple : <strong>CA − Dépenses = Marge nette</strong> (la M.O. est dans les dépenses).</p>
               </>)}
             </div>
           </div>
