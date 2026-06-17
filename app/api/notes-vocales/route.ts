@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
-const SYSTEME = `Tu es l'assistant terrain de Frédéric (Revêtement Viking, revêtement extérieur QC).
-Frédéric te dicte des notes vocales depuis un chantier ou après visite.
+const SYSTEME = `Tu es l'assistant terrain de Francis (Revêtement Viking, revêtement extérieur QC).
+Francis te dicte des notes vocales depuis un chantier ou après visite.
 Il décrit la complexité, les particularités, les obstacles qu'il a vus.
 
 Ta mission : extraire de sa note vocale les AJUSTEMENTS à appliquer à la soumission courante.
@@ -20,7 +20,7 @@ TU RETOURNES UN JSON :
   "ajustements": [
     {
       "type": "ajouter_heures_categorie|ajouter_frais_forfaitaire|modifier_marge|ajouter_ligne|ajouter_note|modifier_quantite_par_categorie|appliquer_couleur_partout",
-      "description": "Description en français pour Frédéric : 'Ajout 5h MO pour pignon complexe'",
+      "description": "Description en français pour Francis : 'Ajout 5h MO pour pignon complexe'",
       "categorie": "parement|soffite|fascia|solin|accessoire", // si applicable
       "heures": 5, // si applicable
       "id_frais": "echafaudage|mobilisation|nettoyage", // si applicable
@@ -61,9 +61,9 @@ EXEMPLES DE MAPPING (apprend leur logique) :
 → { "type": "ajouter_note", "note_texte": "Voisin stationne souvent : communiquer pour planifier", "description": "Note chantier ajoutée" }
 
 RÈGLES :
-- Si Frédéric mentionne une catégorie générique (pignon, fronton) sans préciser → ajuste "parement"
+- Si Francis mentionne une catégorie générique (pignon, fronton) sans préciser → ajuste "parement"
 - Sois conservateur : si tu n'es pas sûr de la valeur, prends la valeur basse mentionnée
-- Si Frédéric dicte plusieurs ajustements dans une phrase → produit plusieurs actions
+- Si Francis dicte plusieurs ajustements dans une phrase → produit plusieurs actions
 - AUCUN markdown, JSON pur en français du Québec`;
 
 export async function POST(req: NextRequest) {

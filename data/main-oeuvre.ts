@@ -1,7 +1,7 @@
 // Catalogue main-d'œuvre - Entreprises Xpress Inc.
 // Taux horaire 90$/h (taux facturé client, vente directe)
 // Temps standards basés sur moyennes industrie québécoise (APCHQ/Gentek-Kaycan)
-// À ajuster selon expérience réelle de Frédéric.
+// À ajuster selon expérience réelle de Francis.
 
 import type { Categorie } from "./materiaux-gentek";
 
