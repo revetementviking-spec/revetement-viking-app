@@ -516,7 +516,7 @@ Le PDF vient d'être téléchargé sur votre ordinateur. Joignez-le manuellement
 N'hésitez pas à me contacter pour toute question.
 
 Cordialement,
-Frédéric
+Francis
 Revêtement Viking Inc.
 RBQ 5811-4299-01
 info@entreprisesxpress.ca`;
