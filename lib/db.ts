@@ -305,6 +305,8 @@ async function doInitDb() {
   await tryExec("ALTER TABLE soumissions ADD COLUMN vue_client_le TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN facture_finale_data TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN facture_finale_type TEXT");
+  // Durée prévue des travaux (jours) — sert à placer le projet sur l'échéancier.
+  await tryExec("ALTER TABLE projets ADD COLUMN duree_jours REAL");
   // Migrations employés : RH complète
   await tryExec("ALTER TABLE employes ADD COLUMN telephone TEXT");
   await tryExec("ALTER TABLE employes ADD COLUMN courriel TEXT");
@@ -907,7 +909,7 @@ export async function supprimerContrat(id: number) {
 export interface Projet {
   id?: number; client_id?: number; nom: string; adresse_chantier?: string;
   description?: string; statut?: 'a_venir' | 'actif' | 'complete' | 'en_pause' | 'annule';
-  date_debut?: string; date_fin_prevue?: string; date_fin_reelle?: string;
+  date_debut?: string; date_fin_prevue?: string; date_fin_reelle?: string; duree_jours?: number;
   soumission_numero?: string; budget_estime?: number; heures_estimees?: number;
   prix_contrat?: number; facture_finale_data?: string; facture_finale_type?: string;
   date_creation?: string;
@@ -927,7 +929,7 @@ function calculerTotaux(r: any): ProjetAvecTotaux {
 // Colonnes projets sans facture_finale_data (blob potentiel de plusieurs MB).
 // La liste retourne juste un flag a_facture_finale.
 const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier, p.description, p.statut,
-  p.date_debut, p.date_fin_prevue, p.date_fin_reelle, p.budget_estime, p.heures_estimees,
+  p.date_debut, p.date_fin_prevue, p.date_fin_reelle, p.duree_jours, p.budget_estime, p.heures_estimees,
   p.prix_contrat, p.facture_finale_type, (p.facture_finale_data IS NOT NULL) as a_facture_finale,
   p.contrat_signe_type, (p.contrat_signe_data IS NOT NULL) as a_contrat_signe,
   p.reno_assistance, p.cree_par, p.modifie_par, p.soumission_numero, p.date_creation,
@@ -1278,7 +1280,7 @@ export async function ajouterProjet(p: Projet): Promise<number> {
   return r.lastInsertRowid;
 }
 export async function modifierProjet(id: number, p: Partial<Projet>) {
-  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'facturee', 'modifie_par'];
+  const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'duree_jours', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'facturee', 'modifie_par'];
   const definis = champs.filter(k => (p as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');

@@ -9,6 +9,21 @@ import Lightbox from "@/components/Lightbox";
 import { getProjetPrefetch, setProjetPrefetch } from "@/lib/prefetchProjet";
 import MeteoProjet from "@/components/MeteoProjet";
 
+// Ajoute n jours à une date ISO (yyyy-mm-dd) en heure locale, sans dérive de fuseau.
+function ajouterJours(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  dt.setDate(dt.getDate() + Math.round(n));
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+// Nombre de jours entre deux dates ISO (fin - début).
+function diffJours(debut: string, fin: string): number {
+  const [y1, m1, d1] = debut.split("-").map(Number);
+  const [y2, m2, d2] = fin.split("-").map(Number);
+  const ms = new Date(y2, m2 - 1, d2).getTime() - new Date(y1, m1 - 1, d1).getTime();
+  return Math.max(0, Math.round(ms / 86400000));
+}
+
 const STATUTS_LABEL: Record<string, string> = {
   en_cours: "🟢 En cours",
   a_venir: "🟣 À venir",
@@ -237,18 +252,40 @@ ${VIKING_EMAIL}
               {projet.adresse_chantier && (
                 <a href={`https://maps.google.com/?q=${encodeURIComponent(projet.adresse_chantier)}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">📍 Ouvrir dans Google Maps →</a>
               )}
-              <div className="grid grid-cols-2 gap-2 mt-2">
+              <div className="grid grid-cols-3 gap-2 mt-2">
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">📅 Date de début</label>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">📅 Date prévue</label>
                   <input
                     type="date"
                     value={projet.date_debut || ""}
                     onChange={async (e) => {
                       const v = e.target.value;
-                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, date_debut: v }) });
-                      if (r.ok) { toast("Date de début mise à jour", "success"); charger(); }
+                      // Si une durée est connue, recalcule la fin prévue (début + durée).
+                      const patch: any = { id: projet.id, date_debut: v };
+                      if (v && projet.duree_jours) patch.date_fin_prevue = ajouterJours(v, projet.duree_jours);
+                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+                      if (r.ok) { toast("Date prévue mise à jour", "success"); charger(); }
                     }}
                     className="w-full px-2 py-1 border rounded text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-slate-500 mb-0.5">⏳ Durée (jours)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.5}
+                    value={projet.duree_jours ?? ""}
+                    placeholder="ex: 5"
+                    onChange={async (e) => {
+                      const n = e.target.value === "" ? null : +e.target.value;
+                      // La durée pilote la fin prévue quand une date de début existe.
+                      const patch: any = { id: projet.id, duree_jours: n };
+                      if (n && projet.date_debut) patch.date_fin_prevue = ajouterJours(projet.date_debut, n);
+                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
+                      if (r.ok) { toast("Durée prévue mise à jour", "success"); charger(); }
+                    }}
+                    className="w-full px-2 py-1 border rounded text-xs text-right"
                   />
                 </div>
                 <div>
@@ -258,7 +295,10 @@ ${VIKING_EMAIL}
                     value={projet.date_fin_prevue || ""}
                     onChange={async (e) => {
                       const v = e.target.value;
-                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, date_fin_prevue: v }) });
+                      // Ajuster la fin manuellement recalcule la durée pour rester cohérent.
+                      const patch: any = { id: projet.id, date_fin_prevue: v };
+                      if (v && projet.date_debut) patch.duree_jours = diffJours(projet.date_debut, v);
+                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
                       if (r.ok) { toast("Date de fin mise à jour", "success"); charger(); }
                     }}
                     className="w-full px-2 py-1 border rounded text-xs"

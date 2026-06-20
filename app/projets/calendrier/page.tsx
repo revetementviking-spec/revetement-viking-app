@@ -23,13 +23,22 @@ export default function CalendrierProjets() {
     fetch("/api/projets").then((r) => r.json()).then((d) => setProjets(Array.isArray(d) ? d : []));
   }, []);
 
+  // Fin des travaux : date de fin prévue si saisie, sinon début + durée prévue, sinon +30 j.
+  const finMs = (p: any): number => {
+    if (p.date_fin_prevue) return new Date(p.date_fin_prevue).getTime();
+    if (!p.date_debut) return 0;
+    const base = new Date(p.date_debut).getTime();
+    const jours = p.duree_jours && p.duree_jours > 0 ? p.duree_jours : 30;
+    return base + jours * 86400000;
+  };
+
   // Filtre projets qui touchent l'année courante
   const projetsAnnee = useMemo(() => {
     const dAn = new Date(annee, 0, 1).getTime();
     const fAn = new Date(annee, 11, 31).getTime();
     return projets.filter((p) => {
       const d1 = p.date_debut ? new Date(p.date_debut).getTime() : 0;
-      const d2 = p.date_fin_prevue ? new Date(p.date_fin_prevue).getTime() : (p.date_debut ? new Date(p.date_debut).getTime() + 30 * 86400000 : 0);
+      const d2 = finMs(p);
       if (!d1) return false;
       return d2 >= dAn && d1 <= fAn;
     }).sort((a, b) => (a.date_debut || "").localeCompare(b.date_debut || ""));
@@ -40,7 +49,7 @@ export default function CalendrierProjets() {
     const fAn = new Date(annee, 11, 31, 23, 59).getTime();
     const totalAn = fAn - dAn;
     const d1 = Math.max(dAn, new Date(p.date_debut).getTime());
-    const d2 = Math.min(fAn, p.date_fin_prevue ? new Date(p.date_fin_prevue).getTime() : (new Date(p.date_debut).getTime() + 30 * 86400000));
+    const d2 = Math.min(fAn, finMs(p));
     const left = ((d1 - dAn) / totalAn) * 100;
     const width = Math.max(1, ((d2 - d1) / totalAn) * 100);
     return { left: `${left}%`, width: `${width}%` };
@@ -83,7 +92,7 @@ export default function CalendrierProjets() {
                   <div
                     className={`absolute top-1/2 -translate-y-1/2 h-5 rounded ${COULEURS[p.statut] || "bg-slate-500"} shadow opacity-80 hover:opacity-100`}
                     style={positionBarre(p)}
-                    title={`${p.nom} — ${p.date_debut} → ${p.date_fin_prevue || "?"}`}
+                    title={`${p.nom} — ${p.date_debut} → ${p.date_fin_prevue || "?"}${p.duree_jours ? ` (${p.duree_jours} j prévus)` : ""}`}
                   />
                 </a>
               ))}
