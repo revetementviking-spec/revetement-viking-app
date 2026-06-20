@@ -30,6 +30,10 @@ export default function ClientsPage() {
   const [triCol, setTriCol] = useState<"nom" | "statut" | "telephone" | "adresse" | "source" | "projets" | "paye">("nom");
   const [triAsc, setTriAsc] = useState(true);
   const [nouveau, setNouveau] = useState({ nom: "", courriel: "", telephone: "", adresse: "", notes: "", statut: "prospect", source: "", tags: "" });
+  // Création d'une tâche de suivi rattachée à un client existant (ex: soumission séparée pour un 2e projet).
+  const [tacheOuverte, setTacheOuverte] = useState(false);
+  const [tacheForm, setTacheForm] = useState<{ client_id: number | null; titre: string; assignee: string; date_echeance: string }>({ client_id: null, titre: "", assignee: "", date_echeance: "" });
+  const [tacheRecherche, setTacheRecherche] = useState("");
   const { toast } = useToast();
 
   const charger = async () => {
@@ -75,6 +79,22 @@ export default function ClientsPage() {
       } : undefined
     });
     charger();
+  };
+
+  const creerTache = async () => {
+    if (!tacheForm.client_id) { toast("Choisis un client", "warning"); return; }
+    if (!tacheForm.titre.trim()) { toast("Décris la tâche", "warning"); return; }
+    const r = await fetch("/api/client-taches", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: tacheForm.client_id, titre: tacheForm.titre.trim(), assignee: tacheForm.assignee || null, date_echeance: tacheForm.date_echeance || null }),
+    });
+    if ((await r.json()).ok) {
+      toast("✓ Tâche créée", "success");
+      setTacheOuverte(false);
+      setTacheForm({ client_id: null, titre: "", assignee: "", date_echeance: "" });
+      setTacheRecherche("");
+      charger();
+    } else toast("Erreur création tâche", "error");
   };
 
   const projetsParClient = (client_id: number) => projets.filter((p) => p.client_id === client_id);
@@ -124,11 +144,16 @@ export default function ClientsPage() {
             <button onClick={() => setVue("clients")} className={`px-4 py-2 rounded text-sm font-semibold ${vue === "clients" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>👥 Clients ({clients.length})</button>
             <button onClick={() => setVue("pipeline")} className={`px-4 py-2 rounded text-sm font-semibold ${vue === "pipeline" ? "bg-emerald-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}>📊 Pipeline</button>
           </div>
-          {vue === "clients" && (
-            <button onClick={() => setCreerOuvert(true)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold shadow">
-              ➕ Nouveau client
+          <div className="flex gap-2">
+            <button onClick={() => setTacheOuverte(true)} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded-lg text-sm font-bold shadow">
+              📌 Nouvelle tâche
             </button>
-          )}
+            {vue === "clients" && (
+              <button onClick={() => setCreerOuvert(true)} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold shadow">
+                ➕ Nouveau client
+              </button>
+            )}
+          </div>
         </div>
 
         {/* VUE PIPELINE CRM */}
@@ -352,6 +377,66 @@ export default function ClientsPage() {
           </div>
         </div>
       )}
+
+      {tacheOuverte && (() => {
+        const clientSel = clients.find((c) => c.id === tacheForm.client_id);
+        const liste = (tacheRecherche
+          ? clients.filter((c) => [c.nom, c.adresse, c.courriel, c.telephone].filter(Boolean).some((x: string) => x.toLowerCase().includes(tacheRecherche.toLowerCase())))
+          : clients
+        ).slice(0, 30);
+        return (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setTacheOuverte(false)}>
+            <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+              <h3 className="text-lg font-bold">📌 Nouvelle tâche de suivi</h3>
+              <p className="text-xs text-slate-500">Rattache un suivi à un client existant — utile pour une 2ᵉ soumission / un autre projet du même client.</p>
+
+              {/* Sélecteur de client (inclut les anciens clients) */}
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Client *</label>
+                {clientSel ? (
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 border rounded bg-emerald-50">
+                    <span className="font-semibold text-sm truncate">{clientSel.nom}</span>
+                    <button onClick={() => { setTacheForm((f) => ({ ...f, client_id: null })); setTacheRecherche(""); }} className="text-xs text-slate-500 hover:text-red-600">changer</button>
+                  </div>
+                ) : (
+                  <>
+                    <input type="search" autoFocus placeholder="🔍 Chercher un client (nom, adresse…)" value={tacheRecherche} onChange={(e) => setTacheRecherche(e.target.value)} className="w-full px-3 py-2 border rounded text-sm" />
+                    <div className="mt-1 max-h-40 overflow-y-auto border rounded divide-y">
+                      {liste.length === 0 ? <div className="p-2 text-xs text-slate-400 italic">Aucun client</div> : liste.map((c) => (
+                        <button key={c.id} onClick={() => setTacheForm((f) => ({ ...f, client_id: c.id }))} className="w-full text-left px-3 py-2 hover:bg-emerald-50 text-sm">
+                          <div className="font-medium truncate">{c.nom}</div>
+                          {c.adresse && <div className="text-[11px] text-slate-500 truncate">{c.adresse}</div>}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <In label="Tâche *" v={tacheForm.titre} o={(v) => setTacheForm((f) => ({ ...f, titre: v }))} />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Assignée à</label>
+                  <select value={tacheForm.assignee} onChange={(e) => setTacheForm((f) => ({ ...f, assignee: e.target.value }))} className="w-full px-3 py-2 border rounded text-sm bg-white">
+                    <option value="">—</option>
+                    <option value="Francis">Francis</option>
+                    <option value="Gabriel">Gabriel</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Échéance</label>
+                  <input type="date" value={tacheForm.date_echeance} onChange={(e) => setTacheForm((f) => ({ ...f, date_echeance: e.target.value }))} className="w-full px-3 py-2 border rounded text-sm" />
+                </div>
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button onClick={() => setTacheOuverte(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
+                <button onClick={creerTache} disabled={!tacheForm.client_id || !tacheForm.titre.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded text-sm font-bold disabled:opacity-50">Créer la tâche</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <FAB onSuccess={charger} />
     </div>
