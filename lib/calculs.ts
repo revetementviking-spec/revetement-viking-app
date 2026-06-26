@@ -15,13 +15,15 @@ export function revenuAvantTaxes(montantTaxesIncluses: number): number {
   return (montantTaxesIncluses || 0) / (1 + TAUX_TAXES_QC);
 }
 
-/** Marge d'un projet. `revenu` = prix contrat/budget (taxes incluses, pour l'affichage).
- *  La marge et le % sont calculés sur le revenu AVANT taxes (rentabilité réelle). */
+/** Marge d'un projet. `revenu` = prix contrat/budget + extras facturés (taxes incluses,
+ *  pour l'affichage). La marge et le % sont calculés sur le revenu AVANT taxes (rentabilité réelle). */
 export function calculerMargeProjet(input: {
   prix_contrat?: number | null; budget_estime?: number | null;
   cout_main_oeuvre?: number | null; total_depenses?: number | null;
+  extras_factures?: number | null;
 }) {
-  const revenu = input.prix_contrat || input.budget_estime || 0;        // taxes incluses
+  // Le contrat (ou budget) + les extras FACTURÉS au client = revenu reconnu.
+  const revenu = (input.prix_contrat || input.budget_estime || 0) + (input.extras_factures || 0); // taxes incluses
   const revenu_avant_taxes = revenuAvantTaxes(revenu);                  // base de rentabilité
   const cout_total = (input.cout_main_oeuvre || 0) + (input.total_depenses || 0);
   const marge = revenu_avant_taxes - cout_total;                       // profit AVANT taxes
