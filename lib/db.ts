@@ -957,6 +957,7 @@ export interface ProjetAvecTotaux extends Projet {
   client_nom?: string; total_heures: number; cout_main_oeuvre: number;
   total_depenses: number; total_facture: number; total_paye: number;
   cout_total: number; marge: number; marge_pct: number; pct_budget_consomme: number;
+  revenu?: number; revenu_avant_taxes?: number;
 }
 
 function calculerTotaux(r: any): ProjetAvecTotaux {

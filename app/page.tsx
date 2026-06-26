@@ -346,10 +346,10 @@ export default function Home() {
 
         {/* KPIs */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-          <KPI label="Soumissions mois" value={stats.mois_courant ?? "—"} />
-          <KPI label="Total mois" value={formatCAD(stats.total_mois_courant || 0)} />
-          <KPI label="Pipeline" value={formatCAD(stats.pipeline || 0)} couleur="text-blue-600" />
-          <KPI label="Acceptées" value={formatCAD(stats.revenus_acceptes || 0)} couleur="text-emerald-600" />
+          <KPI label="Soumissions (mois)" value={stats.mois_courant ?? "—"} />
+          <KPI label="$ soumis (mois)" value={formatCAD(stats.total_mois_courant || 0)} />
+          <KPI label="Pipeline soum. (envoyées)" value={formatCAD(stats.pipeline || 0)} couleur="text-blue-600" />
+          <KPI label="Soum. acceptées" value={formatCAD(stats.revenus_acceptes || 0)} couleur="text-emerald-600" />
         </div>
 
         {/* === MES TÂCHES === */}
