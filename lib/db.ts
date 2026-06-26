@@ -282,6 +282,8 @@ async function doInitDb() {
   // détecter qu'un autre utilisateur a modifié la ligne entre le chargement et la sauvegarde.
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN version INTEGER NOT NULL DEFAULT 0");
   await tryExec("ALTER TABLE heures_projet ADD COLUMN version INTEGER NOT NULL DEFAULT 0");
+  // Facture détaxée (sans TPS/TVQ) : ne pas retirer les taxes du montant dans les calculs avant-taxes.
+  await tryExec("ALTER TABLE depenses_projet ADD COLUMN detaxe INTEGER NOT NULL DEFAULT 0");
   // Réglages applicatifs clé/valeur (ex. mode maintenance)
   await tryExec("CREATE TABLE IF NOT EXISTS parametres_app (cle TEXT PRIMARY KEY, valeur TEXT)");
   // Extras à facturer (travaux/matériaux supplémentaires hors soumission)
@@ -1410,7 +1412,10 @@ export async function finances(annee: number): Promise<any> {
     const finM = new Date(annee, m, 1).toISOString().slice(0, 10);
     const facture = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM factures_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
     const paye = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM factures_projet WHERE payee = 1 AND date_paiement >= ? AND date_paiement < ?`, [debut, finM]))?.v || 0;
-    const depenses = (await one<any>(`SELECT COALESCE(SUM(montant), 0) as v FROM depenses_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
+    // Total des dépenses + part détaxée (factures sans TPS/TVQ) pour le calcul avant-taxes.
+    const depRow = await one<any>(`SELECT COALESCE(SUM(montant), 0) as total, COALESCE(SUM(CASE WHEN detaxe = 1 THEN montant ELSE 0 END), 0) as detaxe FROM depenses_projet WHERE date >= ? AND date < ?`, [debut, finM]);
+    const depenses = depRow?.total || 0;
+    const depensesDetaxe = depRow?.detaxe || 0;
     const mo = (await one<any>(`SELECT COALESCE(SUM(heures * taux_horaire), 0) as v FROM heures_projet WHERE date >= ? AND date < ?`, [debut, finM]))?.v || 0;
     // Revenu reconnu quand le projet est COMPLÉTÉ : valeur du contrat (sinon estimé),
     // comptée au mois de complétion (date de fin réelle, sinon prévue, sinon début/création).
@@ -1426,7 +1431,8 @@ export async function finances(annee: number): Promise<any> {
     // incluses ; on les ramène avant taxes (÷ 1,14975). La MO (salaires) n'a pas de
     // taxe. marge = revenu_avant_taxes − depenses_avant_taxes − MO.
     const revenu_avant_taxes = revenuAvantTaxes(revenu);
-    const depenses_avant_taxes = revenuAvantTaxes(depenses);
+    // Les factures détaxées n'ont pas de taxes à retirer : on ne ramène que la part taxable.
+    const depenses_avant_taxes = revenuAvantTaxes(depenses - depensesDetaxe) + depensesDetaxe;
     mois.push({ mois: m, facture, paye, depenses, depenses_avant_taxes, mo, contrats: revenu, revenu, revenu_avant_taxes, marge: revenu_avant_taxes - depenses_avant_taxes - mo });
   }
   return { annee, mois };
@@ -1522,10 +1528,10 @@ export async function supprimerFactureProjet(id: number) {
 export interface DepenseProjet {
   id?: number; projet_id?: number | null; date: string; montant: number;
   fournisseur?: string; description?: string; categorie?: string;
-  recu_data?: string; recu_type?: string;
+  recu_data?: string; recu_type?: string; detaxe?: number | boolean;
 }
 // Colonnes sans le blob recu_data (perf : envoie juste un flag a_recu)
-const DEPENSES_COLS_LITES = "id, projet_id, date, montant, fournisseur, description, categorie, recu_type, ajoute_par, version, (recu_data IS NOT NULL) as a_recu";
+const DEPENSES_COLS_LITES = "id, projet_id, date, montant, fournisseur, description, categorie, detaxe, recu_type, ajoute_par, version, (recu_data IS NOT NULL) as a_recu";
 export async function listerDepensesProjet(projet_id: number | null, options: { sansData?: boolean } = {}) {
   const cols = options.sansData ? DEPENSES_COLS_LITES : "*";
   if (projet_id === null) return await all<DepenseProjet>(`SELECT ${cols} FROM depenses_projet WHERE projet_id IS NULL ORDER BY date DESC`);
@@ -1543,8 +1549,8 @@ export async function fournisseursConnus(): Promise<string[]> {
 }
 export async function ajouterDepenseProjet(d: DepenseProjet & { ajoute_par?: string }): Promise<number> {
   const r = await run(
-    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, ajoute_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [d.projet_id || null, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, d.recu_data || null, d.recu_type || null, d.ajoute_par || null, new Date().toISOString()]
+    `INSERT INTO depenses_projet (projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, detaxe, ajoute_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [d.projet_id || null, d.date, d.montant, d.fournisseur || null, d.description || null, d.categorie || null, d.recu_data || null, d.recu_type || null, d.detaxe ? 1 : 0, d.ajoute_par || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
@@ -1558,6 +1564,8 @@ export async function modifierDepenseProjet(id: number, d: Partial<DepenseProjet
   for (const c of champs) {
     if ((d as any)[c] !== undefined) { sets.push(`${c} = ?`); args.push((d as any)[c] || null); }
   }
+  // detaxe est un booléen 0/1 : à traiter à part (sinon `0 || null` l'écraserait).
+  if (d.detaxe !== undefined) { sets.push("detaxe = ?"); args.push(d.detaxe ? 1 : 0); }
   if (sets.length === 0) return { ok: true };
   if (versionAttendue != null) {
     const r = await run(`UPDATE depenses_projet SET ${sets.join(", ")}, version = version + 1 WHERE id = ? AND version = ?`, [...args, id, versionAttendue]);

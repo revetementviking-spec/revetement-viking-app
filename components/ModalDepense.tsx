@@ -19,7 +19,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
   const [categories, setCategories] = useState<string[]>(CATEGORIES_FALLBACK);
   const [fournisseursConnus, setFournisseursConnus] = useState<string[]>([]);
   const [catParFournisseur, setCatParFournisseur] = useState<Record<string, string>>({});
-  const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: CATEGORIES_FALLBACK[0] });
+  const [form, setForm] = useState({ projet_id: 0, date: today, montant: "", fournisseur: "", description: "", categorie: CATEGORIES_FALLBACK[0], detaxe: false });
   const [recu, setRecu] = useState<{ data: string; type: string; nom: string } | null>(null);
   const [scannerOuvert, setScannerOuvert] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -115,7 +115,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
       });
       if ((await r.json()).ok) {
         toast(`✓ Dépense ${formatCAD(+form.montant)} ajoutée${recu ? " (reçu joint)" : ""}`, "success");
-        setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
+        setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux", detaxe: false });
         setRecu(null);
         onSuccess?.();
         onClose();
@@ -161,6 +161,18 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
               <input type="number" inputMode="decimal" step={0.01} value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} placeholder="0.00" className="w-full px-3 py-3 border rounded-lg text-base text-right font-bold" autoFocus />
             </div>
           </div>
+
+          {/* Facture détaxée : montant sans TPS/TVQ (on ne retire pas les taxes dans les calculs avant-taxes). */}
+          <button
+            type="button"
+            onClick={() => setForm((f) => ({ ...f, detaxe: !f.detaxe }))}
+            className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-lg border-2 text-sm font-semibold transition ${form.detaxe ? "bg-emerald-50 border-emerald-500 text-emerald-900" : "bg-white border-slate-200 text-slate-600 hover:border-slate-300"}`}
+          >
+            <span className="flex items-center gap-2">🧾 Facture détaxée <span className="font-normal text-xs text-slate-500">(sans TPS/TVQ)</span></span>
+            <span className={`w-10 h-6 rounded-full flex items-center transition ${form.detaxe ? "bg-emerald-500 justify-end" : "bg-slate-300 justify-start"} px-0.5`}>
+              <span className="w-5 h-5 bg-white rounded-full shadow" />
+            </span>
+          </button>
 
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Fournisseur</label>
