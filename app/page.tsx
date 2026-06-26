@@ -50,6 +50,7 @@ export default function Home() {
   const [annuel, setAnnuel] = useState<{ ca: number; ca_at?: number; depenses: number; dep_at?: number; mo: number } | null>(null);
   const [tableauBord, setTableauBord] = useState<any>(null);
   const [mesTaches, setMesTaches] = useState<any[]>([]);
+  const [tachesAFaire, setTachesAFaire] = useState<any[]>([]);
   const [monUser, setMonUser] = useState<string>("");
   const [modalHeures, setModalHeures] = useState(false);
   const [modalDepense, setModalDepense] = useState(false);
@@ -103,6 +104,7 @@ export default function Home() {
     fetchInstantane("/api/dashboard", setTableauBord, { cle: "dash:tableauBord" });
     fetchInstantane("/api/extras?statut=a_charger", (d: any) => setExtras(Array.isArray(d) ? d : []), { cle: "dash:extras" });
     fetchInstantane("/api/projets?a_facturer=1", (d: any) => setAFacturer(Array.isArray(d) ? d : []), { cle: "dash:aFacturer" });
+    fetchInstantane("/api/taches?statut=a_faire", (d: any) => setTachesAFaire(Array.isArray(d) ? d : []), { cle: "dash:tachesAFaire" });
     fetch("/api/auth/me").then((r) => r.json()).then((d) => {
       const u = d?.user || "";
       setMonUser(u);
@@ -381,6 +383,43 @@ export default function Home() {
               })}
             </ul>
             {mesTaches.length > 8 && <p className="text-xs text-slate-500 mt-2">+ {mesTaches.length - 8} autre(s)…</p>}
+          </section>
+        )}
+
+        {/* === TÂCHES À FAIRE (module Tâches) === */}
+        {tachesAFaire.length > 0 && (
+          <section className="bg-white border-l-4 border-emerald-500 rounded-lg shadow p-4">
+            <div className="flex justify-between items-center mb-2">
+              <h2 className="font-bold text-slate-900"><a href="/taches" className="hover:underline">✅ Tâches à faire</a></h2>
+              <a href="/taches" className="text-xs text-emerald-700 font-semibold hover:underline">{tachesAFaire.length} · voir tout →</a>
+            </div>
+            <ul className="space-y-1.5">
+              {tachesAFaire.slice(0, 8).map((t) => {
+                const auj = new Date().toISOString().slice(0, 10);
+                const retard = t.date_due && t.date_due < auj;
+                return (
+                  <li key={t.id} className={`flex items-center gap-2 p-2 rounded ${retard ? "bg-red-50 border border-red-200" : "bg-slate-50"}`}>
+                    <input type="checkbox" onChange={async () => {
+                      await fetch("/api/taches", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: t.id, statut: "complete" }) });
+                      setTachesAFaire((arr) => arr.filter((x) => x.id !== t.id));
+                    }} className="w-4 h-4" title="Marquer faite" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-slate-900 truncate">{t.titre}{t.recurrence ? " 🔁" : ""}</div>
+                      <div className="flex gap-2 text-[11px]">
+                        {t.assigne_a && <span className={t.assigne_a === "Francis" ? "text-blue-600" : "text-purple-600"}>👤 {t.assigne_a}</span>}
+                        {t.projet_nom && <a href={`/projets/${t.projet_id}`} className="text-slate-500 hover:underline truncate">🏗️ {t.projet_nom}</a>}
+                      </div>
+                    </div>
+                    {t.date_due && (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${retard ? "bg-red-200 text-red-800" : "bg-amber-100 text-amber-800"}`}>
+                        {retard ? "⚠️ retard" : "📅"} {t.date_due}
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {tachesAFaire.length > 8 && <p className="text-xs text-slate-500 mt-2">+ {tachesAFaire.length - 8} autre(s)…</p>}
           </section>
         )}
 

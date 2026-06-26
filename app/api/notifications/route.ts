@@ -36,10 +36,19 @@ async function alertesBusiness(user: string | null) {
     args: [user, dans3j],
   }).catch(() => ({ rows: [] })) : { rows: [] };
 
+  // Tâches générales (module Tâches) à échéance ou en retard, assignées à l'utilisateur.
+  const tGen = user ? await c.execute({
+    sql: `SELECT id, titre, date_due AS date_echeance, NULL AS client_id, NULL AS client_nom
+          FROM taches_client
+          WHERE assigne_a = ? AND statut != 'complete' AND date_due IS NOT NULL AND date_due <= ?
+          ORDER BY date_due ASC LIMIT 20`,
+    args: [user, dans3j],
+  }).catch(() => ({ rows: [] })) : { rows: [] };
+
   return {
     factures_impayees: fIm.rows,
     projets_en_retard: pR.rows,
-    taches_echeance: tEch.rows,
+    taches_echeance: [...tEch.rows, ...tGen.rows],
   };
 }
 

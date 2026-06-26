@@ -38,11 +38,16 @@ export async function GET(req: NextRequest) {
       sql: "SELECT COUNT(*) AS n FROM client_taches WHERE assignee = ? AND (complete IS NULL OR complete = 0) AND date_echeance IS NOT NULL AND date_echeance <= ?",
       args: [user, dans3j],
     }).catch(() => ({ rows: [{ n: 0 }] }));
+    // Tâches générales (module Tâches) à échéance / en retard
+    const tG = await c.execute({
+      sql: "SELECT COUNT(*) AS n FROM taches_client WHERE assigne_a = ? AND statut != 'complete' AND date_due IS NOT NULL AND date_due <= ?",
+      args: [user, dans3j],
+    }).catch(() => ({ rows: [{ n: 0 }] }));
 
     const nFact = +(fIm.rows[0] as any).n || 0;
     const totFact = +(fIm.rows[0] as any).total || 0;
     const nPr = +(pR.rows[0] as any).n || 0;
-    const nT = +(tE.rows[0] as any).n || 0;
+    const nT = (+(tE.rows[0] as any).n || 0) + (+(tG.rows[0] as any).n || 0);
 
     if (nFact + nPr + nT === 0) { resultats.push({ user, push: false, raison: "aucune alerte" }); continue; }
 

@@ -98,6 +98,9 @@ async function doInitDb() {
   // Échéance optionnelle sur les tâches client (affichée sur le tableau de bord par utilisateur)
   await tryExec("ALTER TABLE client_taches ADD COLUMN date_echeance TEXT");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_client_taches_assignee ON client_taches(assignee, complete, date_echeance)");
+  // Tâches générales (table taches_client) : récurrence + index de suivi.
+  await tryExec("ALTER TABLE taches_client ADD COLUMN recurrence TEXT");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_taches_client_suivi ON taches_client(assigne_a, statut, date_due)");
 
   // === INVENTAIRE matériaux en stock ===
   await tryExec(`CREATE TABLE IF NOT EXISTS inventaire (
@@ -824,26 +827,33 @@ export interface Tache {
   id?: number; client_id?: number; projet_id?: number;
   titre: string; description?: string; date_due?: string;
   priorite?: number; statut?: string; assigne_a?: string;
-  date_creation?: string; date_completion?: string;
+  recurrence?: string; date_creation?: string; date_completion?: string;
 }
-export async function listerTaches(filtres?: { statut?: string; client_id?: number; projet_id?: number }): Promise<Tache[]> {
+export async function listerTaches(filtres?: { statut?: string; client_id?: number; projet_id?: number; assigne_a?: string }): Promise<Tache[]> {
   const conds: string[] = []; const args: any[] = [];
-  if (filtres?.statut) { conds.push("statut = ?"); args.push(filtres.statut); }
-  if (filtres?.client_id) { conds.push("client_id = ?"); args.push(filtres.client_id); }
-  if (filtres?.projet_id) { conds.push("projet_id = ?"); args.push(filtres.projet_id); }
+  if (filtres?.statut) { conds.push("t.statut = ?"); args.push(filtres.statut); }
+  if (filtres?.client_id) { conds.push("t.client_id = ?"); args.push(filtres.client_id); }
+  if (filtres?.projet_id) { conds.push("t.projet_id = ?"); args.push(filtres.projet_id); }
+  if (filtres?.assigne_a) { conds.push("t.assigne_a = ?"); args.push(filtres.assigne_a); }
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  return await all<Tache>(`SELECT * FROM taches_client ${where} ORDER BY CASE statut WHEN 'a_faire' THEN 0 WHEN 'en_cours' THEN 1 ELSE 2 END, date_due ASC, priorite DESC`, args);
+  // Jointures facultatives pour afficher le client / projet rattaché.
+  return await all<Tache>(`SELECT t.*, c.nom AS client_nom, p.nom AS projet_nom
+    FROM taches_client t
+    LEFT JOIN clients c ON c.id = t.client_id
+    LEFT JOIN projets p ON p.id = t.projet_id
+    ${where}
+    ORDER BY CASE t.statut WHEN 'a_faire' THEN 0 WHEN 'en_cours' THEN 1 ELSE 2 END, (t.date_due IS NULL) ASC, t.date_due ASC, t.priorite DESC`, args);
 }
 export async function ajouterTache(t: Tache): Promise<number> {
   const r = await run(
-    `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, recurrence, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [t.client_id || null, t.projet_id || null, t.titre, t.description || null,
-     t.date_due || null, t.priorite ?? 3, t.statut || 'a_faire', t.assigne_a || null, new Date().toISOString()]
+     t.date_due || null, t.priorite ?? 3, t.statut || 'a_faire', t.assigne_a || null, t.recurrence || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
 export async function modifierTache(id: number, t: Partial<Tache>) {
-  const champs = ['titre', 'description', 'date_due', 'priorite', 'statut', 'assigne_a', 'date_completion'];
+  const champs = ['titre', 'description', 'date_due', 'priorite', 'statut', 'assigne_a', 'recurrence', 'date_completion'];
   const definis = champs.filter(k => (t as any)[k] !== undefined);
   if (!definis.length) return;
   const sets = definis.map(k => `${k} = ?`).join(', ');
@@ -852,6 +862,33 @@ export async function modifierTache(id: number, t: Partial<Tache>) {
 }
 export async function supprimerTache(id: number) {
   await run("DELETE FROM taches_client WHERE id = ?", [id]);
+}
+// Avance une date ISO selon la récurrence (heure locale).
+function avancerDateRecurrence(iso: string | null, rec: string): string {
+  const base = iso ? iso.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const [y, m, d] = base.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (rec === "quotidien") dt.setDate(dt.getDate() + 1);
+  else if (rec === "hebdo") dt.setDate(dt.getDate() + 7);
+  else if (rec === "2sem") dt.setDate(dt.getDate() + 14);
+  else if (rec === "mensuel") dt.setMonth(dt.getMonth() + 1);
+  else return base;
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+/** Marque une tâche complétée. Si elle est récurrente, recrée la prochaine occurrence. */
+export async function terminerTache(id: number, dateCompletion: string): Promise<{ prochaine?: number }> {
+  const t = await one<any>("SELECT * FROM taches_client WHERE id = ?", [id]);
+  if (!t) return {};
+  await run("UPDATE taches_client SET statut = 'complete', date_completion = ? WHERE id = ?", [dateCompletion, id]);
+  if (t.recurrence) {
+    const prochaineDate = avancerDateRecurrence(t.date_due, t.recurrence);
+    const r = await run(
+      `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, recurrence, date_creation) VALUES (?, ?, ?, ?, ?, ?, 'a_faire', ?, ?, ?)`,
+      [t.client_id || null, t.projet_id || null, t.titre, t.description || null, prochaineDate, t.priorite ?? 3, t.assigne_a || null, t.recurrence, new Date().toISOString()]
+    );
+    return { prochaine: r.lastInsertRowid };
+  }
+  return {};
 }
 
 // === CONTRATS ===
