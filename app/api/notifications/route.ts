@@ -65,8 +65,11 @@ export async function GET(req: NextRequest) {
       user ? relancesPourUser(user).catch(() => []) : Promise.resolve([]),
       alertesBusiness(user).catch(() => ({ factures_impayees: [], projets_en_retard: [], taches_echeance: [] })),
     ]);
+    // Total = uniquement ce qui est AFFICHÉ dans le menu (sinon badge "fantôme").
+    // Les tâches ouvertes sans échéance ne sont pas comptées ici (visibles dans l'onglet
+    // Tâches) ; seules les tâches À ÉCHÉANCE/retard comptent (taches_echeance).
     const total =
-      relancesSoum.length + photosErr + tachesOuvertes.length +
+      relancesSoum.length + photosErr +
       mentions.length + mesRelances.length +
       (biz.factures_impayees as any[]).length + (biz.projets_en_retard as any[]).length + (biz.taches_echeance as any[]).length;
     return NextResponse.json({

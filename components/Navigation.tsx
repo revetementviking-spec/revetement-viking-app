@@ -44,7 +44,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
   const pathname = usePathname();
   const router = useRouter();
   const [menuOuvert, setMenuOuvert] = useState(false);
-  const [notifs, setNotifs] = useState<{ user?: string; total: number; relances: number; drive_erreurs: number; taches_ouvertes: number; mentions: number; mes_relances: number; mentions_items: any[]; relances_items: any[] }>({ total: 0, relances: 0, drive_erreurs: 0, taches_ouvertes: 0, mentions: 0, mes_relances: 0, mentions_items: [], relances_items: [] });
+  const [notifs, setNotifs] = useState<{ user?: string; total: number; relances: number; drive_erreurs: number; taches_ouvertes: number; mentions: number; mes_relances: number; mentions_items: any[]; relances_items: any[]; factures_impayees?: number; factures_impayees_items?: any[]; projets_en_retard?: number; projets_en_retard_items?: any[]; taches_echeance?: number; taches_echeance_items?: any[] }>({ total: 0, relances: 0, drive_erreurs: 0, taches_ouvertes: 0, mentions: 0, mes_relances: 0, mentions_items: [], relances_items: [], factures_impayees_items: [], projets_en_retard_items: [], taches_echeance_items: [] });
   const [notifsOuvert, setNotifsOuvert] = useState(false);
   const [profilOuvert, setProfilOuvert] = useState(false);
   const [profil, setProfil] = useState<{ username?: string; nom_affichage?: string; photo_data?: string } | null>(null);
@@ -131,6 +131,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
     r.type === "client" ? `/clients/${r.id}` :
     r.type === "projet" ? `/projets/${r.id}` :
     r.type === "soumission" ? `/soumissions/${r.id}` :
+    r.type === "depense" ? `/finances?tab=depenses&depense=${r.id}` :
     r.type === "commentaire" || r.type === "sous-tâche" || r.type === "fichier" ? `/clients/${r.id}` : "/";
 
   return (
@@ -286,14 +287,52 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
                     })}
                   </div>
                 )}
-                {notifs.mentions_items.length === 0 && notifs.relances_items.length === 0 && (
+                {/* Factures impayées */}
+                {(notifs.factures_impayees_items?.length || 0) > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-[10px] font-bold uppercase text-red-700 px-2 py-1">💰 Factures impayées (+30j) ({notifs.factures_impayees})</div>
+                    {notifs.factures_impayees_items!.map((f: any) => (
+                      <a key={f.id} href={f.projet_id ? `/projets/${f.projet_id}` : "/finances"} className="block px-3 py-2 hover:bg-red-50 rounded text-sm border-l-2 border-red-400 mb-1">
+                        <div className="flex justify-between"><strong className="truncate">{f.projet_nom || f.numero || "Facture"}</strong><span className="text-[10px] text-red-700 font-bold">{Math.round(f.montant || 0).toLocaleString("fr-CA")} $</span></div>
+                        <div className="text-xs text-slate-500">Émise le {String(f.date).slice(0, 10)}</div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {/* Projets en retard */}
+                {(notifs.projets_en_retard_items?.length || 0) > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-[10px] font-bold uppercase text-orange-700 px-2 py-1">🔥 Projets en retard ({notifs.projets_en_retard})</div>
+                    {notifs.projets_en_retard_items!.map((p: any) => (
+                      <a key={p.id} href={`/projets/${p.id}`} className="block px-3 py-2 hover:bg-orange-50 rounded text-sm border-l-2 border-orange-400 mb-1">
+                        <div className="flex justify-between"><strong className="truncate">{p.nom}</strong><span className="text-[10px] text-orange-700 font-bold">{String(p.date_fin_prevue).slice(5)}</span></div>
+                        <div className="text-xs text-slate-500">Fin prévue dépassée</div>
+                      </a>
+                    ))}
+                  </div>
+                )}
+                {/* Tâches à échéance / en retard */}
+                {(notifs.taches_echeance_items?.length || 0) > 0 && (
+                  <div className="p-2 border-t">
+                    <div className="text-[10px] font-bold uppercase text-emerald-700 px-2 py-1">✅ Tâches à échéance ({notifs.taches_echeance})</div>
+                    {notifs.taches_echeance_items!.map((t: any) => {
+                      const retard = t.date_echeance && t.date_echeance < new Date().toISOString().slice(0, 10);
+                      return (
+                        <a key={`${t.client_id || "g"}-${t.id}`} href={t.client_id ? `/clients/${t.client_id}` : "/taches"} className={`block px-3 py-2 hover:bg-emerald-50 rounded text-sm border-l-2 mb-1 ${retard ? "border-red-500" : "border-emerald-400"}`}>
+                          <div className="flex justify-between"><strong className="truncate">{t.titre}</strong><span className={`text-[10px] ${retard ? "text-red-700 font-bold" : "text-emerald-700"}`}>{String(t.date_echeance).slice(5)}</span></div>
+                          {t.client_nom && <div className="text-xs text-slate-500 truncate">👤 {t.client_nom}</div>}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+                {notifs.total === 0 && (
                   <div className="p-6 text-center text-sm text-slate-500">🎉 Rien à signaler.</div>
                 )}
                 {/* Compteurs autres */}
-                {(notifs.relances > 0 || notifs.taches_ouvertes > 0 || notifs.drive_erreurs > 0) && (
+                {(notifs.relances > 0 || notifs.drive_erreurs > 0) && (
                   <div className="p-2 border-t text-xs text-slate-600 space-y-1">
                     {notifs.relances > 0 && <div>📋 Soumissions à relancer : <strong>{notifs.relances}</strong></div>}
-                    {notifs.taches_ouvertes > 0 && <div>✅ Tâches ouvertes : <strong>{notifs.taches_ouvertes}</strong></div>}
                     {notifs.drive_erreurs > 0 && <div>☁️ Erreurs Drive : <strong>{notifs.drive_erreurs}</strong></div>}
                   </div>
                 )}
