@@ -405,7 +405,9 @@ export default function HoraireePage() {
               {heuresFiltrees.filter((h) => h.date === detailJour.date && (h.employe || "—") === detailJour.employe).map((h) => (
                 <div key={h.id} className="bg-slate-50 rounded p-3 flex justify-between items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm">{h.projet_nom || "Sans projet"}</div>
+                    {h.projet_nom
+                      ? <a href={`/projets/${h.projet_id}`} className="font-semibold text-sm text-blue-600 hover:underline">{h.projet_nom}</a>
+                      : <div className="font-semibold text-sm text-slate-500">Sans projet</div>}
                     <div className="text-xs text-slate-600">{h.heures.toFixed(1)} h · {formatCAD((h.heures || 0) * (h.taux_horaire || 0))}</div>
                     {h.description && <div className="text-xs text-slate-500 mt-1">{h.description}</div>}
                   </div>
