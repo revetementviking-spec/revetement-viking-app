@@ -13,6 +13,7 @@ interface NavLink {
 
 const LINKS: NavLink[] = [
   { href: "/", label: "Tableau", icon: "📊" },
+  { href: "/aujourdhui", label: "Ma journée", icon: "☀️" },
   { href: "/soumissions/nouveau", label: "Soumission", icon: "➕" },
   { href: "/projets", label: "Projets", icon: "🏗️" },
   { href: "/heures", label: "Horaire", icon: "⏱️" },
