@@ -289,6 +289,15 @@ async function doInitDb() {
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN detaxe INTEGER NOT NULL DEFAULT 0");
   // Réglages applicatifs clé/valeur (ex. mode maintenance)
   await tryExec("CREATE TABLE IF NOT EXISTS parametres_app (cle TEXT PRIMARY KEY, valeur TEXT)");
+  // Migration UNIQUE (gardée) : règle « complété = facturé ». Aligne les projets déjà
+  // complétés une seule fois — ne se ré-applique pas si on re-bascule un projet à facturer.
+  try {
+    const fait = await one<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_complete_facture'");
+    if (!fait) {
+      await run("UPDATE projets SET facturee = 1 WHERE statut = 'complete'");
+      await run("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_complete_facture', '1')");
+    }
+  } catch { /* table projets pas encore prête sur une base neuve : la règle s'applique alors à la complétion */ }
   // Extras à facturer (travaux/matériaux supplémentaires hors soumission)
   await tryExec(`CREATE TABLE IF NOT EXISTS extras (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

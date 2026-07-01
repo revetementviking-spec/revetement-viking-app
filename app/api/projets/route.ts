@@ -75,20 +75,20 @@ export async function PATCH(req: NextRequest) {
     const avant = await getProjet(+body.id);
     const nouvelleCompletion = body.statut === "complete" && avant?.statut !== "complete";
     if (nouvelleCompletion) {
-      // Pose la date de fin réelle (reconnaissance du CA) + remet "à facturer".
+      // Pose la date de fin réelle (reconnaissance du CA). Règle : complété = facturé.
       if (body.date_fin_reelle === undefined) body.date_fin_reelle = aujourdhuiMontreal();
-      body.facturee = 0;
+      body.facturee = 1;
     }
     await modifierProjet(body.id, { ...body, modifie_par: user });
     journaliser("projet.statut_change", { ref_type: "projet", ref_id: body.id, utilisateur: user || undefined, description: `Modif ${Object.keys(body).filter(k => k !== "id").join(", ")}` });
-    // Rappel à Francis : projet complété → à facturer (pour ne rien oublier).
+    // Avis à Francis : projet complété et marqué facturé.
     if (nouvelleCompletion) {
       const valeur = (avant as any)?.prix_contrat || (avant as any)?.budget_estime || 0;
       envoyerPushUtilisateur("Francis", {
-        title: "🧾 Projet à facturer",
-        body: `« ${avant?.nom || "Projet"} » est complété — pense à le facturer${valeur ? ` (${(+valeur).toLocaleString("fr-CA")} $)` : ""}.`,
-        url: "/",
-        tag: "facturer-" + body.id,
+        title: "✅ Projet complété",
+        body: `« ${avant?.nom || "Projet"} » est complété et marqué facturé${valeur ? ` (${(+valeur).toLocaleString("fr-CA")} $)` : ""}.`,
+        url: `/projets/${body.id}`,
+        tag: "complete-" + body.id,
       }).catch(() => {});
     }
     return ok({ ok: true });
