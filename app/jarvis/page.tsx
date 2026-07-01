@@ -5,7 +5,32 @@ import Navigation from "@/components/Navigation";
 import MicVocal from "@/components/MicVocal";
 
 interface ActionProp { type: string; params: any; resume: string; _statut?: "fait" | "erreur"; }
-interface Msg { role: "user" | "assistant"; content: string; outils?: string[]; erreur?: boolean; actions?: ActionProp[]; }
+interface PtGraph { label: string; value: number; }
+interface Msg { role: "user" | "assistant"; content: string; outils?: string[]; erreur?: boolean; actions?: ActionProp[]; chart?: PtGraph[]; chartTitre?: string; }
+
+// Mini graphique à barres (marge mensuelle, etc.) — barres au-dessus/dessous de zéro.
+function MiniGraph({ data, titre }: { data: PtGraph[]; titre?: string }) {
+  if (!data || data.length === 0) return null;
+  const maxAbs = Math.max(1, ...data.map((d) => Math.abs(d.value)));
+  return (
+    <div className="mt-2 pt-2 border-t border-slate-100">
+      {titre && <div className="text-[10px] font-semibold text-slate-500 mb-1">{titre}</div>}
+      <div className="flex items-end gap-1 h-24">
+        {data.map((d, i) => {
+          const h = (Math.abs(d.value) / maxAbs) * 100;
+          const neg = d.value < 0;
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center justify-end h-full">
+              <div className={`text-[9px] font-bold ${neg ? "text-red-600" : "text-emerald-700"}`}>{Math.round(d.value / 1000)}k</div>
+              <div className={`w-full rounded-t ${neg ? "bg-red-400" : "bg-emerald-500"}`} style={{ height: `${Math.max(2, h * 0.7)}%` }} title={`${d.label}: ${d.value.toLocaleString("fr-CA")} $`} />
+              <div className="text-[9px] text-slate-400 mt-0.5">{d.label}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 // Mappe une action proposée par Jarvis vers l'endpoint réel (confirmé par l'utilisateur).
 async function executerAction(a: ActionProp): Promise<boolean> {
@@ -98,6 +123,18 @@ export default function JarvisPage() {
     } finally { setBusy(false); }
   };
 
+  const briefing = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const d = await fetch("/api/jarvis/briefing").then((r) => r.json());
+      if (d.ok) setMessages((prev) => [...prev, { role: "assistant", content: d.texte, chart: d.chart, chartTitre: d.chartTitre }]);
+      else setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ " + (d.error || "Erreur"), erreur: true }]);
+    } catch (e: any) {
+      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ " + (e?.message || "Erreur"), erreur: true }]);
+    } finally { setBusy(false); }
+  };
+
   const confirmer = async (mi: number, ai: number) => {
     const action = messages[mi]?.actions?.[ai];
     if (!action || action._statut) return;
@@ -117,7 +154,8 @@ export default function JarvisPage() {
             <div className="text-center py-6">
               <div className="text-5xl mb-2">🤖</div>
               <h2 className="font-bold text-slate-800">Bonjour, je suis Jarvis.</h2>
-              <p className="text-sm text-slate-500 mb-4">Je réponds à partir de tes vraies données : projets, finances, dépenses, heures, clients, tâches…</p>
+              <p className="text-sm text-slate-500 mb-3">Je réponds à partir de tes vraies données : projets, finances, dépenses, heures, clients, tâches…</p>
+              <button onClick={briefing} className="mb-4 px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-bold shadow">📋 Mon briefing du jour</button>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
                 {SUGGESTIONS.map((s) => (
                   <button key={s} onClick={() => envoyer(s)} className="text-sm bg-white border border-slate-200 hover:border-emerald-400 hover:bg-emerald-50 rounded-lg p-3 text-slate-700 transition">
@@ -135,6 +173,7 @@ export default function JarvisPage() {
                 : m.erreur ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-sm"
                 : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm shadow-sm"}`}>
                 {m.role === "assistant" && !m.erreur ? <Texte t={m.content} /> : <div className="whitespace-pre-wrap">{m.content}</div>}
+                {m.chart && <MiniGraph data={m.chart} titre={m.chartTitre} />}
                 {m.actions && m.actions.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-slate-100 space-y-2">
                     {m.actions.map((a, ai) => (
@@ -175,6 +214,7 @@ export default function JarvisPage() {
       {/* Barre de saisie */}
       <div className="sticky bottom-0 bg-white/95 backdrop-blur border-t border-slate-200 p-3">
         <div className="max-w-3xl mx-auto flex items-end gap-2">
+          <button onClick={briefing} disabled={busy} title="Briefing du jour" className="p-2.5 text-slate-500 hover:text-slate-900 rounded-lg hover:bg-slate-100 disabled:opacity-40">📋</button>
           {messages.length > 0 && (
             <button onClick={() => setMessages([])} title="Nouvelle conversation" className="p-2.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100">🗑</button>
           )}
