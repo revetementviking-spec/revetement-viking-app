@@ -57,6 +57,18 @@ export default function RentabiliteVue() {
     toast(`✓ ${rows.length} projet(s) exporté(s)`, "success");
   };
 
+  const exportPDF = async () => {
+    try {
+      const { genererRapportRentabiliteBlob } = await import("@/lib/pdf-rapport");
+      const blob = await genererRapportRentabiliteBlob({ projets, filtre, date: new Date().toLocaleDateString("fr-CA") });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = `Rapport-rentabilite-${filtre}-${new Date().toISOString().slice(0, 10)}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      toast("✓ Rapport PDF généré", "success");
+    } catch (e: any) { toast("Erreur PDF : " + (e?.message || ""), "error"); }
+  };
+
   const Num = ({ v, c }: { v: number; c?: string }) => <span className={`tabular-nums ${c || ""}`}>{formatCAD(v)}</span>;
 
   return (
@@ -92,7 +104,8 @@ export default function RentabiliteVue() {
           ))}
         </div>
         <span className="text-xs text-slate-500">{lignes.length} projet(s)</span>
-        <button onClick={exportCSV} className="ml-auto px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold">📥 Export Excel (CSV)</button>
+        <button onClick={exportPDF} className="ml-auto px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-bold">📄 Rapport PDF</button>
+        <button onClick={exportCSV} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold">📥 Export Excel (CSV)</button>
       </div>
 
       {/* Tableur */}
