@@ -51,6 +51,14 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
 
   const retirerPage = (i: number) => setPagesRecu((prev) => prev.filter((_, idx) => idx !== i));
 
+  // Traite 1 ou plusieurs fichiers puis RÉINITIALISE l'input (sinon iOS/Android ne
+  // redéclenche pas onChange au 2e ajout → impossible d'ajouter plusieurs photos).
+  const ajouterFichiers = async (input: HTMLInputElement) => {
+    const files = Array.from(input.files || []);
+    input.value = "";
+    for (const f of files) await traiterFichier(f);
+  };
+
   const confirmerScan = (image: string, _type: string, donnees?: { montant?: number; date?: string; fournisseur?: string }) => {
     // Met à jour la 1re page (celle scannée) et pré-remplit le formulaire.
     setPagesRecu((prev) => (prev.length ? [image, ...prev.slice(1)] : [image]));
@@ -259,11 +267,11 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
                 <div className="flex gap-2 flex-wrap items-center">
                   <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded-lg text-xs font-bold">
                     📷 Ajouter une page
-                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                    <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => ajouterFichiers(e.target)} />
                   </label>
                   <label className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-xs font-bold">
                     📁 Galerie
-                    <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                    <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => ajouterFichiers(e.target)} />
                   </label>
                   {pagesRecu.length === 1 && (
                     <button onClick={() => setScannerOuvert(true)} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-2 rounded font-bold" title="OCR pour pré-remplir le formulaire">🔎 OCR</button>
@@ -280,12 +288,12 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
                 <label className="cursor-pointer bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded-lg p-3 text-center transition">
                   <div className="text-2xl mb-1">📷</div>
                   <div className="text-xs font-semibold text-slate-700">Prendre photo</div>
-                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => ajouterFichiers(e.target)} />
                 </label>
                 <label className="cursor-pointer bg-white border-2 border-dashed border-slate-300 hover:border-emerald-500 hover:bg-emerald-50 rounded-lg p-3 text-center transition">
                   <div className="text-2xl mb-1">📁</div>
                   <div className="text-xs font-semibold text-slate-700">Galerie / PDF</div>
-                  <input type="file" accept="image/*,application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && traiterFichier(e.target.files[0])} />
+                  <input type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => ajouterFichiers(e.target)} />
                 </label>
               </div>
             )}
