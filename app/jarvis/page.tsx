@@ -4,7 +4,28 @@ import { useEffect, useRef, useState } from "react";
 import Navigation from "@/components/Navigation";
 import MicVocal from "@/components/MicVocal";
 
-interface Msg { role: "user" | "assistant"; content: string; outils?: string[]; erreur?: boolean; }
+interface ActionProp { type: string; params: any; resume: string; _statut?: "fait" | "erreur"; }
+interface Msg { role: "user" | "assistant"; content: string; outils?: string[]; erreur?: boolean; actions?: ActionProp[]; }
+
+// Mappe une action proposée par Jarvis vers l'endpoint réel (confirmé par l'utilisateur).
+async function executerAction(a: ActionProp): Promise<boolean> {
+  try {
+    if (a.type === "creer_tache") {
+      const r = await fetch("/api/taches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a.params) });
+      return !!(await r.json()).id;
+    }
+    if (a.type === "completer_projet") {
+      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: a.params.id, statut: "complete" }) });
+      return (await r.json()).ok;
+    }
+    if (a.type === "creer_depense") {
+      const r = await fetch("/api/depenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a.params) });
+      return (await r.json()).ok;
+    }
+    return false;
+  } catch { return false; }
+}
+const ICONE_ACTION: Record<string, string> = { creer_tache: "✅", completer_projet: "🏁", creer_depense: "💸" };
 
 const SUGGESTIONS = [
   "Quel est mon projet le plus rentable cette année ?",
@@ -70,11 +91,20 @@ export default function JarvisPage() {
         body: JSON.stringify({ question, historique: histo }),
       });
       const d = await r.json();
-      if (d.ok) setMessages((prev) => [...prev, { role: "assistant", content: d.reponse, outils: d.outils }]);
+      if (d.ok) setMessages((prev) => [...prev, { role: "assistant", content: d.reponse, outils: d.outils, actions: Array.isArray(d.actions) ? d.actions : [] }]);
       else setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ " + (d.error || "Erreur"), erreur: true }]);
     } catch (e: any) {
       setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ " + (e?.message || "Erreur réseau"), erreur: true }]);
     } finally { setBusy(false); }
+  };
+
+  const confirmer = async (mi: number, ai: number) => {
+    const action = messages[mi]?.actions?.[ai];
+    if (!action || action._statut) return;
+    const ok = await executerAction(action);
+    setMessages((prev) => prev.map((m, i) => i !== mi ? m : {
+      ...m, actions: m.actions?.map((a, j) => j !== ai ? a : { ...a, _statut: ok ? "fait" : "erreur" }),
+    }));
   };
 
   return (
@@ -105,6 +135,19 @@ export default function JarvisPage() {
                 : m.erreur ? "bg-red-50 border border-red-200 text-red-800 rounded-bl-sm"
                 : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm shadow-sm"}`}>
                 {m.role === "assistant" && !m.erreur ? <Texte t={m.content} /> : <div className="whitespace-pre-wrap">{m.content}</div>}
+                {m.actions && m.actions.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-slate-100 space-y-2">
+                    {m.actions.map((a, ai) => (
+                      <div key={ai} className="bg-slate-50 border border-slate-200 rounded-lg p-2 flex items-center gap-2">
+                        <span className="text-lg">{ICONE_ACTION[a.type] || "⚙️"}</span>
+                        <span className="flex-1 text-xs text-slate-700">{a.resume}</span>
+                        {a._statut === "fait" ? <span className="text-xs font-bold text-emerald-700">✓ Fait</span>
+                          : a._statut === "erreur" ? <span className="text-xs font-bold text-red-600">Échec</span>
+                          : <button onClick={() => confirmer(i, ai)} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold whitespace-nowrap">Confirmer</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {m.outils && m.outils.length > 0 && (
                   <div className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap gap-1">
                     <span className="text-[10px] text-slate-400">Sources :</span>

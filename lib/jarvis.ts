@@ -100,7 +100,33 @@ export const OUTILS_JARVIS = [
     description: "Véhicules de l'entreprise et assurances, avec les renouvellements d'assurance à venir.",
     input_schema: { type: "object", properties: {}, additionalProperties: false },
   },
+  // === ACTIONS (mode PROPOSITION : n'écrit rien, Francis confirme d'un clic) ===
+  {
+    name: "proposer_creer_tache",
+    description: "PROPOSE de créer une tâche/rappel (n'exécute rien — l'utilisateur confirme d'un bouton). Utilise dès qu'on te demande d'ajouter, créer ou planifier une tâche ou un rappel.",
+    input_schema: { type: "object", properties: {
+      titre: { type: "string" }, assigne_a: { type: "string", enum: ["Francis", "Gabriel"] },
+      date_due: { type: "string", description: "AAAA-MM-JJ" }, priorite: { type: "number", description: "2=basse,3=normale,4=haute,5=urgente" },
+      recurrence: { type: "string", enum: ["quotidien", "hebdo", "2sem", "mensuel"] },
+    }, required: ["titre"], additionalProperties: false },
+  },
+  {
+    name: "proposer_completer_projet",
+    description: "PROPOSE de marquer un projet comme complété (= facturé). N'exécute rien — confirmation requise.",
+    input_schema: { type: "object", properties: { nom: { type: "string" } }, required: ["nom"], additionalProperties: false },
+  },
+  {
+    name: "proposer_creer_depense",
+    description: "PROPOSE d'enregistrer une dépense. N'exécute rien — confirmation requise.",
+    input_schema: { type: "object", properties: {
+      montant: { type: "number" }, fournisseur: { type: "string" }, categorie: { type: "string" },
+      date: { type: "string", description: "AAAA-MM-JJ (défaut: aujourd'hui)" }, projet_nom: { type: "string" }, description: { type: "string" },
+    }, required: ["montant"], additionalProperties: false },
+  },
 ];
+
+// Noms des outils qui PROPOSENT une action (aucune écriture — confirmation UI requise).
+export const OUTILS_ACTION = new Set(["proposer_creer_tache", "proposer_completer_projet", "proposer_creer_depense"]);
 
 const num = (v: any) => Math.round((+v || 0) * 100) / 100;
 
@@ -279,6 +305,32 @@ export async function executerOutilJarvis(nom: string, input: any): Promise<any>
           assurances: (ass as any[]).map((a) => ({ type: a.type, compagnie: a.compagnie, renouvellement: a.date_renouvellement, prime_annuelle: num(a.prime_annuelle) })),
           renouvellements_60j: renouv.map((a) => ({ type: a.type, compagnie: a.compagnie, date: a.date_renouvellement })),
         };
+      }
+      case "proposer_creer_tache":
+        return { propose: true, action: { type: "creer_tache", params: {
+          titre: input.titre, assigne_a: input.assigne_a || null, date_due: input.date_due || null,
+          priorite: input.priorite ?? 3, recurrence: input.recurrence || null,
+        }, resume: `Créer la tâche « ${input.titre} »${input.assigne_a ? ` pour ${input.assigne_a}` : ""}${input.date_due ? ` — échéance ${input.date_due}` : ""}${input.recurrence ? ` [🔁 ${input.recurrence}]` : ""}` } };
+      case "proposer_completer_projet": {
+        const projets = await listerProjets();
+        const q = String(input.nom || "").toLowerCase();
+        const p = projets.find((x) => (x.nom || "").toLowerCase() === q) || projets.find((x) => (x.nom || "").toLowerCase().includes(q));
+        if (!p) return { propose: false, message: `Projet « ${input.nom} » introuvable.` };
+        return { propose: true, action: { type: "completer_projet", params: { id: p.id, nom: p.nom }, resume: `Marquer « ${p.nom} » comme complété (et facturé)` } };
+      }
+      case "proposer_creer_depense": {
+        let projet_id: number | null = null, projet_nom: string | null = null;
+        if (input.projet_nom) {
+          const projets = await listerProjets();
+          const q = String(input.projet_nom).toLowerCase();
+          const p = projets.find((x) => (x.nom || "").toLowerCase().includes(q));
+          if (p) { projet_id = p.id!; projet_nom = p.nom; }
+        }
+        const date = input.date || new Date().toISOString().slice(0, 10);
+        return { propose: true, action: { type: "creer_depense", params: {
+          montant: num(input.montant), fournisseur: input.fournisseur || null, categorie: input.categorie || "matériaux",
+          date, projet_id, description: input.description || null,
+        }, resume: `Dépense de ${num(input.montant)} $${input.fournisseur ? ` chez ${input.fournisseur}` : ""}${projet_nom ? ` — projet ${projet_nom}` : ""}` } };
       }
       default:
         return { erreur: `Outil inconnu : ${nom}` };

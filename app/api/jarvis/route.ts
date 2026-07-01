@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELES } from "@/lib/viking-ai";
-import { OUTILS_JARVIS, executerOutilJarvis } from "@/lib/jarvis";
+import { OUTILS_JARVIS, OUTILS_ACTION, executerOutilJarvis } from "@/lib/jarvis";
 import { utilisateurActif } from "@/lib/authUser";
 
 export const dynamic = "force-dynamic";
@@ -17,8 +17,8 @@ RÈGLES :
 - Formate les montants en dollars CAD (ex: 12 500 $). Utilise des listes/tableaux courts quand c'est utile.
 - Contexte fiscal : taxes TPS 5 % + TVQ 9,975 %. La RENTABILITÉ se calcule AVANT taxes (revenu ÷ 1,14975 − coûts). Le revenu d'un projet = prix de contrat + extras facturés. La main-d'œuvre est un coût.
 - Un projet « complété » est considéré facturé.
-- Tu es en LECTURE SEULE : tu ne peux pas créer/modifier des données. Si on te le demande, explique où le faire dans l'app.
-- Si une donnée manque, dis-le franchement plutôt que d'inventer. Termine par une suggestion utile si pertinent.`;
+- Tu peux PROPOSER des actions (créer une tâche, compléter un projet, enregistrer une dépense) via les outils « proposer_* ». Ça n'exécute RIEN : ça affiche un bouton que Francis doit confirmer. Ne dis JAMAIS qu'une action est faite — dis « je te propose de… confirme le bouton ci-dessous ».
+- Pour tout le reste, tu es en lecture seule. Si une donnée manque, dis-le franchement plutôt que d'inventer. Termine par une suggestion utile si pertinent.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     messages.push({ role: "user", content: String(question) });
 
     const outilsUtilises: string[] = [];
+    const actionsProposees: any[] = [];
     let reponse = "";
 
     // Boucle tool-use : Claude demande des outils → on exécute → on renvoie → il répond.
@@ -64,6 +65,9 @@ export async function POST(req: NextRequest) {
             const tu = bloc as any;
             outilsUtilises.push(tu.name);
             const resultat = await executerOutilJarvis(tu.name, tu.input || {});
+            if (OUTILS_ACTION.has(tu.name) && (resultat as any)?.propose && (resultat as any).action) {
+              actionsProposees.push((resultat as any).action);
+            }
             toolResults.push({
               type: "tool_result",
               tool_use_id: tu.id,
@@ -81,7 +85,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!reponse) reponse = "Je n'ai pas réussi à formuler une réponse. Reformule ta question ?";
-    return NextResponse.json({ ok: true, reponse, outils: Array.from(new Set(outilsUtilises)) });
+    return NextResponse.json({ ok: true, reponse, outils: Array.from(new Set(outilsUtilises)), actions: actionsProposees });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Erreur serveur" }, { status: 500 });
   }
