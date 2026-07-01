@@ -43,8 +43,11 @@ async function execMany(sqls: string[]): Promise<void> {
 
 async function tryExec(sql: string): Promise<void> {
   try { await getLibsqlClient().execute(sql); } catch (e: any) {
-    // Ignore "duplicate column" errors lors de migrations idempotentes
-    if (!/(duplicate column|already exists)/i.test(e?.message || "")) throw e;
+    // Migrations idempotentes : on ignore les erreurs attendues.
+    // - "duplicate column"/"already exists" : colonne/index déjà présent (base déjà migrée).
+    // - "no such table" : la migration (ALTER/INDEX) précède la création de la table sur une
+    //   base NEUVE ; la table sera créée juste après par execMany() avec son schéma complet.
+    if (!/(duplicate column|already exists|no such table)/i.test(e?.message || "")) throw e;
   }
 }
 
@@ -64,6 +67,122 @@ async function doInitDb() {
   // IMPORTANT : marquer initialisé AVANT les migrations. Le backfill ci-dessous
   // appelle all()/run() qui re-appellent initDb() → sans ce flag, deadlock sur _initPromise.
   _initialized = true;
+  // Base : creer les tables AVANT les migrations ALTER (robuste sur base neuve).
+  await execMany([
+    `CREATE TABLE IF NOT EXISTS soumissions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      numero TEXT UNIQUE NOT NULL,
+      date_creation TEXT NOT NULL,
+      date_modif TEXT NOT NULL,
+      client_nom TEXT, client_adresse TEXT, client_telephone TEXT, client_courriel TEXT,
+      projet TEXT, statut TEXT DEFAULT 'brouillon', total REAL,
+      heures_estimees REAL DEFAULT 0, heures_reelles REAL,
+      date_envoi TEXT, date_acceptation TEXT, date_refus TEXT, date_facturation TEXT,
+      payload_json TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_soumissions_date ON soumissions(date_creation DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_soumissions_statut ON soumissions(statut)`,
+    `CREATE TABLE IF NOT EXISTS rendements_reels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      soumission_numero TEXT NOT NULL, categorie TEXT NOT NULL,
+      quantite REAL NOT NULL, heures_estimees REAL NOT NULL, heures_reelles REAL NOT NULL,
+      date_completion TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom TEXT NOT NULL, courriel TEXT, telephone TEXT, adresse TEXT, notes TEXT,
+      statut TEXT DEFAULT 'prospect', source TEXT, tags TEXT,
+      date_creation TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS interactions_client (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL,
+      type TEXT NOT NULL, date TEXT NOT NULL, sujet TEXT, note TEXT,
+      fait_par TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS taches_client (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER,
+      projet_id INTEGER, titre TEXT NOT NULL, description TEXT,
+      date_due TEXT, priorite INTEGER DEFAULT 3,
+      statut TEXT DEFAULT 'a_faire', assigne_a TEXT,
+      date_creation TEXT NOT NULL, date_completion TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS contrats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT UNIQUE NOT NULL,
+      client_id INTEGER, projet_id INTEGER, soumission_numero TEXT,
+      titre TEXT NOT NULL, date_emission TEXT NOT NULL, date_debut_travaux TEXT,
+      date_fin_prevue TEXT, montant_avant_taxes REAL, taxes_pct REAL DEFAULT 14.975,
+      montant_total REAL, depot_pct REAL DEFAULT 30, depot_montant REAL,
+      conditions TEXT, garantie TEXT, statut TEXT DEFAULT 'brouillon',
+      signe_par_client INTEGER DEFAULT 0, date_signature TEXT,
+      payload_json TEXT, date_creation TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_inter_client ON interactions_client(client_id, date DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_taches_statut ON taches_client(statut, date_due)`,
+    `CREATE INDEX IF NOT EXISTS idx_contrats_client ON contrats(client_id)`,
+    `CREATE TABLE IF NOT EXISTS paies_periodes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, employe TEXT NOT NULL,
+      debut TEXT NOT NULL, fin TEXT NOT NULL,
+      heures_normales REAL DEFAULT 0, heures_sup REAL DEFAULT 0,
+      taux_horaire REAL, das_pct REAL DEFAULT 0.15,
+      montant_brut REAL, das_montant REAL, montant_net REAL,
+      paye INTEGER DEFAULT 0, date_paiement TEXT, note TEXT,
+      date_creation TEXT NOT NULL,
+      UNIQUE(employe, debut, fin)
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_paies_emp ON paies_periodes(employe, debut DESC)`,
+    `CREATE TABLE IF NOT EXISTS photos_chantier (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      projet_id INTEGER NOT NULL, date TEXT NOT NULL,
+      employes TEXT, photo_data TEXT NOT NULL, photo_type TEXT,
+      description TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_photos_projet ON photos_chantier(projet_id, date DESC)`,
+    `CREATE TABLE IF NOT EXISTS projets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER, nom TEXT NOT NULL, adresse_chantier TEXT, description TEXT,
+      statut TEXT DEFAULT 'actif',
+      date_debut TEXT, date_fin_prevue TEXT, date_fin_reelle TEXT,
+      soumission_numero TEXT, budget_estime REAL, heures_estimees REAL,
+      date_creation TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS heures_projet (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER NOT NULL,
+      date TEXT NOT NULL, heures REAL NOT NULL, description TEXT, employe TEXT,
+      taux_horaire REAL DEFAULT 90, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS factures_projet (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER NOT NULL,
+      numero TEXT, montant REAL NOT NULL, date TEXT NOT NULL, description TEXT,
+      payee INTEGER DEFAULT 0, date_paiement TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS depenses_projet (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER,
+      date TEXT NOT NULL, montant REAL NOT NULL, fournisseur TEXT, description TEXT,
+      categorie TEXT, date_saisie TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS employes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom TEXT NOT NULL UNIQUE, taux_horaire REAL NOT NULL,
+      das_pct REAL DEFAULT 0.15, actif INTEGER DEFAULT 1,
+      date_creation TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS outils (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom TEXT NOT NULL, categorie TEXT, etat TEXT DEFAULT 'bon',
+      localisation TEXT, numero_serie TEXT, prix_achat REAL,
+      date_achat TEXT, notes TEXT,
+      ajoute_par TEXT, date_ajout TEXT NOT NULL,
+      modifie_par TEXT, date_modif TEXT
+    )`,
+    `CREATE TABLE IF NOT EXISTS bibliotheque_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, date_ajout TEXT NOT NULL,
+      adresse TEXT, type_materiau TEXT,
+      parement_pi2 REAL, fascia_pi_lin REAL, soffite_pi2 REAL, nb_etages INTEGER,
+      total_soumission REAL, heures_reelles REAL,
+      hover_data_json TEXT, soumission_data_json TEXT, photos_json TEXT,
+      notes_chantier TEXT, complexite TEXT
+    )`,
+  ]);
   // Migrations idempotentes pour les anciennes installations
   await tryExec("ALTER TABLE clients ADD COLUMN statut TEXT DEFAULT 'prospect'");
   await tryExec("ALTER TABLE clients ADD COLUMN source TEXT");
@@ -426,121 +545,6 @@ async function doInitDb() {
     expires_at INTEGER, scope TEXT,
     user_email TEXT, date_creation TEXT
   )`);
-  await execMany([
-    `CREATE TABLE IF NOT EXISTS soumissions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      numero TEXT UNIQUE NOT NULL,
-      date_creation TEXT NOT NULL,
-      date_modif TEXT NOT NULL,
-      client_nom TEXT, client_adresse TEXT, client_telephone TEXT, client_courriel TEXT,
-      projet TEXT, statut TEXT DEFAULT 'brouillon', total REAL,
-      heures_estimees REAL DEFAULT 0, heures_reelles REAL,
-      date_envoi TEXT, date_acceptation TEXT, date_refus TEXT, date_facturation TEXT,
-      payload_json TEXT NOT NULL
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_soumissions_date ON soumissions(date_creation DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_soumissions_statut ON soumissions(statut)`,
-    `CREATE TABLE IF NOT EXISTS rendements_reels (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      soumission_numero TEXT NOT NULL, categorie TEXT NOT NULL,
-      quantite REAL NOT NULL, heures_estimees REAL NOT NULL, heures_reelles REAL NOT NULL,
-      date_completion TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS clients (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom TEXT NOT NULL, courriel TEXT, telephone TEXT, adresse TEXT, notes TEXT,
-      statut TEXT DEFAULT 'prospect', source TEXT, tags TEXT,
-      date_creation TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS interactions_client (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER NOT NULL,
-      type TEXT NOT NULL, date TEXT NOT NULL, sujet TEXT, note TEXT,
-      fait_par TEXT, date_saisie TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS taches_client (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, client_id INTEGER,
-      projet_id INTEGER, titre TEXT NOT NULL, description TEXT,
-      date_due TEXT, priorite INTEGER DEFAULT 3,
-      statut TEXT DEFAULT 'a_faire', assigne_a TEXT,
-      date_creation TEXT NOT NULL, date_completion TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS contrats (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, numero TEXT UNIQUE NOT NULL,
-      client_id INTEGER, projet_id INTEGER, soumission_numero TEXT,
-      titre TEXT NOT NULL, date_emission TEXT NOT NULL, date_debut_travaux TEXT,
-      date_fin_prevue TEXT, montant_avant_taxes REAL, taxes_pct REAL DEFAULT 14.975,
-      montant_total REAL, depot_pct REAL DEFAULT 30, depot_montant REAL,
-      conditions TEXT, garantie TEXT, statut TEXT DEFAULT 'brouillon',
-      signe_par_client INTEGER DEFAULT 0, date_signature TEXT,
-      payload_json TEXT, date_creation TEXT NOT NULL
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_inter_client ON interactions_client(client_id, date DESC)`,
-    `CREATE INDEX IF NOT EXISTS idx_taches_statut ON taches_client(statut, date_due)`,
-    `CREATE INDEX IF NOT EXISTS idx_contrats_client ON contrats(client_id)`,
-    `CREATE TABLE IF NOT EXISTS paies_periodes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, employe TEXT NOT NULL,
-      debut TEXT NOT NULL, fin TEXT NOT NULL,
-      heures_normales REAL DEFAULT 0, heures_sup REAL DEFAULT 0,
-      taux_horaire REAL, das_pct REAL DEFAULT 0.15,
-      montant_brut REAL, das_montant REAL, montant_net REAL,
-      paye INTEGER DEFAULT 0, date_paiement TEXT, note TEXT,
-      date_creation TEXT NOT NULL,
-      UNIQUE(employe, debut, fin)
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_paies_emp ON paies_periodes(employe, debut DESC)`,
-    `CREATE TABLE IF NOT EXISTS photos_chantier (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      projet_id INTEGER NOT NULL, date TEXT NOT NULL,
-      employes TEXT, photo_data TEXT NOT NULL, photo_type TEXT,
-      description TEXT, date_saisie TEXT NOT NULL
-    )`,
-    `CREATE INDEX IF NOT EXISTS idx_photos_projet ON photos_chantier(projet_id, date DESC)`,
-    `CREATE TABLE IF NOT EXISTS projets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_id INTEGER, nom TEXT NOT NULL, adresse_chantier TEXT, description TEXT,
-      statut TEXT DEFAULT 'actif',
-      date_debut TEXT, date_fin_prevue TEXT, date_fin_reelle TEXT,
-      soumission_numero TEXT, budget_estime REAL, heures_estimees REAL,
-      date_creation TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS heures_projet (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER NOT NULL,
-      date TEXT NOT NULL, heures REAL NOT NULL, description TEXT, employe TEXT,
-      taux_horaire REAL DEFAULT 90, date_saisie TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS factures_projet (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER NOT NULL,
-      numero TEXT, montant REAL NOT NULL, date TEXT NOT NULL, description TEXT,
-      payee INTEGER DEFAULT 0, date_paiement TEXT, date_saisie TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS depenses_projet (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER,
-      date TEXT NOT NULL, montant REAL NOT NULL, fournisseur TEXT, description TEXT,
-      categorie TEXT, date_saisie TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS employes (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom TEXT NOT NULL UNIQUE, taux_horaire REAL NOT NULL,
-      das_pct REAL DEFAULT 0.15, actif INTEGER DEFAULT 1,
-      date_creation TEXT NOT NULL
-    )`,
-    `CREATE TABLE IF NOT EXISTS outils (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom TEXT NOT NULL, categorie TEXT, etat TEXT DEFAULT 'bon',
-      localisation TEXT, numero_serie TEXT, prix_achat REAL,
-      date_achat TEXT, notes TEXT,
-      ajoute_par TEXT, date_ajout TEXT NOT NULL,
-      modifie_par TEXT, date_modif TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS bibliotheque_jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, date_ajout TEXT NOT NULL,
-      adresse TEXT, type_materiau TEXT,
-      parement_pi2 REAL, fascia_pi_lin REAL, soffite_pi2 REAL, nb_etages INTEGER,
-      total_soumission REAL, heures_reelles REAL,
-      hover_data_json TEXT, soumission_data_json TEXT, photos_json TEXT,
-      notes_chantier TEXT, complexite TEXT
-    )`,
-  ]);
   // MIGRATION : rendre depenses_projet.projet_id NULLABLE (dépenses générales sans projet).
   // Les anciennes installations ont projet_id NOT NULL → INSERT null échoue (500).
   // SQLite ne permet pas d'enlever NOT NULL via ALTER → reconstruction de la table.
