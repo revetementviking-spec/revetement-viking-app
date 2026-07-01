@@ -3,7 +3,7 @@
 import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
-import { calculerMargeProjet, revenuAvantTaxes, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
+import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "soumissions.db");
@@ -872,18 +872,6 @@ export async function modifierTache(id: number, t: Partial<Tache>) {
 export async function supprimerTache(id: number) {
   await run("DELETE FROM taches_client WHERE id = ?", [id]);
 }
-// Avance une date ISO selon la récurrence (heure locale).
-function avancerDateRecurrence(iso: string | null, rec: string): string {
-  const base = iso ? iso.slice(0, 10) : new Date().toISOString().slice(0, 10);
-  const [y, m, d] = base.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
-  if (rec === "quotidien") dt.setDate(dt.getDate() + 1);
-  else if (rec === "hebdo") dt.setDate(dt.getDate() + 7);
-  else if (rec === "2sem") dt.setDate(dt.getDate() + 14);
-  else if (rec === "mensuel") dt.setMonth(dt.getMonth() + 1);
-  else return base;
-  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-}
 /** Marque une tâche complétée. Si elle est récurrente, recrée la prochaine occurrence. */
 export async function terminerTache(id: number, dateCompletion: string): Promise<{ prochaine?: number }> {
   const t = await one<any>("SELECT * FROM taches_client WHERE id = ?", [id]);
@@ -1510,7 +1498,7 @@ export async function finances(annee: number): Promise<any> {
     // taxe. marge = revenu_avant_taxes − depenses_avant_taxes − MO.
     const revenu_avant_taxes = revenuAvantTaxes(revenu);
     // Les factures détaxées n'ont pas de taxes à retirer : on ne ramène que la part taxable.
-    const depenses_avant_taxes = revenuAvantTaxes(depenses - depensesDetaxe) + depensesDetaxe;
+    const depenses_avant_taxes = depensesAvantTaxes(depenses, depensesDetaxe);
     mois.push({ mois: m, facture, paye, depenses, depenses_avant_taxes, mo, contrats: revenu, revenu, revenu_avant_taxes, marge: revenu_avant_taxes - depenses_avant_taxes - mo });
   }
   return { annee, mois };

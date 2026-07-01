@@ -15,6 +15,26 @@ export function revenuAvantTaxes(montantTaxesIncluses: number): number {
   return (montantTaxesIncluses || 0) / (1 + TAUX_TAXES_QC);
 }
 
+/** Dépenses « avant taxes » : on retire les taxes de la part taxable seulement.
+ *  Les factures détaxées (sans TPS/TVQ) sont comptées telles quelles. */
+export function depensesAvantTaxes(total: number, detaxe: number = 0): number {
+  const taxable = Math.max(0, (total || 0) - (detaxe || 0));
+  return revenuAvantTaxes(taxable) + (detaxe || 0);
+}
+
+/** Avance une date ISO (yyyy-mm-dd) selon la récurrence, en heure locale. */
+export function avancerDateRecurrence(iso: string | null, rec: string): string {
+  const base = iso ? iso.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const [y, m, d] = base.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  if (rec === "quotidien") dt.setDate(dt.getDate() + 1);
+  else if (rec === "hebdo") dt.setDate(dt.getDate() + 7);
+  else if (rec === "2sem") dt.setDate(dt.getDate() + 14);
+  else if (rec === "mensuel") dt.setMonth(dt.getMonth() + 1);
+  else return base;
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}
+
 /** Marge d'un projet. `revenu` = prix contrat/budget + extras facturés (taxes incluses,
  *  pour l'affichage). La marge et le % sont calculés sur le revenu AVANT taxes (rentabilité réelle). */
 export function calculerMargeProjet(input: {

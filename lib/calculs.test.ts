@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  calculerMargeProjet, revenuAvantTaxes, dateISOLocale, periodeBiHebdo,
-  calculerHeuresPaye, calculerPaye, indexJourSemaine,
+  calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence,
+  dateISOLocale, periodeBiHebdo, calculerHeuresPaye, calculerPaye, indexJourSemaine,
 } from "./calculs";
 
 describe("calculerMargeProjet (rentabilité AVANT taxes)", () => {
@@ -34,6 +34,55 @@ describe("calculerMargeProjet (rentabilité AVANT taxes)", () => {
   it("revenuAvantTaxes retire bien TPS+TVQ", () => {
     expect(revenuAvantTaxes(1149.75)).toBeCloseTo(1000, 4);
   });
+});
+
+describe("calculerMargeProjet — extras facturés comme revenu", () => {
+  it("un extra facturé s'ajoute au revenu (avant division par les taxes)", () => {
+    const sans = calculerMargeProjet({ prix_contrat: 11497.5, total_depenses: 4000 });
+    const avec = calculerMargeProjet({ prix_contrat: 11497.5, total_depenses: 4000, extras_factures: 1149.75 });
+    // revenu = contrat + extras (taxes incluses)
+    expect(avec.revenu).toBeCloseTo(11497.5 + 1149.75, 2);
+    // l'extra ajoute 1149.75/1.14975 = 1000 avant taxes à la marge
+    expect(avec.marge - sans.marge).toBeCloseTo(1000, 6);
+    expect(avec.marge).toBeGreaterThan(sans.marge);
+  });
+  it("extras absent/0 → identique à avant (rétrocompatible)", () => {
+    const a = calculerMargeProjet({ prix_contrat: 20000, total_depenses: 5000 });
+    const b = calculerMargeProjet({ prix_contrat: 20000, total_depenses: 5000, extras_factures: 0 });
+    expect(a.marge).toBe(b.marge);
+    expect(a.revenu).toBe(b.revenu);
+  });
+  it("extras seuls (sans contrat) comptent quand même comme revenu", () => {
+    const r = calculerMargeProjet({ budget_estime: 0, total_depenses: 0, extras_factures: 1149.75 });
+    expect(r.revenu).toBeCloseTo(1149.75, 2);
+    expect(r.marge).toBeCloseTo(1000, 6);
+  });
+});
+
+describe("depensesAvantTaxes — factures détaxées", () => {
+  it("dépense normale : on retire les taxes", () => {
+    expect(depensesAvantTaxes(1149.75, 0)).toBeCloseTo(1000, 6);
+  });
+  it("dépense entièrement détaxée : comptée telle quelle", () => {
+    expect(depensesAvantTaxes(1149.75, 1149.75)).toBeCloseTo(1149.75, 6);
+  });
+  it("mixte : seule la part taxable est ramenée avant taxes", () => {
+    // 1149.75 taxable → 1000 ; + 500 détaxé au pair = 1500
+    expect(depensesAvantTaxes(1649.75, 500)).toBeCloseTo(1500, 6);
+  });
+  it("détaxé > 0 réduit toujours la déduction de taxes (marge plus juste)", () => {
+    expect(depensesAvantTaxes(1000, 1000)).toBeGreaterThan(depensesAvantTaxes(1000, 0));
+  });
+});
+
+describe("avancerDateRecurrence", () => {
+  it("quotidien : +1 jour", () => { expect(avancerDateRecurrence("2026-06-20", "quotidien")).toBe("2026-06-21"); });
+  it("hebdo : +7 jours", () => { expect(avancerDateRecurrence("2026-06-20", "hebdo")).toBe("2026-06-27"); });
+  it("2sem : +14 jours", () => { expect(avancerDateRecurrence("2026-06-20", "2sem")).toBe("2026-07-04"); });
+  it("mensuel : +1 mois", () => { expect(avancerDateRecurrence("2026-06-20", "mensuel")).toBe("2026-07-20"); });
+  it("hebdo traverse la fin de mois", () => { expect(avancerDateRecurrence("2026-06-28", "hebdo")).toBe("2026-07-05"); });
+  it("mensuel traverse la fin d'année", () => { expect(avancerDateRecurrence("2026-12-15", "mensuel")).toBe("2027-01-15"); });
+  it("récurrence inconnue/vide → date inchangée", () => { expect(avancerDateRecurrence("2026-06-20", "")).toBe("2026-06-20"); });
 });
 
 describe("dateISOLocale (anti-bug timezone)", () => {
