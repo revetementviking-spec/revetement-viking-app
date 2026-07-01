@@ -609,6 +609,7 @@ export interface SoumissionDB {
   heures_estimees: number; heures_reelles: number | null;
   date_envoi: string | null; date_acceptation: string | null;
   date_refus: string | null; date_facturation: string | null;
+  signature_nom?: string | null; signature_date?: string | null; signature_ip?: string | null; vue_client_le?: string | null;
   payload_json: string;
 }
 
@@ -804,7 +805,7 @@ export async function modifierClient(id: number, c: Partial<ClientType>) {
 export async function supprimerClient(id: number) {
   await run("DELETE FROM clients WHERE id = ?", [id]);
 }
-export async function trouverOuCreerClient(nom: string, infos?: Partial<Client>): Promise<number> {
+export async function trouverOuCreerClient(nom: string, infos?: Partial<ClientType>): Promise<number> {
   if (!nom?.trim()) return 0;
   const existant = await one<{ id: number }>("SELECT id FROM clients WHERE LOWER(nom) = LOWER(?)", [nom.trim()]);
   if (existant) return existant.id;

@@ -4,9 +4,9 @@ import { sendEmail, emailEstConfigure } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  const { id } = await ctx.params;
-  const co = await getContratPipelineParId(+id);
+export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
+  const { token } = await ctx.params;
+  const co = await getContratPipelineParId(+token);
   if (!co) return NextResponse.json({ error: "contrat introuvable" }, { status: 404 });
   if (co.statut === "signe") return NextResponse.json({ error: "déjà signé" }, { status: 409 });
 
@@ -63,10 +63,10 @@ Revêtement Viking Inc. · 1634 Rue Joliette, Montréal H1W 3E9<br>
 
   const r = await sendEmail({ to: destinataire, subject: sujet, text: corps, html });
   if (r.ok) {
-    await marquerContratEnvoye(+id, destinataire, r.messageId);
+    await marquerContratEnvoye(+token, destinataire, r.messageId);
     return NextResponse.json({ ok: true, messageId: r.messageId, destinataire });
   } else {
-    await marquerContratEnvoye(+id, destinataire, undefined, r.error || r.raison);
+    await marquerContratEnvoye(+token, destinataire, undefined, r.error || r.raison);
     return NextResponse.json({ ok: false, error: r.error || r.raison });
   }
 }
