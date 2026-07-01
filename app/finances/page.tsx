@@ -5,12 +5,13 @@ import Navigation from "@/components/Navigation";
 import FAB from "@/components/FAB";
 import DepensesVue from "@/components/DepensesVue";
 import ExtrasVue from "@/components/ExtrasVue";
+import RentabiliteVue from "@/components/RentabiliteVue";
 import { formatCAD } from "@/lib/calculateur";
 
 const MOIS = ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
 
 export default function FinancesPage() {
-  const [onglet, setOnglet] = useState<"apercu" | "depenses" | "extras">("apercu");
+  const [onglet, setOnglet] = useState<"apercu" | "rentabilite" | "depenses" | "extras">("apercu");
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [data, setData] = useState<any>(null);
   const [projets, setProjets] = useState<any[]>([]);
@@ -20,7 +21,7 @@ export default function FinancesPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const tab = new URLSearchParams(window.location.search).get("tab");
-    if (tab === "depenses" || tab === "extras") setOnglet(tab);
+    if (tab === "depenses" || tab === "extras" || tab === "rentabilite") setOnglet(tab);
   }, []);
 
   // Compteur d'extras à facturer (pour l'onglet + le KPI)
@@ -37,6 +38,7 @@ export default function FinancesPage() {
   const Tabs = (
     <div className="flex gap-2 border-b">
       <button onClick={() => setOnglet("apercu")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "apercu" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>💰 Vue d'ensemble</button>
+      <button onClick={() => setOnglet("rentabilite")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "rentabilite" ? "border-blue-600 text-blue-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>🧮 Rentabilité</button>
       <button onClick={() => setOnglet("depenses")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "depenses" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>💸 Dépenses</button>
       <button onClick={() => setOnglet("extras")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "extras" ? "border-amber-600 text-amber-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
         💲 Extras{extrasInfo.n > 0 ? <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-amber-500 text-white rounded-full text-[10px] font-bold">{extrasInfo.n}</span> : ""}
@@ -51,6 +53,17 @@ export default function FinancesPage() {
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         {Tabs}
         <ExtrasVue />
+      </main>
+    </div>
+  );
+
+  // Onglet RENTABILITÉ (tableur)
+  if (onglet === "rentabilite") return (
+    <div className="min-h-screen bg-slate-50">
+      <Navigation titre="💰 Finances" soustitre="Rentabilité détaillée" />
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        {Tabs}
+        <RentabiliteVue />
       </main>
     </div>
   );

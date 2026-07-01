@@ -430,7 +430,7 @@ export default function Home() {
               <div className="text-[10px] uppercase font-bold text-emerald-700">💰 Revenu du mois</div>
               <div className="text-xl md:text-2xl font-bold text-emerald-900 mt-1">{formatCAD(tableauBord.revenu_mois)}</div>
             </a>
-            <a href="/projets" className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-3 hover:shadow-md transition">
+            <a href="/finances?tab=rentabilite" className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-3 hover:shadow-md transition">
               <div className="text-[10px] uppercase font-bold text-blue-700">📊 Marge moyenne</div>
               <div className="text-xl md:text-2xl font-bold text-blue-900 mt-1">{tableauBord.marge_moyenne_pct?.toFixed(1)} %</div>
               <div className="text-[10px] text-blue-600">{formatCAD(tableauBord.marge_moyenne_montant || 0)}</div>
