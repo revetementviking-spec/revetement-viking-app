@@ -3,7 +3,7 @@
 import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
-import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye } from "@/lib/calculs";
+import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye, heuresDuesPeriodePayee, SEUIL_SUP_PERIODE } from "@/lib/calculs";
 import { SQL_PROJET_ACTIF } from "@/lib/statuts-projet";
 import { estStatutSoumission, STATUTS_SOUMISSION } from "@/lib/vocabulaire";
 import { aujourdhuiMontreal } from "./date";
@@ -2449,7 +2449,9 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // 3. BANQUE D'HEURES — traitement CHRONOLOGIQUE par employé.
   //    Pas de prime ×1.5 : les heures au-delà de 80h/quinzaine sont ACCUMULÉES
   //    dans une banque, et servent à compléter une quinzaine sous 80h plus tard.
-  const SEUIL = 80;
+  // Même seuil que la logique paie centralisée — le bandeau « heures dues » s'y accroche
+  // aussi, les deux doivent bouger ensemble ou la banque redevient une dette fantôme.
+  const SEUIL = SEUIL_SUP_PERIODE;
   // Regrouper les groupes par employé, triés par date de début (ancien → récent)
   const parEmploye = new Map<string, typeof groupes extends Map<string, infer V> ? V[] : never>();
   for (const g of groupes.values()) {
@@ -2538,10 +2540,12 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // `heures_non_payees` : heures réellement travaillées dans une période DÉJÀ VERSÉE qui
   // n'ont pas été payées. C'est de l'argent dû à un employé, jusqu'ici invisible.
   // Calculé à la lecture (aucune colonne à migrer) et jamais négatif.
+  // L'écart brut travaillées − payées ne suffit PAS : au-delà de 80 h, l'écart est le
+  // surplus qui part en banque d'heures, pas une dette (voir heuresDuesPeriodePayee).
   return list.map((p: any) => ({
     ...p,
     heures_non_payees: p.paye
-      ? Math.max(0, Math.round(((p.heures_travaillees || 0) - (p.heures_normales || 0)) * 100) / 100)
+      ? heuresDuesPeriodePayee(p.heures_travaillees || 0, p.heures_normales || 0)
       : 0,
   }));
 }

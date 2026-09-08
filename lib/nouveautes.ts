@@ -24,6 +24,14 @@ export const MAX_BLOCS = 3;
 
 export const NOUVEAUTES: Nouveaute[] = [
   {
+    version: "2026-09-07",
+    titre: "Paie : le bandeau d'heures dues ne compte plus la banque",
+    points: [
+      "Le bandeau « heures travaillées qui ne sont dans aucune paye » réclamait le surplus au-delà de 80 h, alors que ces heures sont déjà à votre crédit dans la banque d'heures juste au-dessus. Elles n'y apparaissent plus.",
+      "Le bandeau garde son vrai rôle : signaler une feuille de temps saisie APRÈS qu'une période a été marquée payée — là, il s'agit bien d'argent dû.",
+    ],
+  },
+  {
     version: "2026-09-05",
     titre: "Nouveautés visibles, fichiers joints et mise à jour automatique",
     points: [

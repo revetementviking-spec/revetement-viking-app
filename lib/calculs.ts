@@ -109,6 +109,19 @@ export function calculerHeuresPaye(heures: { date: string; heures: number }[], _
   return { normales, sup };
 }
 
+/** Heures d'une période DÉJÀ VERSÉE qui ne sont dans aucune paye : de l'argent dû.
+ *  Seul l'écart SOUS le seuil compte — une feuille de temps saisie après le versement,
+ *  qui n'a donc jamais atteint la paie.
+ *  Le surplus au-delà du seuil n'est PAS dû : le régime maison l'accumule dans la banque
+ *  d'heures (1 h pour 1 h), payable plus tard sur une quinzaine sous 80 h. Le compter ici
+ *  affichait les mêmes heures deux fois — au crédit de l'employé dans la carte « Banque »,
+ *  et comme dette envers lui dans le bandeau juste en dessous (30,5 h ainsi réclamées à
+ *  tort en juin 2026 pour Gabriel et Maxime, cinq quinzaines à 80 h payées pile). */
+export function heuresDuesPeriodePayee(travaillees: number, payees: number): number {
+  const sousSeuil = Math.min(travaillees || 0, SEUIL_SUP_PERIODE);
+  return Math.max(0, Math.round((sousSeuil - (payees || 0)) * 100) / 100);
+}
+
 /** Montant brut/DAS/net d'une paie. */
 export function calculerPaye(normales: number, sup: number, taux: number, dasPct = DAS_DEFAUT) {
   const brut = normales * taux + sup * taux * TAUX_SUP;

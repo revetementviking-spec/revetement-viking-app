@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, nombreSaisi,
   dateISOLocale, periodeBiHebdo, calculerHeuresPaye, calculerPaye, indexJourSemaine,
+  heuresDuesPeriodePayee,
 } from "./calculs";
 
 describe("calculerMargeProjet (rentabilité AVANT taxes)", () => {
@@ -202,6 +203,38 @@ describe("calculerHeuresPaye (sup = >80h sur la quinzaine)", () => {
     const r = calculerHeuresPaye(h, "2026-05-18");
     expect(r.normales).toBe(80);
     expect(r.sup).toBe(10);
+  });
+});
+
+// Le bandeau « X h travaillées ne sont dans aucune paye » réclamait le surplus de banque
+// comme une dette : cinq quinzaines à 80 h payées pile (Gabriel 84,5 / 91,5 / 84,25 ;
+// Maxime 89,25 / 81) totalisaient 30,5 h « dues » ≈ 1 218,75 $, alors que ces mêmes heures
+// s'affichaient déjà au crédit des employés dans la carte « Banque d'heures » juste au-dessus.
+describe("heuresDuesPeriodePayee (dette réelle vs surplus de banque)", () => {
+  it("surplus au-delà de 80h = banque, rien de dû", () => {
+    expect(heuresDuesPeriodePayee(84.5, 80)).toBe(0);
+    expect(heuresDuesPeriodePayee(91.5, 80)).toBe(0);
+    expect(heuresDuesPeriodePayee(89.25, 80)).toBe(0);
+    expect(heuresDuesPeriodePayee(81, 80)).toBe(0);
+  });
+  it("les cinq quinzaines de juin 2026 ne doivent plus rien totaliser", () => {
+    const cas: [number, number][] = [[84.5, 80], [91.5, 80], [89.25, 80], [84.25, 80], [81, 80]];
+    const total = cas.reduce((s, [t, p]) => s + heuresDuesPeriodePayee(t, p), 0);
+    expect(total).toBe(0);
+  });
+  it("feuille de temps saisie APRÈS le versement = vraie dette (le cas visé)", () => {
+    // Versée à 45 h, 8 h oubliées saisies ensuite : elles n'atteignent aucune paye.
+    expect(heuresDuesPeriodePayee(53, 45)).toBe(8);
+  });
+  it("saisie tardive ET surplus : seule la part sous 80h est due, le reste va en banque", () => {
+    expect(heuresDuesPeriodePayee(91, 45)).toBe(35); // 80 - 45 dû ; 11 h en banque
+  });
+  it("période comblée par la banque (payées > travaillées) ne doit rien", () => {
+    expect(heuresDuesPeriodePayee(70, 80)).toBe(0);
+  });
+  it("arrondi au centième, jamais négatif", () => {
+    expect(heuresDuesPeriodePayee(45.333, 45)).toBe(0.33);
+    expect(heuresDuesPeriodePayee(0, 0)).toBe(0);
   });
 });
 
