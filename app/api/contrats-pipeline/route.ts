@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { creerContratPipeline, listerContratsParClient, marquerContratEnvoye, supprimerContratPipeline, definirAnnexeContrat } from "@/lib/db";
+import { creerContratPipeline, listerContratsParClient, marquerContratEnvoye, supprimerContratPipeline, definirAnnexeContrat, genererNumeroContratPipeline, getContratPipelineParId } from "@/lib/db";
 import { utilisateurActif } from "@/lib/authUser";
+import { journaliser } from "@/lib/audit";
 import { donneesTropLourdes, LIMITE_FICHIER_TEXTE } from "@/lib/limites-fichiers";
 
 function genererToken(): string {
@@ -35,7 +36,10 @@ export async function POST(req: NextRequest) {
   }
   const user = await utilisateurActif(req);
   const token = genererToken();
-  const numero = b.numero || `C-${new Date().getFullYear()}-${String(b.client_id).padStart(3, "0")}`;
+  // Numéro séquentiel UNIQUE (C-AAAA-NNN, MAX+1). L'ancien « C-année-client_id » se
+  // répétait d'un contrat à l'autre du même client, et la 2e signature écrasait le
+  // projet de la 1re. Les contrats existants gardent leur numéro.
+  const numero = String(b.numero || "").trim() || await genererNumeroContratPipeline();
 
   // Le brouillon est régénéré ICI, côté serveur, avec le numéro — que le navigateur ne
   // connaît pas encore au moment où il compose son PDF. Sans ça, le contrat envoyé au
@@ -57,6 +61,7 @@ export async function POST(req: NextRequest) {
     cree_par: user || undefined,
     annexe_data: annexe?.data || null, annexe_nom: annexe?.nom || null, annexe_type: annexe?.type || null,
   });
+  journaliser("contrat_pipeline.cree", { ref_type: "contrat_pipeline", ref_id: id, utilisateur: user || undefined, description: `${numero} · client ${b.client_id}`, apres: { numero, client_id: +b.client_id, annexe: !!annexe } });
   return NextResponse.json({ ok: true, id, token, numero });
 }
 
@@ -88,7 +93,10 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id requis" }, { status: 400 });
+  const user = await utilisateurActif(req);
+  const avant = await getContratPipelineParId(+id); // colonnes sans blobs
   const res = await supprimerContratPipeline(+id);
   if (!res.ok) return NextResponse.json({ error: res.raison }, { status: res.raison?.includes("introuvable") ? 404 : 409 });
+  journaliser("contrat_pipeline.supprime", { ref_type: "contrat_pipeline", ref_id: id, utilisateur: user || undefined, description: avant ? `${avant.numero} · ${avant.statut}` : `Contrat #${id}`, avant: avant ? { numero: avant.numero, client_id: avant.client_id, statut: avant.statut, date_envoye: avant.date_envoye } : null });
   return NextResponse.json({ ok: true });
 }

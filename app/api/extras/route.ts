@@ -6,6 +6,7 @@ import { envoyerPushUtilisateur } from "@/lib/push";
 import { nombreSaisi } from "@/lib/calculs";
 import { validerEcritureArgent } from "@/lib/validation-argent";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { avecIdempotence } from "@/lib/idempotence";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // Clé X-Idempotence-Cle fournie par l'écran : un double clic ne crée pas deux extras.
+  return avecIdempotence(req, () => creerExtra(req));
+}
+
+async function creerExtra(req: NextRequest): Promise<NextResponse> {
   try {
     const body = await req.json().catch(() => null);
     if (!body) return NextResponse.json({ error: "requête invalide" }, { status: 400 });

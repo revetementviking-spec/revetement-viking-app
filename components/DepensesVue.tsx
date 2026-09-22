@@ -8,7 +8,9 @@ import { useToast } from "@/components/Toasts";
 import { exporterCSV } from "@/lib/csv";
 import Pagination, { usePagination } from "@/components/Pagination";
 import { nombreSaisi, depensesAvantTaxes } from "@/lib/calculs";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, envoyer, lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 type TriCol = "date" | "fournisseur" | "categorie" | "projet" | "montant";
 type TriSens = "asc" | "desc";
@@ -39,16 +41,25 @@ export default function DepensesVue() {
   const sp = useSearchParams();
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [chargement, setChargement] = useState(true);
   const charger = async () => {
-    const [d, p, c] = await Promise.all([
-      fetch("/api/depenses?data=0").then((r) => r.json()),
-      fetch("/api/projets?lite=1").then((r) => r.json()),
-      fetch("/api/categories-depense").then((r) => r.json()).catch(() => []),
-    ]);
-    setDepenses(Array.isArray(d) ? d : []);
-    setProjets(Array.isArray(p) ? p : []);
-    setCategories(Array.isArray(c) ? c : []);
-    setSelection(new Set());
+    setChargement(true);
+    try {
+      // Lectures avec filet : un 500 sur /api/depenses rejetait la promesse et laissait
+      // la page vide, comme s'il n'y avait « aucune dépense ».
+      const [d, p, c] = await Promise.all([
+        lireListe("/api/depenses?data=0"),
+        lireListe("/api/projets?lite=1"),
+        lireListe("/api/categories-depense"),
+      ]);
+      if (!d.ok) { setErreur(d.erreur); return; }
+      setErreur(null);
+      setDepenses(d.data);
+      if (p.ok) setProjets(p.data);
+      if (c.ok) setCategories(c.data);
+      setSelection(new Set());
+    } finally { setChargement(false); }
   };
 
   useEffect(() => { charger(); }, []);
@@ -140,8 +151,13 @@ export default function DepensesVue() {
   const supprimerSel = async () => {
     if (selection.size === 0) return;
     if (!confirm(`Supprimer ${selection.size} dépense(s) sélectionnée(s) ? IRRÉVERSIBLE.`)) return;
-    await Promise.all(Array.from(selection).map((id) => fetch(`/api/depenses?id=${id}`, { method: "DELETE" })));
-    toast(`${selection.size} dépense(s) supprimée(s)`, "success");
+    // Compte les vrais succès : une suppression refusée ne doit pas être annoncée comme
+    // faite (la dépense réapparaissait au rechargement suivant).
+    const res = await Promise.all(Array.from(selection).map((id) => envoyer(`/api/depenses?id=${id}`, { methode: "DELETE" })));
+    const ok = res.filter((r) => r.ok).length;
+    const echecs = res.length - ok;
+    if (ok > 0) toast(`${ok} dépense(s) supprimée(s)`, "success");
+    if (echecs > 0) toast(`${echecs} suppression(s) refusée(s) : ${res.find((r) => !r.ok)?.erreur || "erreur"}`, "error");
     setSelection(new Set());
     charger();
   };
@@ -155,6 +171,7 @@ export default function DepensesVue() {
 
   const sauverEdit = async () => {
     if (!editing) return;
+    if (!Number.isFinite(nombreSaisi(editing.montant))) { toast("Montant illisible (ex. : 1 149,75)", "warning"); return; }
     const body = {
       id: editing.id,
       date: editing.date,
@@ -169,19 +186,19 @@ export default function DepensesVue() {
       detaxe: !!editing.detaxe,
       version: editing.version, // verrouillage optimiste (B7)
     };
-    const r = await fetch("/api/depenses", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.status === 409) {
-      const d = await r.json().catch(() => ({}));
-      toast(d.message || "Conflit : cette dépense a été modifiée ailleurs. Liste rechargée.", "warning");
+    // envoyer() : `r.ok` vérifié, message du serveur affiché, et le 409 (verrou
+    // optimiste) reconnu par son statut.
+    const r = await envoyer("/api/depenses", { methode: "PATCH", corps: body });
+    if (!r.ok && r.statut === 409) {
+      toast(r.data?.message || "Conflit : cette dépense a été modifiée ailleurs. Liste rechargée.", "warning");
       setEditing(null);
       charger();
       return;
     }
-    if ((await r.json()).ok) {
-      toast("Dépense modifiée", "success");
-      setEditing(null);
-      charger();
-    } else { toast("Erreur modification", "error"); }
+    if (!r.ok) { toast(`Modification refusée : ${r.erreur}`, "error"); return; }
+    toast("Dépense modifiée", "success");
+    setEditing(null);
+    charger();
   };
 
   const exportCSV = () => {
@@ -280,7 +297,11 @@ export default function DepensesVue() {
         {/* Tableau */}
         <section className="bg-white rounded-lg shadow">
           <div className="overflow-x-auto">
-          {filtrees.length === 0 ? (
+          {erreur ? (
+            <ErreurChargement erreur={erreur} onReessayer={charger} />
+          ) : chargement && depenses.length === 0 ? (
+            <div className="p-12 text-center text-slate-500 text-sm">Chargement...</div>
+          ) : filtrees.length === 0 ? (
             <div className="p-12 text-center text-slate-500 text-sm">Aucune dépense pour ces critères.</div>
           ) : (
             <table className="w-full text-sm min-w-max">
@@ -335,8 +356,8 @@ export default function DepensesVue() {
                         {d.ajoute_par ? <span className={`px-2 py-0.5 rounded font-semibold ${d.ajoute_par === "Francis" ? "bg-emerald-100 text-emerald-900" : "bg-blue-100 text-blue-900"}`}>👤 {d.ajoute_par}</span> : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="p-2 text-right whitespace-nowrap">
-                        <button onClick={() => setEditing({ ...d })} className="text-xs text-emerald-700 hover:underline mr-2">✏️</button>
-                        <button onClick={() => supprimer(d.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                        <button onClick={() => setEditing({ ...d })} aria-label="Modifier cette dépense" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-emerald-700 hover:bg-emerald-50 rounded mr-1">✏️</button>
+                        <button onClick={() => supprimer(d.id)} aria-label="Supprimer cette dépense" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                       </td>
                     </tr>
                   );
@@ -371,7 +392,7 @@ export default function DepensesVue() {
 
       {/* MODAL ÉDITION */}
       {editing && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEditing(null)}>
+        <Modale onClose={() => setEditing(null)} titre="Modifier la dépense" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Modifier la dépense</h3>
             <div>
@@ -392,7 +413,8 @@ export default function DepensesVue() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Montant *</label>
-                <input type="number" step={0.01} min="0" value={editing.montant} onChange={(e) => setEditing({ ...editing, montant: e.target.value })} className="w-full px-3 py-2 border rounded text-sm text-right font-bold" />
+                {/* type="text" + inputMode : un champ number refuse « 1 149,75 » (virgule du clavier québécois). */}
+                <input type="text" inputMode="decimal" value={editing.montant} onChange={(e) => setEditing({ ...editing, montant: e.target.value })} placeholder="Ex. : 1 149,75" className="w-full px-3 py-2 border rounded text-sm text-right font-bold" />
               </div>
             </div>
             {/* Le drapeau « détaxé » n'était visible NULLE PART sur cet écran : ni affiché,
@@ -428,14 +450,14 @@ export default function DepensesVue() {
               <button onClick={sauverEdit} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Sauver</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {/* VISIONNEUSE DE REÇU (avec bouton Retour) */}
       {recuOuvert && (() => {
         const estPdf = (recuOuvert.type || "").includes("pdf");
         return (
-          <div className="fixed inset-0 bg-black/85 z-50 flex flex-col" onClick={() => setRecuOuvert(null)}>
+          <Modale onClose={() => setRecuOuvert(null)} titre="Reçu de la dépense" className="fixed inset-0 bg-black/85 z-50 flex flex-col">
             <div className="flex items-center justify-between gap-2 p-3 bg-slate-900 text-white flex-shrink-0" onClick={(e) => e.stopPropagation()}>
               <button onClick={() => setRecuOuvert(null)} className="px-4 py-2 bg-white/15 hover:bg-white/25 rounded-lg font-bold text-sm">← Retour</button>
               {!estPdf && (
@@ -462,7 +484,7 @@ export default function DepensesVue() {
               )}
             </div>
             {!estPdf && <p className="text-center text-white/50 text-[10px] pb-2">Double-clic pour zoomer · glisse pour te déplacer</p>}
-          </div>
+          </Modale>
         );
       })()}
 

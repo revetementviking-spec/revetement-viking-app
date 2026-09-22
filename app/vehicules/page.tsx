@@ -3,28 +3,35 @@
 import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
-import { ecrire } from "@/lib/envoi";
+import { ecrire, lireListe, nombreSaisi } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 export default function VehiculesPage() {
   const [vehicules, setVehicules] = useState<any[]>([]);
   const [creerOuvert, setCreerOuvert] = useState(false);
   const [edit, setEdit] = useState<any>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const vide = { nom: "", marque: "", modele: "", annee: "", plaque: "", vin: "", date_achat: "", notes: "" };
   const [form, setForm] = useState<any>(vide);
   const { toast } = useToast();
 
-  const charger = () => fetch("/api/vehicules", { cache: "no-store" }).then((r) => r.json()).then(setVehicules).catch(() => {});
+  const charger = () => lireListe("/api/vehicules").then((r) => { if (r.ok) { setErreur(null); setVehicules(r.data); } else setErreur(r.erreur); });
   useEffect(() => { charger(); }, []);
 
-  const sauver = async () => {
+  const verrou = useVerrou();
+  const sauver = () => verrou.executer(async () => {
     if (!form.nom?.trim()) { toast("Nom du véhicule requis", "warning"); return; }
-    const body = { ...form, annee: form.annee ? +form.annee : null, ...(edit ? { id: edit.id } : {}) };
-    const r = await fetch("/api/vehicules", { method: edit ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if ((await r.json()).ok !== false) {
-      toast(edit ? "Véhicule modifié" : "Véhicule ajouté", "success");
-      setCreerOuvert(false); setEdit(null); setForm(vide); charger();
-    }
-  };
+    const annee = form.annee ? nombreSaisi(form.annee) : null;
+    if (annee !== null && !Number.isInteger(annee)) { toast("Année invalide (ex. : 2021)", "warning"); return; }
+    const body = { ...form, annee, ...(edit ? { id: edit.id } : {}) };
+    // `ok !== false` acceptait un corps `{ error }` (400, 401) comme un succès : la
+    // fenêtre se fermait, « Véhicule ajouté » s'affichait, et rien n'était en base.
+    if (!(await ecrire("/api/vehicules", edit ? "PATCH" : "POST", body, "Enregistrement du véhicule"))) return;
+    toast(edit ? "Véhicule modifié" : "Véhicule ajouté", "success");
+    setCreerOuvert(false); setEdit(null); setForm(vide); charger();
+  });
   const supprimer = async (id: number) => {
     if (!confirm("Supprimer ce véhicule ?")) return;
     if (!(await ecrire(`/api/vehicules?id=${id}`, "DELETE", undefined, "Suppression"))) return;
@@ -38,7 +45,9 @@ export default function VehiculesPage() {
       <main className="max-w-4xl mx-auto p-4 md:p-6 space-y-4">
         <button onClick={() => { setEdit(null); setForm(vide); setCreerOuvert(true); }} className="w-full md:w-auto px-4 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow">➕ Ajouter un véhicule</button>
 
-        {vehicules.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : vehicules.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center text-slate-500"><div className="text-5xl mb-3">🚚</div>Aucun véhicule enregistré.</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -47,8 +56,8 @@ export default function VehiculesPage() {
                 <div className="flex justify-between items-start">
                   <div className="font-bold text-slate-900">{v.nom}</div>
                   <div className="flex gap-2">
-                    <button onClick={() => ouvrirEdit(v)} className="text-xs text-emerald-700 hover:underline">✏️</button>
-                    <button onClick={() => supprimer(v.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                    <button onClick={() => ouvrirEdit(v)} aria-label={`Modifier ${v.nom}`} className="min-w-11 min-h-11 flex items-center justify-center text-xs text-emerald-700 hover:bg-emerald-50 rounded">✏️</button>
+                    <button onClick={() => supprimer(v.id)} aria-label={`Supprimer ${v.nom}`} className="min-w-11 min-h-11 flex items-center justify-center text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                   </div>
                 </div>
                 <div className="text-sm text-slate-600 mt-1">{[v.marque, v.modele, v.annee].filter(Boolean).join(" · ")}</div>
@@ -63,7 +72,7 @@ export default function VehiculesPage() {
       </main>
 
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+        <Modale onClose={() => setCreerOuvert(false)} titre={edit ? "Modifier le véhicule" : "Nouveau véhicule"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">{edit ? "Modifier" : "Nouveau"} véhicule</h3>
             <I label="Nom / identifiant *" v={form.nom} on={(x: string) => setForm({ ...form, nom: x })} ph="Ex: Camion #1, F-150 blanc" />
@@ -83,10 +92,10 @@ export default function VehiculesPage() {
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 rounded text-sm">Annuler</button>
-              <button onClick={sauver} className="px-4 py-2 bg-emerald-600 text-white rounded text-sm font-bold">Sauver</button>
+              <button onClick={sauver} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : "Sauver"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );

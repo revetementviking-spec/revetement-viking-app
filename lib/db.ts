@@ -3,12 +3,13 @@
 import { createClient, type Client as LibsqlClient, type ResultSet } from "@libsql/client";
 import path from "path";
 import fs from "fs";
-import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye, heuresDuesPeriodePayee, SEUIL_SUP_PERIODE } from "@/lib/calculs";
-import { feriesDeLaPeriode, feriesPayesEntre, indemniteFerie, repartitionFerie, FERIES_PAYES_DEPUIS } from "@/lib/paie-feries";
+import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerPaieQuinzaine, heuresDuesPeriodePayee, DAS_DEFAUT, type GainParTaux } from "@/lib/calculs";
+import { feriesDeLaPeriode, feriesPayesEntre, indemniteFerie, FERIES_PAYES_DEPUIS } from "@/lib/paie-feries";
 import { detecterDoublons, doublonsDeLaPiece } from "@/lib/doublons-factures";
-import { SQL_PROJET_ACTIF } from "@/lib/statuts-projet";
+import { SQL_PROJET_ACTIF, type StatutProjet } from "@/lib/statuts-projet";
 import { estStatutSoumission, STATUTS_SOUMISSION } from "@/lib/vocabulaire";
 import { aujourdhuiMontreal } from "./date";
+import { echapperLike } from "@/lib/sql-like";
 
 const DB_DIR = path.join(process.cwd(), "data");
 const DB_PATH = path.join(DB_DIR, "soumissions.db");
@@ -21,7 +22,16 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 27;
+// 25 (2026-09-21) : table idempotence, projets.contrat_pipeline_id, factures_projet.montant_paye.
+// 26 (2026-09-21) : index UNIQUE projets.numero (après dédoublonnage), reconstruction
+//   depenses_projet avec le schéma complet, index idx_journal_user créé APRÈS la table,
+//   règle « complété = facturé » jouée APRÈS l'ajout de la colonne facturee.
+// 27 (2026-09-22) : paies_periodes.heures_ferie + feries_detail (indemnité de jour férié),
+//   projets.facturation_confirmee_le/_par + migration gardée de l'historique,
+//   table doublons_ignores (paires de factures écartées à la main).
+// Le test lib/schema-version.test.ts fige un hachage du bloc de migrations : toute
+// modification du bloc sans incrément de cette constante fait échouer la suite.
+export const SCHEMA_VERSION = 27;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -73,6 +83,18 @@ export async function initDb() {
   await _initPromise;
 }
 
+// Lectures/écritures BRUTES, sans passer par initDb() : réservées au bloc de migrations,
+// qui tourne PENDANT l'initialisation. Avant, doInitDb() appelait all()/run() (qui
+// re-appellent initDb()) et devait poser `_initialized = true` AVANT les migrations pour
+// ne pas s'attendre lui-même : une migration qui levait laissait le drapeau à vrai, donc
+// les appels suivants sautaient l'initialisation sur un schéma à moitié migré.
+async function allBrut<T = any>(sql: string, args: any[] = []): Promise<T[]> {
+  return (await exec(sql, args)).rows as unknown as T[];
+}
+async function runBrut(sql: string, args: any[] = []): Promise<void> {
+  await exec(sql, args);
+}
+
 async function doInitDb() {
   // Schéma déjà à jour ? (1 aller-retour) → on saute les ~70 migrations.
   try {
@@ -80,9 +102,21 @@ async function doInitDb() {
     const cur = Number((r.rows?.[0] as any)?.user_version ?? 0);
     if (cur >= SCHEMA_VERSION) { _initialized = true; return; }
   } catch { /* PRAGMA indisponible → on exécute les migrations par sécurité */ }
-  // IMPORTANT : marquer initialisé AVANT les migrations. Le backfill ci-dessous
-  // appelle all()/run() qui re-appellent initDb() → sans ce flag, deadlock sur _initPromise.
+  try {
+    await migrer();
+  } catch (e) {
+    // Schéma pas à jour : le prochain appel retentera (initDb() relâche _initPromise).
+    _initialized = false;
+    throw e;
+  }
+  // Schéma à jour : on enregistre la version pour sauter les migrations aux prochains démarrages.
+  try { await getLibsqlClient().execute(`PRAGMA user_version = ${SCHEMA_VERSION}`); } catch { /* ignore */ }
   _initialized = true;
+}
+
+// === BLOC DES MIGRATIONS === (haché par lib/schema-version.test.ts : le modifier exige
+// d'incrémenter SCHEMA_VERSION et de mettre à jour le hachage figé dans ce test)
+async function migrer() {
   // Base : creer les tables AVANT les migrations ALTER (robuste sur base neuve).
   await execMany([
     `CREATE TABLE IF NOT EXISTS soumissions (
@@ -461,9 +495,6 @@ async function doInitDb() {
     user_agent TEXT, date_creation TEXT NOT NULL
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_push_user ON push_subscriptions(utilisateur)");
-  // Audit : qui a fait l'action ?
-  await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
-  await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_data TEXT");
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN recu_type TEXT");
   // Verrouillage optimiste (B7) : compteur incrémenté à chaque UPDATE. Permet de
@@ -474,15 +505,6 @@ async function doInitDb() {
   await tryExec("ALTER TABLE depenses_projet ADD COLUMN detaxe INTEGER NOT NULL DEFAULT 0");
   // Réglages applicatifs clé/valeur (ex. mode maintenance)
   await tryExec("CREATE TABLE IF NOT EXISTS parametres_app (cle TEXT PRIMARY KEY, valeur TEXT)");
-  // Migration UNIQUE (gardée) : règle « complété = facturé ». Aligne les projets déjà
-  // complétés une seule fois — ne se ré-applique pas si on re-bascule un projet à facturer.
-  try {
-    const fait = await one<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_complete_facture'");
-    if (!fait) {
-      await run("UPDATE projets SET facturee = 1 WHERE statut = 'complete'");
-      await run("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_complete_facture', '1')");
-    }
-  } catch { /* table projets pas encore prête sur une base neuve : la règle s'applique alors à la complétion */ }
   // Extras à facturer (travaux/matériaux supplémentaires hors soumission)
   await tryExec(`CREATE TABLE IF NOT EXISTS extras (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -495,6 +517,17 @@ async function doInitDb() {
   await tryExec("ALTER TABLE projets ADD COLUMN numero TEXT");
   // Suivi facturation : 0 = à facturer (rappel dashboard), 1 = facturé
   await tryExec("ALTER TABLE projets ADD COLUMN facturee INTEGER NOT NULL DEFAULT 0");
+  // Migration UNIQUE (gardée) : règle « complété = facturé ». Aligne les projets déjà
+  // complétés une seule fois — ne se ré-applique pas si on re-bascule un projet à facturer.
+  // Placée APRÈS l'ajout de la colonne : avant, l'UPDATE précédait l'ALTER et échouait en
+  // silence sur une base qui n'avait pas encore la colonne (la règle n'était jamais jouée).
+  try {
+    const fait = await allBrut<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_complete_facture'");
+    if (!fait.length) {
+      await runBrut("UPDATE projets SET facturee = 1 WHERE statut = 'complete'");
+      await runBrut("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_complete_facture', '1')");
+    }
+  } catch (e) { console.warn("[migration complete=facture]", (e as Error).message); }
   await tryExec("ALTER TABLE projets ADD COLUMN contrat_signe_data TEXT");
   await tryExec("ALTER TABLE projets ADD COLUMN contrat_signe_type TEXT");
   // Signature en ligne des soumissions par le client
@@ -541,6 +574,11 @@ async function doInitDb() {
   )`);
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_date ON journal_activite(date DESC)");
   await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_type ON journal_activite(type)");
+  // Audit : qui a fait l'action ? L'ALTER (anciennes bases) et l'index viennent APRÈS le
+  // CREATE : placés avant, tryExec avalait « no such table » sur une base neuve et l'index
+  // n'était jamais créé.
+  await tryExec("ALTER TABLE journal_activite ADD COLUMN utilisateur TEXT");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_journal_user ON journal_activite(utilisateur)");
 
   // === INDEXES PERF — toutes les sous-requêtes du dashboard ===
   // PROJ_SQL fait 5 sous-SELECT par ligne projet, ces index passent O(n²) → O(n log n)
@@ -608,17 +646,21 @@ async function doInitDb() {
   // monde. Sans ça, brancher le rappel sur la confirmation ferait remonter d'un coup tout
   // l'historique comme « jamais facturé » — des dizaines de faux retards le premier jour.
   // On écrit « migration (historique) » et non « Francis » : personne n'a cliqué.
+  // ⚠️ `allBrut` / `runBrut` et JAMAIS `all` / `one` / `run` : ces derniers commencent par
+  // `await initDb()`, donc les appeler ICI (on est DANS doInitDb) attend une initialisation
+  // qui attend cet appel — interblocage. Mesuré : l'init passait de 28 s à plus de 60 s,
+  // et en production le premier démarrage aurait gelé.
   try {
-    const faitConf = await one<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_facturation_confirmee_v1'");
-    if (!faitConf) {
-      await run(
+    const faitConf = await allBrut<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_facturation_confirmee_v1'");
+    if (!faitConf.length) {
+      await runBrut(
         `UPDATE projets SET facturation_confirmee_le = COALESCE(date_fin_reelle, date_fin_prevue, date_creation),
          facturation_confirmee_par = 'migration (historique)'
          WHERE statut = 'complete' AND facturation_confirmee_le IS NULL`
       );
-      await run("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_facturation_confirmee_v1', '1')");
+      await runBrut("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_facturation_confirmee_v1', '1')");
     }
-  } catch { /* base neuve : rien à reprendre, la confirmation part de zéro */ }
+  } catch (e) { console.warn("[migration facturation confirmée]", (e as Error).message); }
   // Indemnité de jour férié (1/20 des 4 semaines précédentes) créditée à la période, et le
   // détail des congés qui la composent (JSON) pour le talon et l'écran. Une période PAYÉE
   // garde le montant qu'elle avait : ces colonnes figent ce qui a été versé.
@@ -626,11 +668,11 @@ async function doInitDb() {
   await tryExec("ALTER TABLE paies_periodes ADD COLUMN feries_detail TEXT");
   // Backfill numéros de projet manquants (anciens projets créés avant le numérotage)
   try {
-    const sansNum = await all<{ id: number; date_creation: string }>("SELECT id, date_creation FROM projets WHERE numero IS NULL ORDER BY date_creation ASC, id ASC");
+    const sansNum = await allBrut<{ id: number; date_creation: string }>("SELECT id, date_creation FROM projets WHERE numero IS NULL ORDER BY date_creation ASC, id ASC");
     if (sansNum.length > 0) {
       // Compteur par année à partir des numéros déjà attribués
       const compteurs: Record<string, number> = {};
-      const existants = await all<{ numero: string }>("SELECT numero FROM projets WHERE numero IS NOT NULL");
+      const existants = await allBrut<{ numero: string }>("SELECT numero FROM projets WHERE numero IS NOT NULL");
       for (const e of existants) {
         const [an, seq] = (e.numero || "").split("-");
         const n = parseInt(seq || "0", 10);
@@ -653,28 +695,80 @@ async function doInitDb() {
   // MIGRATION : rendre depenses_projet.projet_id NULLABLE (dépenses générales sans projet).
   // Les anciennes installations ont projet_id NOT NULL → INSERT null échoue (500).
   // SQLite ne permet pas d'enlever NOT NULL via ALTER → reconstruction de la table.
+  // La table est recréée avec le SCHÉMA COMPLET (ajoute_par, version, detaxe compris) :
+  // avant, elle renaissait avec 10 colonnes seulement, et les trois colonnes ajoutées par
+  // les ALTER plus haut disparaissaient avec la reconstruction — la ventilation « détaxé »
+  // et le verrou optimiste tombaient en silence. Les colonnes copiées sont celles que
+  // l'ancienne table possède réellement (PRAGMA), les autres prennent leur défaut.
   try {
-    const info = await all<any>("PRAGMA table_info(depenses_projet)");
+    const info = await allBrut<any>("PRAGMA table_info(depenses_projet)");
     const col = info.find((c) => c.name === "projet_id");
     if (col && Number(col.notnull) === 1) {
-      await tryExec("ALTER TABLE depenses_projet RENAME TO depenses_projet_old");
-      await tryExec(`CREATE TABLE depenses_projet (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER,
-        date TEXT NOT NULL, montant REAL NOT NULL, fournisseur TEXT, description TEXT,
-        categorie TEXT, recu_data TEXT, recu_type TEXT, date_saisie TEXT NOT NULL
-      )`);
-      await tryExec(`INSERT INTO depenses_projet (id, projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, date_saisie)
-        SELECT id, projet_id, date, montant, fournisseur, description, categorie, recu_data, recu_type, date_saisie FROM depenses_projet_old`);
-      await tryExec("DROP TABLE depenses_projet_old");
+      const anciennes = new Set(info.map((c) => String(c.name)));
+      const colonnesCompletes = ["id", "projet_id", "date", "montant", "fournisseur", "description", "categorie",
+        "recu_data", "recu_type", "date_saisie", "ajoute_par", "version", "detaxe"];
+      const aCopier = colonnesCompletes.filter((c) => anciennes.has(c));
+      // Une seule transaction (batch) : un échec à mi-chemin ne laisse jamais la table
+      // renommée sans remplaçante.
+      await getLibsqlClient().batch([
+        "ALTER TABLE depenses_projet RENAME TO depenses_projet_old",
+        `CREATE TABLE depenses_projet (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, projet_id INTEGER,
+          date TEXT NOT NULL, montant REAL NOT NULL, fournisseur TEXT, description TEXT,
+          categorie TEXT, recu_data TEXT, recu_type TEXT, date_saisie TEXT NOT NULL,
+          ajoute_par TEXT, version INTEGER NOT NULL DEFAULT 0, detaxe INTEGER NOT NULL DEFAULT 0
+        )`,
+        `INSERT INTO depenses_projet (${aCopier.join(", ")}) SELECT ${aCopier.join(", ")} FROM depenses_projet_old`,
+        "DROP TABLE depenses_projet_old",
+      ], "write");
       await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_projet ON depenses_projet(projet_id, date DESC)");
       await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_date ON depenses_projet(date DESC)");
       await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_categorie ON depenses_projet(categorie)");
+      await tryExec("CREATE INDEX IF NOT EXISTS idx_depenses_ajoute_par ON depenses_projet(ajoute_par)");
     }
   } catch (e) { console.warn("[migration depenses_projet nullable]", (e as Error).message); }
 
-  // Schéma à jour : on enregistre la version pour sauter les migrations aux prochains démarrages.
-  try { await getLibsqlClient().execute(`PRAGMA user_version = ${SCHEMA_VERSION}`); } catch { /* ignore */ }
-  _initialized = true;
+  // === SCHEMA_VERSION 25 (2026-09-21) ===
+  // Idempotence des POST d'écriture (heures, dépenses, extras, photos) : la réponse d'une
+  // requête réussie est gardée sous la clé envoyée par l'écran (X-Idempotence-Cle), pour
+  // qu'un double clic ou un réessai réseau ne crée pas deux lignes. Voir lib/idempotence.ts.
+  await tryExec(`CREATE TABLE IF NOT EXISTS idempotence (
+    cle TEXT PRIMARY KEY,
+    statut INTEGER NOT NULL,
+    corps TEXT NOT NULL,
+    cree_le TEXT NOT NULL
+  )`);
+  // Le projet né d'un contrat signé est rattaché par l'ID du contrat, plus par son numéro
+  // (deux contrats du même client portaient le même numéro C-année-client → la 2e
+  // signature écrasait le projet de la 1re).
+  await tryExec("ALTER TABLE projets ADD COLUMN contrat_pipeline_id INTEGER");
+  await tryExec("CREATE INDEX IF NOT EXISTS idx_projets_contrat_pipeline ON projets(contrat_pipeline_id)");
+  // Montant encaissé sur une facture (paiement partiel possible). La case « payée » reste.
+  await tryExec("ALTER TABLE factures_projet ADD COLUMN montant_paye REAL DEFAULT 0");
+
+  // === SCHEMA_VERSION 26 (2026-09-21) ===
+  // projets.numero devient UNIQUE. Deux créations simultanées (ou un numéro saisi à la
+  // main) pouvaient donner deux chantiers « 2026-014 ». Les doublons existants sont
+  // d'abord suffixés (-2, -3…) et journalisés, sinon l'index refuserait de naître.
+  try {
+    const doublons = await allBrut<{ numero: string; n: number }>(
+      "SELECT numero, COUNT(*) AS n FROM projets WHERE numero IS NOT NULL GROUP BY numero HAVING n > 1"
+    );
+    for (const d of doublons) {
+      const lignes = await allBrut<{ id: number }>("SELECT id FROM projets WHERE numero = ? ORDER BY id ASC", [d.numero]);
+      // Le plus ancien garde son numéro ; les suivants prennent -2, -3…
+      for (let i = 1; i < lignes.length; i++) {
+        const nouveau = `${d.numero}-${i + 1}`;
+        await runBrut("UPDATE projets SET numero = ? WHERE id = ?", [nouveau, lignes[i].id]);
+        console.warn(`[migration projets.numero UNIQUE] projet #${lignes[i].id} : ${d.numero} → ${nouveau}`);
+        await runBrut(
+          "INSERT INTO journal_activite (date, type, ref_type, ref_id, description) VALUES (?, 'projet.statut_change', 'projet', ?, ?)",
+          [new Date().toISOString(), String(lignes[i].id), `Numéro de projet dédoublonné : ${d.numero} → ${nouveau} (index UNIQUE)`]
+        );
+      }
+    }
+  } catch (e) { console.warn("[migration projets.numero dédoublonnage]", (e as Error).message); }
+  await tryExec("CREATE UNIQUE INDEX IF NOT EXISTS idx_projets_numero_unique ON projets(numero)");
 }
 
 // Helpers retournent rows / first row
@@ -690,31 +784,29 @@ async function one<T = any>(sql: string, args: any[] = []): Promise<T | null> {
 async function run(sql: string, args: any[] = []): Promise<{ lastInsertRowid: number; rowsAffected: number }> {
   await initDb();
   const r = await exec(sql, args);
-  _lastWrite = Date.now(); // invalide les caches de lecture (voir cacheLecture)
   return { lastInsertRowid: Number(r.lastInsertRowid || 0), rowsAffected: r.rowsAffected };
 }
-/** Plusieurs écritures en UN aller-retour. En production la base est distante : N `run()`
- *  = N allers-retours réseau ; un lot = un seul. Vide → ne fait rien. */
+/** Plusieurs écritures en UN aller-retour ET une seule transaction (rollback si l'une
+ *  échoue). En production la base est distante : N `run()` = N allers-retours réseau ;
+ *  un lot = un seul. Vide → ne fait rien. */
 async function runBatch(stmts: { sql: string; args: any[] }[]): Promise<void> {
   if (!stmts.length) return;
   await initDb();
   await getLibsqlClient().batch(stmts, "write");
-  _lastWrite = Date.now();
+}
+/** Un énoncé prêt pour runBatch(). */
+export type Enonce = { sql: string; args: any[] };
+/** Exécute un lot d'énoncés préparés par les fabriques `sql…()` de ce module (voir
+ *  sqlAjouterClient, sqlModifierClient) : atomique, un seul aller-retour. */
+export async function executerLot(stmts: Enonce[]): Promise<void> {
+  await runBatch(stmts);
 }
 
-// === CACHE MÉMOIRE COURT pour requêtes de liste lourdes ===
-// Sert le résultat caché uniquement si AUCUNE écriture depuis sa construction
-// (toute écriture via run() avance _lastWrite) ET âge < TTL. Donc jamais de
-// donnée périmée après une modification, mais lectures répétées instantanées.
-let _lastWrite = 0;
-const _cache = new Map<string, { builtAt: number; data: any }>();
-async function cacheLecture<T>(cle: string, ttlMs: number, producteur: () => Promise<T>): Promise<T> {
-  const e = _cache.get(cle);
-  if (e && e.builtAt >= _lastWrite && Date.now() - e.builtAt < ttlMs) return e.data as T;
-  const data = await producteur();
-  _cache.set(cle, { builtAt: Date.now(), data });
-  return data;
-}
+// Pas de cache mémoire sur les agrégats d'argent. L'ancien cache (10 s projets, 30 s
+// finances, invalidé par les écritures de CETTE instance) était inerte sur Vercel : chaque
+// fonction serverless — et chaque route sous Turbopack — a sa propre copie du module,
+// donc une écriture passée par une autre instance laissait la marge périmée. Le coût réel
+// est faible : listerProjets = 1 requête, finances = 5 en parallèle.
 
 // === TYPES ===
 export type Statut = "brouillon" | "envoyee" | "acceptee" | "refusee" | "facturee";
@@ -732,8 +824,9 @@ export interface SoumissionDB {
 
 // === SOUMISSIONS ===
 export async function genererNumero(): Promise<string> {
-  const d = new Date();
-  const ymd = d.toISOString().slice(0, 10).replace(/-/g, "");
+  // Jour de MONTRÉAL : Vercel tourne en UTC, donc une soumission créée le soir au
+  // Québec portait la date du lendemain dans son numéro.
+  const ymd = aujourdhuiMontreal().replace(/-/g, "");
   // MAX du suffixe, PAS COUNT : avec COUNT, supprimer une soumission du milieu
   // faisait retomber sur un numéro déjà pris → la nouvelle ÉCRASAIT l'ancienne
   // (branche UPDATE de sauvegarder). MAX+1 reste monotone même après suppression.
@@ -879,12 +972,19 @@ export async function charger(numero: string): Promise<SoumissionDB | null> {
   return await one<SoumissionDB>("SELECT * FROM soumissions WHERE numero = ?", [numero]);
 }
 export async function supprimer(numero: string) {
-  await run("DELETE FROM soumissions WHERE numero = ?", [numero]);
+  // Les projets et contrats qui pointaient sur cette soumission gardaient un numéro mort
+  // (lien « Voir la soumission » vers un 404). Le lien est coupé dans la MÊME transaction.
+  await runBatch([
+    { sql: "UPDATE projets SET soumission_numero = NULL WHERE soumission_numero = ?", args: [numero] },
+    { sql: "UPDATE contrats SET soumission_numero = NULL WHERE soumission_numero = ?", args: [numero] },
+    { sql: "DELETE FROM soumissions WHERE numero = ?", args: [numero] },
+  ]);
 }
 
 export async function statistiques() {
   // Tout en SQL pur — pas de chargement de payload_json
-  const moisCourant = new Date().toISOString().slice(0, 7);
+  // Mois de MONTRÉAL : en UTC, le 1er du mois à 21 h au Québec était déjà « le mois suivant ».
+  const moisCourant = aujourdhuiMontreal().slice(0, 7);
   const parStatutRows = await all<{ statut: string; n: number; total: number }>(
     `SELECT statut, COUNT(*) as n, COALESCE(SUM(total), 0) as total FROM soumissions GROUP BY statut`
   );
@@ -929,11 +1029,13 @@ export async function listerClients(): Promise<ClientType[]> {
 export async function getClient(id: number): Promise<ClientType | null> {
   return await one<ClientType>("SELECT * FROM clients WHERE id = ?", [id]);
 }
-export async function ajouterClient(c: any): Promise<number> {
-  const r = await run(
-    `INSERT INTO clients (nom, courriel, telephone, adresse, notes, statut, source, tags, pipeline_stage, assignee, date_relance, projet_lien_id, date_creation)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
+/** Énoncé d'insertion d'un client (pour un lot : voir executerLot). asana_gid et
+ *  asana_modifie_le sont écrits ici aussi — la synchro Asana en dépend. */
+export function sqlAjouterClient(c: any): Enonce {
+  return {
+    sql: `INSERT INTO clients (nom, courriel, telephone, adresse, notes, statut, source, tags, pipeline_stage, assignee, date_relance, projet_lien_id, asana_gid, asana_modifie_le, date_creation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [
       String(c.nom ?? "").trim(), // trim : un espace parasite créait des doublons (la recherche compare TRIM)
       c.courriel || null,
       c.telephone || null,
@@ -946,18 +1048,30 @@ export async function ajouterClient(c: any): Promise<number> {
       c.assignee || null,
       c.date_relance || null,
       c.projet_lien_id || null,
+      c.asana_gid || null,
+      c.asana_modifie_le || null,
       new Date().toISOString(),
-    ]
-  );
+    ],
+  };
+}
+export async function ajouterClient(c: any): Promise<number> {
+  const e = sqlAjouterClient(c);
+  const r = await run(e.sql, e.args);
   return r.lastInsertRowid;
 }
-export async function modifierClient(id: number, c: Partial<ClientType>) {
+/** Énoncé de mise à jour d'un client, ou null si aucun champ connu n'est défini. */
+export function sqlModifierClient(id: number, c: Partial<ClientType>): Enonce | null {
   const champs = ['nom', 'courriel', 'telephone', 'adresse', 'notes', 'statut', 'source', 'tags', 'asana_gid', 'asana_modifie_le', 'pipeline_stage', 'assignee', 'date_relance', 'projet_lien_id', 'instructions_speciales'];
   const definis = champs.filter(k => (c as any)[k] !== undefined);
-  if (!definis.length) return;
+  if (!definis.length) return null;
   const sets = definis.map(k => `${k} = ?`).join(', ');
   const valeurs = definis.map(k => (c as any)[k]);
-  await run(`UPDATE clients SET ${sets} WHERE id = ?`, [...valeurs, id]);
+  return { sql: `UPDATE clients SET ${sets} WHERE id = ?`, args: [...valeurs, id] };
+}
+export async function modifierClient(id: number, c: Partial<ClientType>) {
+  const e = sqlModifierClient(id, c);
+  if (!e) return;
+  await run(e.sql, e.args);
 }
 export async function supprimerClient(id: number): Promise<{ ok: boolean; raison?: string; contrats_signes?: number }> {
   // GARDE-FOU : un contrat SIGNÉ est une pièce juridique (PDF signé + empreinte scellée +
@@ -973,18 +1087,22 @@ export async function supprimerClient(id: number): Promise<{ ok: boolean; raison
   // Sinon sous-tâches, commentaires et surtout FICHIERS (blobs base64) restaient en
   // base indéfiniment sous un client_id mort → base qui gonfle + stats faussées.
   // `pipeline_contrats` n'est purgé que de ses BROUILLONS (les signés sont refusés plus haut).
-  for (const t of ["interactions_client", "client_taches", "client_commentaires", "client_fichiers", "taches_client"]) {
-    await run(`DELETE FROM ${t} WHERE client_id = ?`, [id]).catch(() => {});
-  }
-  await run("DELETE FROM pipeline_contrats WHERE client_id = ? AND statut != 'signe'", [id]).catch(() => {});
   // Ce qui SURVIT au client garde une référence morte si on ne la coupe pas : un projet
   // pointant sur un client_id disparu, une note ou un contrat rattachés à personne.
   // On ne les supprime pas — un chantier ne disparaît pas parce qu'on efface une fiche —
   // on coupe seulement le lien.
-  await run("UPDATE projets SET client_id = NULL WHERE client_id = ?", [id]).catch(() => {});
-  await run("UPDATE notes_rapides SET client_id = NULL WHERE client_id = ?", [id]).catch(() => {});
-  await run("UPDATE contrats SET client_id = NULL WHERE client_id = ?", [id]).catch(() => {});
-  await run("DELETE FROM clients WHERE id = ?", [id]);
+  // UNE transaction : avant, dix `run()` en séquence avec des `.catch(() => {})` — une
+  // panne réseau au milieu laissait des orphelins ET la fiche en place, sans rien dire.
+  const t: Enonce[] = ["interactions_client", "client_taches", "client_commentaires", "client_fichiers", "taches_client"]
+    .map((table) => ({ sql: `DELETE FROM ${table} WHERE client_id = ?`, args: [id] }));
+  await runBatch([
+    ...t,
+    { sql: "DELETE FROM pipeline_contrats WHERE client_id = ? AND statut != 'signe'", args: [id] },
+    { sql: "UPDATE projets SET client_id = NULL WHERE client_id = ?", args: [id] },
+    { sql: "UPDATE notes_rapides SET client_id = NULL WHERE client_id = ?", args: [id] },
+    { sql: "UPDATE contrats SET client_id = NULL WHERE client_id = ?", args: [id] },
+    { sql: "DELETE FROM clients WHERE id = ?", args: [id] },
+  ]);
   return { ok: true };
 }
 /** Cherche un client par son nom exact (insensible à la casse et aux espaces de bord).
@@ -1069,16 +1187,24 @@ export async function supprimerTache(id: number) {
 export async function terminerTache(id: number, dateCompletion: string): Promise<{ prochaine?: number }> {
   const t = await one<any>("SELECT * FROM taches_client WHERE id = ?", [id]);
   if (!t) return {};
-  await run("UPDATE taches_client SET statut = 'complete', date_completion = ? WHERE id = ?", [dateCompletion, id]);
-  if (t.recurrence) {
-    const prochaineDate = avancerDateRecurrence(t.date_due, t.recurrence);
-    const r = await run(
-      `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, recurrence, date_creation) VALUES (?, ?, ?, ?, ?, ?, 'a_faire', ?, ?, ?)`,
-      [t.client_id || null, t.projet_id || null, t.titre, t.description || null, prochaineDate, t.priorite ?? 3, t.assigne_a || null, t.recurrence, new Date().toISOString()]
-    );
-    return { prochaine: r.lastInsertRowid };
+  const cloture: Enonce = { sql: "UPDATE taches_client SET statut = 'complete', date_completion = ? WHERE id = ?", args: [dateCompletion, id] };
+  if (!t.recurrence) {
+    await runBatch([cloture]);
+    return {};
   }
-  return {};
+  // Clôture + prochaine occurrence dans la MÊME transaction : avant, un échec de l'INSERT
+  // laissait la tâche récurrente fermée sans suite, et la récurrence s'éteignait en silence.
+  const prochaineDate = avancerDateRecurrence(t.date_due, t.recurrence);
+  const client = getLibsqlClient();
+  await initDb();
+  const res = await client.batch([
+    cloture,
+    {
+      sql: `INSERT INTO taches_client (client_id, projet_id, titre, description, date_due, priorite, statut, assigne_a, recurrence, date_creation) VALUES (?, ?, ?, ?, ?, ?, 'a_faire', ?, ?, ?)`,
+      args: [t.client_id || null, t.projet_id || null, t.titre, t.description || null, prochaineDate, t.priorite ?? 3, t.assigne_a || null, t.recurrence, new Date().toISOString()],
+    },
+  ], "write");
+  return { prochaine: Number(res[1]?.lastInsertRowid || 0) };
 }
 
 // === CONTRATS ===
@@ -1092,10 +1218,22 @@ export interface Contrat {
   signe_par_client?: number; date_signature?: string;
   payload_json?: string;
 }
+/** Plus grand suffixe numérique parmi des numéros « préfixe-NNN ». 0 si aucun. */
+function maxSuffixe(numeros: { numero: string | null }[]): number {
+  let max = 0;
+  for (const r of numeros) {
+    const m = String(r.numero || "").match(/-(\d+)$/);
+    const n = m ? parseInt(m[1], 10) : NaN;
+    if (Number.isFinite(n) && n > max) max = n;
+  }
+  return max;
+}
 export async function genererNumeroContrat(): Promise<string> {
   const ymd = aujourdhuiMontreal().replace(/-/g, "");
-  const r = await one<{ n: number }>("SELECT COUNT(*) as n FROM contrats WHERE numero LIKE ?", [`VK-CTR-${ymd}-%`]);
-  return `VK-CTR-${ymd}-${String((r?.n || 0) + 1).padStart(3, "0")}`;
+  // MAX du suffixe, PAS COUNT : avec COUNT, supprimer un contrat du milieu faisait
+  // retomber sur un numéro déjà pris (colonne UNIQUE → insertion refusée).
+  const rows = await all<{ numero: string }>("SELECT numero FROM contrats WHERE numero LIKE ?", [`VK-CTR-${ymd}-%`]);
+  return `VK-CTR-${ymd}-${String(maxSuffixe(rows) + 1).padStart(3, "0")}`;
 }
 export async function listerContrats(statut?: string): Promise<any[]> {
   let sql = `SELECT c.*, cl.nom as client_nom FROM contrats c LEFT JOIN clients cl ON cl.id = c.client_id`;
@@ -1137,10 +1275,16 @@ export async function supprimerContrat(id: number) {
 // === PROJETS ===
 export interface Projet {
   id?: number; client_id?: number; nom: string; adresse_chantier?: string;
-  description?: string; statut?: 'a_venir' | 'actif' | 'complete' | 'en_pause' | 'annule';
-  date_debut?: string; date_fin_prevue?: string; date_fin_reelle?: string; duree_jours?: number;
+  /** AAAA-NNN, UNIQUE (généré par genererNumeroProjet si absent). */
+  numero?: string;
+  // Dérivé de STATUTS_PROJET (lib/statuts-projet.ts) : « en_cours » manquait ici alors
+  // que le bouton « Commencer ce chantier » le pose.
+  description?: string; statut?: StatutProjet;
+  date_debut?: string; date_fin_prevue?: string; date_fin_reelle?: string | null; duree_jours?: number;
   soumission_numero?: string; budget_estime?: number; heures_estimees?: number;
   prix_contrat?: number; facture_finale_data?: string; facture_finale_type?: string;
+  /** Contrat en ligne (pipeline_contrats.id) dont ce projet est né. */
+  contrat_pipeline_id?: number | null;
   date_creation?: string;
 }
 export interface ProjetAvecTotaux extends Projet {
@@ -1161,7 +1305,13 @@ function calculerTotaux(r: any): ProjetAvecTotaux {
   const m = calculerMargeProjet({ ...r, total_depenses: total_depenses_avant_taxes });
   // `total_depenses` reste le montant réellement payé (taxes incluses) pour l'affichage ;
   // la marge, elle, est calculée sur `total_depenses_avant_taxes`.
-  return { ...r, ...m, total_depenses_avant_taxes };
+  // Les montants sortent arrondis au cent (les % et les heures restent tels quels).
+  const sortie: any = { ...r, ...m, total_depenses_avant_taxes };
+  for (const k of ["cout_main_oeuvre", "total_depenses", "total_depenses_detaxe", "total_depenses_avant_taxes",
+    "total_facture", "total_paye", "extras_factures", "revenu", "revenu_avant_taxes", "cout_total", "marge"]) {
+    if (sortie[k] !== undefined && sortie[k] !== null) sortie[k] = auCent(sortie[k]);
+  }
+  return sortie as ProjetAvecTotaux;
 }
 
 // Colonnes projets sans facture_finale_data (blob potentiel de plusieurs MB).
@@ -1183,6 +1333,15 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
 FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
 
 // === CONTRATS PIPELINE (avec signature en ligne) ===
+/** Prochain numéro de contrat en ligne : C-AAAA-NNN, séquentiel et UNIQUE dans l'année.
+ *  Avant, le numéro était C-année-client_id : deux contrats du même client la même année
+ *  portaient le même numéro, et la 2e signature écrasait le projet de la 1re. Les contrats
+ *  existants gardent leur numéro ; MAX+1 sur le suffixe reste monotone après eux. */
+export async function genererNumeroContratPipeline(): Promise<string> {
+  const annee = aujourdhuiMontreal().slice(0, 4);
+  const rows = await all<{ numero: string }>("SELECT numero FROM pipeline_contrats WHERE numero LIKE ?", [`C-${annee}-%`]);
+  return `C-${annee}-${String(maxSuffixe(rows) + 1).padStart(3, "0")}`;
+}
 export async function creerContratPipeline(p: {
   client_id: number; numero: string; token: string;
   data_json: any; pdf_brouillon: string; cree_par?: string;
@@ -1218,8 +1377,32 @@ export async function listerContratsParClient(client_id: number): Promise<any[]>
     [client_id]
   );
 }
+// Colonnes d'un contrat en ligne SANS ses blobs (PDF brouillon, PDF signé, devis joint,
+// image de signature) : un `SELECT *` rapatriait plusieurs Mo pour n'en rendre que les
+// métadonnées — à chaque affichage de la page de signature et à chaque envoi.
+// Les drapeaux a_pdf_signe / a_pdf_brouillon / a_annexe remplacent les blobs ;
+// les octets passent par getContratPipelineBlobs().
+const CONTRAT_PIPELINE_COLS_LITES = `id, client_id, numero, token, data_json, statut,
+  signature_nom, signature_date, signature_ip, signature_user_agent, pdf_signe_sha256,
+  cree_par, date_creation, date_envoye, date_vue, ip_vue,
+  courriel_destinataire, courriel_message_id, courriel_erreur,
+  annexe_nom, annexe_type, projet_id, date_signe_envoye, signe_destinataire,
+  (pdf_signe IS NOT NULL) AS a_pdf_signe, (pdf_brouillon IS NOT NULL) AS a_pdf_brouillon,
+  (annexe_data IS NOT NULL) AS a_annexe`;
 export async function getContratPipelineParToken(token: string): Promise<any | null> {
-  return await one<any>("SELECT * FROM pipeline_contrats WHERE token = ?", [token]);
+  return await one<any>(`SELECT ${CONTRAT_PIPELINE_COLS_LITES} FROM pipeline_contrats WHERE token = ?`, [token]);
+}
+/** Les blobs d'un contrat en ligne, pour les routes qui servent le fichier lui-même
+ *  (PDF, devis joint, certificat). `null` si le jeton ne correspond à rien. */
+export async function getContratPipelineBlobs(token: string): Promise<{
+  pdf_signe: string | null; pdf_brouillon: string | null;
+  annexe_data: string | null; annexe_nom: string | null; annexe_type: string | null;
+  signature_dataurl: string | null;
+} | null> {
+  return await one<any>(
+    "SELECT pdf_signe, pdf_brouillon, annexe_data, annexe_nom, annexe_type, signature_dataurl FROM pipeline_contrats WHERE token = ?",
+    [token]
+  );
 }
 export async function getPDFContratPipeline(token: string, signe = false): Promise<string | null> {
   const r = await one<any>(`SELECT ${signe ? "pdf_signe" : "pdf_brouillon"} as pdf FROM pipeline_contrats WHERE token = ?`, [token]);
@@ -1246,7 +1429,8 @@ export async function signerContratPipeline(token: string, p: {
  *  un projet a été créé à la main pour ce même numéro), on le met à jour au lieu d'en
  *  créer un second. */
 export async function creerProjetDepuisContrat(token: string): Promise<{ ok: boolean; projet_id?: number; cree?: boolean; raison?: string }> {
-  const c = await one<any>("SELECT * FROM pipeline_contrats WHERE token = ?", [token]);
+  // Seul le PDF signé est lu (il est rattaché au projet) — pas le brouillon ni le devis.
+  const c = await one<any>("SELECT id, client_id, numero, statut, data_json, projet_id, pdf_signe FROM pipeline_contrats WHERE token = ?", [token]);
   if (!c) return { ok: false, raison: "contrat introuvable" };
   if (c.statut !== "signe") return { ok: false, raison: "contrat non signé" };
 
@@ -1254,10 +1438,12 @@ export async function creerProjetDepuisContrat(token: string): Promise<{ ok: boo
   const prix = Number(d.prix_total) || null;
   const nom = String(d.nom_projet || d.client_nom || `Contrat ${c.numero || ""}`).trim().slice(0, 200);
 
-  // 1. Déjà lié ? 2. Sinon, un projet porte-t-il déjà ce numéro de contrat ?
+  // 1. Déjà lié ? 2. Sinon, un projet est-il rattaché à CE contrat (par son id) ?
+  // Plus jamais par le NUMÉRO : les anciens numéros C-année-client n'étaient pas uniques,
+  // et la signature du 2e contrat d'un client mettait à jour le projet du 1er.
   let projetId: number | null = c.projet_id || null;
-  if (!projetId && c.numero) {
-    const existant = await one<{ id: number }>("SELECT id FROM projets WHERE numero = ?", [c.numero]);
+  if (!projetId) {
+    const existant = await one<{ id: number }>("SELECT id FROM projets WHERE contrat_pipeline_id = ?", [c.id]);
     if (existant) projetId = existant.id;
   }
 
@@ -1288,7 +1474,16 @@ export async function creerProjetDepuisContrat(token: string): Promise<{ ok: boo
     if (prix) { maj.prix_contrat = prix; maj.budget_estime = prix; }
     if (Object.keys(maj).length) await modifierProjet(projetId, maj);
   } else {
-    projetId = await ajouterProjet({ ...(champs as any), numero: c.numero || undefined, cree_par: "Signature client" } as any);
+    const base = { ...(champs as any), contrat_pipeline_id: c.id, cree_par: "Signature client" };
+    try {
+      projetId = await ajouterProjet({ ...base, numero: c.numero || undefined } as any);
+    } catch (e: any) {
+      // projets.numero est UNIQUE : un ancien numéro de contrat C-année-client, déjà
+      // porté par le projet d'un contrat précédent, ne peut pas être repris — le projet
+      // reçoit alors un numéro de projet séquentiel ordinaire.
+      if (e?.code !== "NUMERO_PROJET_PRIS") throw e;
+      projetId = await ajouterProjet(base as any);
+    }
     cree = true;
   }
 
@@ -1350,7 +1545,7 @@ export async function marquerContratVu(token: string, ip?: string): Promise<void
   await run("UPDATE pipeline_contrats SET date_vue=?, ip_vue=? WHERE token=? AND date_vue IS NULL", [new Date().toISOString(), ip || null, token]);
 }
 export async function getContratPipelineParId(id: number): Promise<any | null> {
-  return await one<any>("SELECT * FROM pipeline_contrats WHERE id = ?", [id]);
+  return await one<any>(`SELECT ${CONTRAT_PIPELINE_COLS_LITES} FROM pipeline_contrats WHERE id = ?`, [id]);
 }
 export async function supprimerContratPipeline(id: number): Promise<{ ok: boolean; raison?: string }> {
   // Même garde que sur la suppression de client : un contrat SIGNÉ emporte le PDF signé,
@@ -1527,9 +1722,9 @@ export async function mentionsRecentes(user: string, depuisJours = 7): Promise<a
             cl.nom as client_nom
      FROM client_commentaires c
      LEFT JOIN clients cl ON cl.id = c.client_id
-     WHERE c.date_creation >= ? AND c.mentions LIKE ?
+     WHERE c.date_creation >= ? AND c.mentions LIKE ? ESCAPE '\\'
      ORDER BY c.date_creation DESC LIMIT 50`,
-    [seuil, `%${user}%`]
+    [seuil, `%${echapperLike(user)}%`]
   );
 }
 export async function relancesPourUser(user: string): Promise<any[]> {
@@ -1584,9 +1779,12 @@ export async function renommerCategorieDepense(id: number, nouveau: string): Pro
   const old = await one<{ nom: string }>("SELECT nom FROM categories_depense WHERE id = ?", [id]);
   if (!old) return;
   const nv = nouveau.trim();
-  await run("UPDATE categories_depense SET nom = ? WHERE id = ?", [nv, id]);
-  // Cascade : renomme aussi dans les dépenses existantes
-  await run("UPDATE depenses_projet SET categorie = ? WHERE categorie = ?", [nv, old.nom]);
+  // Cascade dans la MÊME transaction : la catégorie et les dépenses qui la portent changent
+  // de nom ensemble, ou pas du tout.
+  await runBatch([
+    { sql: "UPDATE categories_depense SET nom = ? WHERE id = ?", args: [nv, id] },
+    { sql: "UPDATE depenses_projet SET categorie = ? WHERE categorie = ?", args: [nv, old.nom] },
+  ]);
 }
 export async function supprimerCategorieDepense(id: number): Promise<void> {
   // Soft delete : on désactive (on ne casse pas l'historique des dépenses)
@@ -1618,37 +1816,44 @@ export async function pingDb(): Promise<boolean> {
 }
 
 export async function listerProjets(statut?: string): Promise<ProjetAvecTotaux[]> {
-  // Cache court (10 s) invalidé par toute écriture — la liste (PROJ_SQL = 5 sous-requêtes
-  // par projet) est l'une des plus lourdes ; les ouvertures répétées deviennent instantanées.
-  return cacheLecture(`projets:${statut || "all"}`, 10000, async () => {
-    let sql = PROJ_SQL;
-    const args: any[] = [];
-    // « actif » veut dire « chantier en activité » : il couvre AUSSI « en_cours », posé
-    // par le bouton « Commencer ce chantier ». Sans ça, démarrer un chantier le faisait
-    // disparaître du tableau de bord et des sélecteurs de projet.
-    if (statut === "actif") sql += ` WHERE p.${SQL_PROJET_ACTIF}`;
-    else if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
-    sql += ` ORDER BY p.date_creation DESC`;
-    const rows = await all<any>(sql, args);
-    return rows.map(calculerTotaux);
-  });
+  // UNE requête (PROJ_SQL, sous-requêtes corrélées), toujours fraîche : pas de cache.
+  let sql = PROJ_SQL;
+  const args: any[] = [];
+  // « actif » veut dire « chantier en activité » : il couvre AUSSI « en_cours », posé
+  // par le bouton « Commencer ce chantier ». Sans ça, démarrer un chantier le faisait
+  // disparaître du tableau de bord et des sélecteurs de projet.
+  if (statut === "actif") sql += ` WHERE p.${SQL_PROJET_ACTIF}`;
+  else if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
+  sql += ` ORDER BY p.date_creation DESC`;
+  const rows = await all<any>(sql, args);
+  return rows.map(calculerTotaux);
 }
 // Version LÉGÈRE pour les menus déroulants : pas de sous-requêtes coûts/marges
 // (PROJ_SQL en fait 5 par projet). Beaucoup plus rapide quand on n'a besoin que
 // de l'id + nom + statut (page Heures, filtres, etc.).
 export async function listerProjetsLite(statut?: string): Promise<any[]> {
-  return cacheLecture(`projets_lite:${statut || "all"}`, 10000, async () => {
-    let sql = `SELECT p.id, p.numero, p.nom, p.adresse_chantier, p.statut, p.date_creation, p.budget_estime, p.date_fin_reelle, p.date_fin_prevue, c.nom as client_nom
-               FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
-    const args: any[] = [];
-    // « actif » veut dire « chantier en activité » : il couvre AUSSI « en_cours », posé
-    // par le bouton « Commencer ce chantier ». Sans ça, démarrer un chantier le faisait
-    // disparaître du tableau de bord et des sélecteurs de projet.
-    if (statut === "actif") sql += ` WHERE p.${SQL_PROJET_ACTIF}`;
-    else if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
-    sql += ` ORDER BY p.date_creation DESC`;
-    return await all<any>(sql, args);
-  });
+  let sql = `SELECT p.id, p.numero, p.nom, p.adresse_chantier, p.statut, p.date_creation, p.budget_estime, p.date_debut, p.duree_jours, p.date_fin_reelle, p.date_fin_prevue, c.nom as client_nom
+             FROM projets p LEFT JOIN clients c ON c.id = p.client_id`;
+  const args: any[] = [];
+  // « actif » veut dire « chantier en activité » : il couvre AUSSI « en_cours », posé
+  // par le bouton « Commencer ce chantier ». Sans ça, démarrer un chantier le faisait
+  // disparaître du tableau de bord et des sélecteurs de projet.
+  if (statut === "actif") sql += ` WHERE p.${SQL_PROJET_ACTIF}`;
+  else if (statut) { sql += ` WHERE p.statut = ?`; args.push(statut); }
+  sql += ` ORDER BY p.date_creation DESC`;
+  return await all<any>(sql, args);
+}
+/** Noms de plusieurs projets en UNE requête (pour les boucles qui, avant, faisaient un
+ *  getProjet() — PROJ_SQL et ses 7 sous-requêtes — par photo). */
+export async function nomsProjets(ids: number[]): Promise<Map<number, string>> {
+  const uniques = Array.from(new Set(ids.filter((n) => Number.isFinite(n))));
+  const out = new Map<number, string>();
+  if (!uniques.length) return out;
+  const rows = await all<{ id: number; nom: string }>(
+    `SELECT id, nom FROM projets WHERE id IN (${uniques.map(() => "?").join(",")})`, uniques
+  );
+  for (const r of rows) out.set(Number(r.id), String(r.nom || ""));
+  return out;
 }
 /** Projets complétés dont la facturation n'a PAS encore été confirmée (rappel "à facturer").
  *
@@ -1693,33 +1898,51 @@ export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
   const r = await one<any>(`${PROJ_SQL} WHERE p.id = ?`, [id]);
   return r ? calculerTotaux(r) : null;
 }
-/** Génère le prochain numéro de projet séquentiel AAAA-NNN.
- *  Se base sur les numéros existants pour l'année courante (ne saute pas, ne duplique pas). */
+/** Génère le prochain numéro de projet séquentiel AAAA-NNN : MAX du suffixe + 1 sur
+ *  l'année courante (en UNE requête), jamais COUNT — supprimer un projet du milieu ne
+ *  fait pas retomber sur un numéro pris. L'index UNIQUE sur projets.numero est le filet :
+ *  deux créations simultanées qui calculent le même numéro → la 2e insertion est refusée
+ *  et ajouterProjet() réessaie avec le numéro suivant. */
 export async function genererNumeroProjet(): Promise<string> {
-  const annee = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", year: "numeric" }).format(new Date());
+  const annee = aujourdhuiMontreal().slice(0, 4);
   const prefixe = `${annee}-`;
-  const rows = await all<{ numero: string }>(
-    `SELECT numero FROM projets WHERE numero LIKE ? ORDER BY numero DESC`, [`${prefixe}%`]
+  // Suffixe numérique juste après « AAAA- ». CAST AS INTEGER ne lit que les chiffres de
+  // tête : un numéro dédoublonné « 2026-014-2 » compte pour 14, pas pour 2.
+  const r = await one<{ mx: number | null }>(
+    `SELECT MAX(CAST(substr(numero, ?) AS INTEGER)) AS mx FROM projets WHERE numero LIKE ?`,
+    [prefixe.length + 1, `${prefixe}%`]
   );
-  let max = 0;
-  for (const r of rows) {
-    const n = parseInt((r.numero || "").split("-")[1] || "0", 10);
-    if (!isNaN(n) && n > max) max = n;
-  }
+  const max = Number(r?.mx) || 0;
   return `${prefixe}${String(max + 1).padStart(3, "0")}`;
 }
 
+function estConflitUnique(e: any): boolean {
+  return /UNIQUE constraint failed/i.test(String(e?.message || e || ""));
+}
+
 export async function ajouterProjet(p: Projet): Promise<number> {
-  const numero = (p as any).numero || await genererNumeroProjet();
-  const r = await run(
-    `INSERT INTO projets (numero, client_id, nom, adresse_chantier, description, statut, date_debut, date_fin_prevue, soumission_numero, budget_estime, heures_estimees, prix_contrat, cree_par, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [numero, p.client_id || null, p.nom, p.adresse_chantier || null, p.description || null,
-     p.statut || 'actif', p.date_debut || null, p.date_fin_prevue || null,
-     p.soumission_numero || null, p.budget_estime || null, p.heures_estimees || null,
-     (p as any).prix_contrat || null, (p as any).cree_par || null,
-     new Date().toISOString()]
-  );
-  return r.lastInsertRowid;
+  const numeroImpose = String((p as any).numero || "").trim();
+  // Trois essais : un numéro généré peut entrer en collision avec une création
+  // simultanée ; un numéro IMPOSÉ déjà pris est refusé tout de suite (erreur explicite).
+  for (let essai = 0; ; essai++) {
+    const numero = numeroImpose || await genererNumeroProjet();
+    try {
+      const r = await run(
+        `INSERT INTO projets (numero, client_id, nom, adresse_chantier, description, statut, date_debut, date_fin_prevue, soumission_numero, budget_estime, heures_estimees, prix_contrat, cree_par, contrat_pipeline_id, date_creation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [numero, p.client_id || null, p.nom, p.adresse_chantier || null, p.description || null,
+         p.statut || 'actif', p.date_debut || null, p.date_fin_prevue || null,
+         p.soumission_numero || null, p.budget_estime || null, p.heures_estimees || null,
+         (p as any).prix_contrat || null, (p as any).cree_par || null, p.contrat_pipeline_id || null,
+         new Date().toISOString()]
+      );
+      return r.lastInsertRowid;
+    } catch (e: any) {
+      if (!estConflitUnique(e)) throw e;
+      if (numeroImpose || essai >= 2) {
+        throw Object.assign(new Error(`Le numéro de projet ${numero} est déjà pris.`), { code: "NUMERO_PROJET_PRIS" });
+      }
+    }
+  }
 }
 export async function modifierProjet(id: number, p: Partial<Projet>) {
   const champs = ['client_id', 'nom', 'adresse_chantier', 'description', 'statut', 'date_debut', 'date_fin_prevue', 'date_fin_reelle', 'duree_jours', 'budget_estime', 'heures_estimees', 'prix_contrat', 'facture_finale_data', 'facture_finale_type', 'contrat_signe_data', 'contrat_signe_type', 'reno_assistance', 'facturee', 'modifie_par'];
@@ -1735,24 +1958,26 @@ export async function supprimerProjet(id: number): Promise<{ ok: boolean; raison
   if (p && Number(p.a_contrat)) {
     return { ok: false, raison: "Ce projet porte un contrat signé joint. Retire-le d'abord si la suppression est vraiment voulue." };
   }
-  await run("DELETE FROM heures_projet WHERE projet_id = ?", [id]);
-  await run("DELETE FROM factures_projet WHERE projet_id = ?", [id]);
-  await run("DELETE FROM depenses_projet WHERE projet_id = ?", [id]);
-  // Étaient laissés orphelins : les PHOTOS (blobs, hors sauvegarde → invisibles et
-  // impurgeables), les EXTRAS (qui continuaient d'alimenter le badge « à facturer »
-  // sans pouvoir être rattachés), les tâches et les notes.
-  await run("DELETE FROM photos_chantier WHERE projet_id = ?", [id]).catch(() => {});
-  await run("DELETE FROM extras WHERE projet_id = ?", [id]).catch(() => {});
-  // Les DOCUMENTS de chantier tombent dans le même piège que les photos : des blobs qui
-  // survivraient au projet, invisibles (plus aucune fiche ne les affiche) et impurgeables.
-  await run("DELETE FROM projet_fichiers WHERE projet_id = ?", [id]).catch(() => {});
-  await run("UPDATE taches_client SET projet_id = NULL WHERE projet_id = ?", [id]).catch(() => {});
-  await run("UPDATE notes_rapides SET projet_id = NULL WHERE projet_id = ?", [id]).catch(() => {});
-  // Le contrat signé, lui, se GARDE (pièce juridique) : on coupe seulement le lien vers
-  // un projet qui n'existe plus, sinon il pointerait dans le vide.
-  await run("UPDATE pipeline_contrats SET projet_id = NULL WHERE projet_id = ?", [id]).catch(() => {});
-  await run("UPDATE contrats SET projet_id = NULL WHERE projet_id = ?", [id]).catch(() => {});
-  await run("DELETE FROM projets WHERE id = ?", [id]);
+  // Cascade en UNE transaction. Avant : onze `run()` en séquence, la plupart avec un
+  // `.catch(() => {})` — une panne au milieu laissait heures et factures effacées mais le
+  // projet en place (ou l'inverse), sans rien dire. Étaient aussi laissés orphelins : les
+  // PHOTOS (blobs, hors sauvegarde → invisibles et impurgeables), les EXTRAS (qui
+  // continuaient d'alimenter le badge « à facturer »), les DOCUMENTS de chantier, les
+  // tâches et les notes. Le contrat signé, lui, se GARDE (pièce juridique) : on coupe
+  // seulement le lien vers un projet qui n'existe plus.
+  await runBatch([
+    { sql: "DELETE FROM heures_projet WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM factures_projet WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM depenses_projet WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM photos_chantier WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM extras WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM projet_fichiers WHERE projet_id = ?", args: [id] },
+    { sql: "UPDATE taches_client SET projet_id = NULL WHERE projet_id = ?", args: [id] },
+    { sql: "UPDATE notes_rapides SET projet_id = NULL WHERE projet_id = ?", args: [id] },
+    { sql: "UPDATE pipeline_contrats SET projet_id = NULL WHERE projet_id = ?", args: [id] },
+    { sql: "UPDATE contrats SET projet_id = NULL WHERE projet_id = ?", args: [id] },
+    { sql: "DELETE FROM projets WHERE id = ?", args: [id] },
+  ]);
   return { ok: true };
 }
 
@@ -1765,9 +1990,16 @@ export async function listerHeuresProjet(projet_id: number) {
   return await all<HeureProjet>("SELECT * FROM heures_projet WHERE projet_id = ? ORDER BY date DESC, id DESC", [projet_id]);
 }
 export async function ajouterHeureProjet(h: HeureProjet & { ajoute_par?: string }): Promise<number> {
+  // Le taux est EXIGÉ : le repli silencieux à 90 $/h entrait dans le coût de main-d'œuvre
+  // et dans la paie sans que personne ne l'ait choisi. La route le prend dans la fiche
+  // de l'employé ; tout autre appelant doit le fournir.
+  const taux = Number(h.taux_horaire);
+  if (!Number.isFinite(taux) || taux <= 0) {
+    throw Object.assign(new Error("taux_horaire requis pour enregistrer des heures (aucun défaut)"), { code: "TAUX_REQUIS" });
+  }
   const r = await run(
     `INSERT INTO heures_projet (projet_id, date, heures, description, employe, taux_horaire, ajoute_par, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [h.projet_id, h.date, h.heures, h.description || null, h.employe || null, h.taux_horaire ?? 90, h.ajoute_par || null, new Date().toISOString()]
+    [h.projet_id, h.date, h.heures, h.description || null, h.employe || null, taux, h.ajoute_par || null, new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
@@ -1779,6 +2011,23 @@ export async function heureDansPaiePayee(employe: string | null, date: string): 
     [employe, String(date).slice(0, 10)]
   ).catch(() => ({ n: 0 }));
   return Number(r?.n || 0) > 0;
+}
+
+/** Contrôles de cohérence d'une saisie d'heures, en UNE requête :
+ *  - `total_jour` : heures déjà saisies pour (employé, date), hors `exclureId` ;
+ *  - `doublons_recents` : entrées identiques (employé, projet, date, heures) créées dans
+ *    les `secondes` dernières secondes — un double clic ou un réessai réseau. */
+export async function controlesSaisieHeures(p: {
+  employe: string; date: string; projet_id: number; heures: number; exclureId?: number; secondes?: number;
+}): Promise<{ total_jour: number; doublons_recents: number }> {
+  const seuil = new Date(Date.now() - (p.secondes ?? 120) * 1000).toISOString();
+  const r = await one<{ total_jour: number; doublons_recents: number }>(
+    `SELECT COALESCE(SUM(heures), 0) AS total_jour,
+            COALESCE(SUM(CASE WHEN projet_id = ? AND ABS(heures - ?) < 0.0001 AND date_saisie > ? THEN 1 ELSE 0 END), 0) AS doublons_recents
+     FROM heures_projet WHERE employe = ? AND date = ? AND id != ?`,
+    [p.projet_id, p.heures, seuil, p.employe, p.date, p.exclureId ?? -1],
+  );
+  return { total_jour: Number(r?.total_jour || 0), doublons_recents: Number(r?.doublons_recents || 0) };
 }
 
 export async function supprimerHeureProjet(id: number): Promise<{ ok: boolean; raison?: string }> {
@@ -1847,7 +2096,8 @@ export async function soumissionsARelancer(): Promise<any[]> {
 }
 export async function rechercheGlobale(q: string): Promise<{ type: string; id: number | string; titre: string; sous: string }[]> {
   if (!q.trim()) return [];
-  const like = `%${q.toLowerCase()}%`;
+  // % et _ saisis sont échappés : chaque LIKE ci-dessous porte `ESCAPE '\'` (voir lib/sql-like.ts).
+  const like = `%${echapperLike(q.toLowerCase())}%`;
   const m = q.replace(",", ".").match(/\d+(\.\d+)?/);
   const n = m ? Number(m[0]) : null;
 
@@ -1856,9 +2106,9 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
   // pas les autres résultats. L'ordre d'affichage est reconstruit après coup.
   const vide: any[] = [];
   const [clients, projets, soums, depMontant, depTxt, comms, taches, fichiers] = (await Promise.allSettled([
-    all<any>(`SELECT id, nom, telephone FROM clients WHERE LOWER(nom) LIKE ? OR LOWER(courriel) LIKE ? OR telephone LIKE ? LIMIT 5`, [like, like, like]),
-    all<any>(`SELECT id, nom, adresse_chantier FROM projets WHERE LOWER(nom) LIKE ? OR LOWER(adresse_chantier) LIKE ? LIMIT 5`, [like, like]),
-    all<any>(`SELECT numero, client_nom, total FROM soumissions WHERE LOWER(numero) LIKE ? OR LOWER(client_nom) LIKE ? LIMIT 5`, [like, like]),
+    all<any>(`SELECT id, nom, telephone FROM clients WHERE LOWER(nom) LIKE ? ESCAPE '\\' OR LOWER(courriel) LIKE ? ESCAPE '\\' OR telephone LIKE ? ESCAPE '\\' LIMIT 5`, [like, like, like]),
+    all<any>(`SELECT id, nom, adresse_chantier FROM projets WHERE LOWER(nom) LIKE ? ESCAPE '\\' OR LOWER(adresse_chantier) LIKE ? ESCAPE '\\' LIMIT 5`, [like, like]),
+    all<any>(`SELECT numero, client_nom, total FROM soumissions WHERE LOWER(numero) LIKE ? ESCAPE '\\' OR LOWER(client_nom) LIKE ? ESCAPE '\\' LIMIT 5`, [like, like]),
     // Dépenses : par MONTANT (ex. "45" ou "45,33")…
     n == null ? Promise.resolve(vide) : all<any>(
       `SELECT dp.id, dp.montant, dp.fournisseur, dp.date, dp.categorie, dp.projet_id, p.nom as projet_nom
@@ -1871,7 +2121,7 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
     all<any>(
       `SELECT dp.id, dp.montant, dp.fournisseur, dp.date, dp.categorie, dp.projet_id, p.nom as projet_nom
        FROM depenses_projet dp LEFT JOIN projets p ON p.id = dp.projet_id
-       WHERE LOWER(dp.fournisseur) LIKE ? OR LOWER(dp.description) LIKE ?
+       WHERE LOWER(dp.fournisseur) LIKE ? ESCAPE '\\' OR LOWER(dp.description) LIKE ? ESCAPE '\\'
        ORDER BY dp.date DESC LIMIT 4`,
       [like, like]
     ),
@@ -1879,19 +2129,19 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
     all<any>(
       `SELECT cc.id, cc.client_id, cc.texte, cc.auteur, cl.nom as client_nom
        FROM client_commentaires cc LEFT JOIN clients cl ON cl.id = cc.client_id
-       WHERE LOWER(cc.texte) LIKE ? LIMIT 4`,
+       WHERE LOWER(cc.texte) LIKE ? ESCAPE '\\' LIMIT 4`,
       [like]
     ),
     all<any>(
       `SELECT ct.id, ct.client_id, ct.titre, ct.complete, cl.nom as client_nom
        FROM client_taches ct LEFT JOIN clients cl ON cl.id = ct.client_id
-       WHERE LOWER(ct.titre) LIKE ? LIMIT 4`,
+       WHERE LOWER(ct.titre) LIKE ? ESCAPE '\\' LIMIT 4`,
       [like]
     ),
     all<any>(
       `SELECT cf.id, cf.client_id, cf.nom, cl.nom as client_nom
        FROM client_fichiers cf LEFT JOIN clients cl ON cl.id = cf.client_id
-       WHERE LOWER(cf.nom) LIKE ? LIMIT 4`,
+       WHERE LOWER(cf.nom) LIKE ? ESCAPE '\\' LIMIT 4`,
       [like]
     ),
   ])).map((r) => (r.status === "fulfilled" ? r.value : vide));
@@ -1914,12 +2164,16 @@ export async function rechercheGlobale(q: string): Promise<{ type: string; id: n
   for (const f of fichiers) out.push({ type: "fichier", id: f.client_id, titre: `📎 ${f.nom}`, sous: f.client_nom || "?" });
   return out;
 }
+/** Arrondi au cent des agrégats d'argent avant de les rendre : SUM() de REAL accumule des
+ *  résidus binaires (12 345,670000001) qui s'affichent tels quels ou faussent un `===`. */
+export function auCent(x: any): number {
+  const n = Number(x);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
 export async function finances(annee: number): Promise<any> {
-  // Cache 30 s invalidé par toute écriture (cacheLecture). En plus du cache, le calcul
-  // est fait en 5 requêtes GROUP BY mois LANCÉES EN PARALLÈLE, au lieu de 60 requêtes
+  // Pas de cache : 5 requêtes GROUP BY mois LANCÉES EN PARALLÈLE, au lieu de 60 requêtes
   // séquentielles (12 mois × 5). Sur Turso en prod, chaque requête est un aller-retour
   // réseau (~20-50 ms) : le chargement à froid passait ~1,5-3 s → ~1 aller-retour.
-  return cacheLecture(`finances:${annee}`, 30000, async () => {
   const prefixe = `${annee}-%`;
   // Mois de complétion d'un projet (date fin réelle, sinon prévue, sinon début/création).
   // substr(...,1,7) = « AAAA-MM » ; fonctionne pour les dates courtes et les ISO complets.
@@ -1970,13 +2224,13 @@ export async function finances(annee: number): Promise<any> {
     // Les factures détaxées n'ont pas de taxes à retirer : on ne ramène que la part taxable.
     const depenses_avant_taxes = depensesAvantTaxes(depenses, depensesDetaxe);
     mois.push({
-      mois: m, facture: +(mFact.get(ym)?.v || 0), paye: +(mPaye.get(ym)?.v || 0),
-      depenses, depenses_avant_taxes, mo, contrats: revenu, revenu, revenu_avant_taxes,
-      marge: revenu_avant_taxes - depenses_avant_taxes - mo,
+      mois: m, facture: auCent(mFact.get(ym)?.v), paye: auCent(mPaye.get(ym)?.v),
+      depenses: auCent(depenses), depenses_avant_taxes: auCent(depenses_avant_taxes), mo: auCent(mo),
+      contrats: auCent(revenu), revenu: auCent(revenu), revenu_avant_taxes: auCent(revenu_avant_taxes),
+      marge: auCent(revenu_avant_taxes - depenses_avant_taxes - mo),
     });
   }
   return { annee, mois };
-  });
 }
 export async function heuresParEmploye(depuis: string): Promise<{ employe: string; total_heures: number; cout_total: number; n_jours: number }[]> {
   return await all<any>(
@@ -2092,23 +2346,39 @@ export async function supprimerExtra(id: number): Promise<void> {
 export interface FactureProjet {
   id?: number; projet_id: number; numero?: string; montant: number;
   date: string; description?: string; payee?: number; date_paiement?: string;
+  /** Montant encaissé (paiement partiel possible). La case « payée » reste l'indicateur. */
+  montant_paye?: number;
 }
 export async function listerFacturesProjet(projet_id: number) {
   return await all<FactureProjet>("SELECT * FROM factures_projet WHERE projet_id = ? ORDER BY date DESC", [projet_id]);
 }
+/** Prochain numéro de facture F-NNN : MAX du suffixe + 1, toutes factures confondues
+ *  (l'écran propose « F-001 » en exemple). Les numéros saisis à la main restent permis,
+ *  mais un numéro déjà pris est refusé — voir numeroFactureExiste(). */
+export async function genererNumeroFacture(): Promise<string> {
+  const rows = await all<{ numero: string }>("SELECT numero FROM factures_projet WHERE numero LIKE 'F-%'");
+  return `F-${String(maxSuffixe(rows) + 1).padStart(3, "0")}`;
+}
+export async function numeroFactureExiste(numero: string): Promise<boolean> {
+  const r = await one<{ id: number }>("SELECT id FROM factures_projet WHERE numero = ?", [numero]);
+  return !!r;
+}
 export async function ajouterFactureProjet(f: FactureProjet): Promise<number> {
+  const numero = (f.numero || "").trim() || await genererNumeroFacture();
   const r = await run(
-    `INSERT INTO factures_projet (projet_id, numero, montant, date, description, payee, date_paiement, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [f.projet_id, f.numero || null, f.montant, f.date, f.description || null, f.payee ? 1 : 0, f.date_paiement || null, new Date().toISOString()]
+    `INSERT INTO factures_projet (projet_id, numero, montant, date, description, payee, date_paiement, montant_paye, date_saisie) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [f.projet_id, numero, f.montant, f.date, f.description || null, f.payee ? 1 : 0, f.date_paiement || null,
+     Number.isFinite(Number(f.montant_paye)) ? Number(f.montant_paye) : (f.payee ? f.montant : 0), new Date().toISOString()]
   );
   return r.lastInsertRowid;
 }
 export async function marquerFacturePayee(id: number, date_paiement: string) {
-  await run("UPDATE factures_projet SET payee = 1, date_paiement = ? WHERE id = ?", [date_paiement, id]);
+  // Payée en entier : le montant encaissé suit le montant de la facture.
+  await run("UPDATE factures_projet SET payee = 1, date_paiement = ?, montant_paye = montant WHERE id = ?", [date_paiement, id]);
 }
 /** Annule un paiement marqué par erreur (le geste inverse manquait). */
 export async function annulerPaiementFacture(id: number) {
-  await run("UPDATE factures_projet SET payee = 0, date_paiement = NULL WHERE id = ?", [id]);
+  await run("UPDATE factures_projet SET payee = 0, date_paiement = NULL, montant_paye = 0 WHERE id = ?", [id]);
 }
 /** Supprime une facture. REFUSE une facture déjà encaissée : c'est la trace d'un
  *  paiement reçu, et il n'y a pas de corbeille dans cette app — une suppression efface
@@ -2235,6 +2505,20 @@ export async function projetReferenceValide(projet_id: any): Promise<boolean> {
   return !!r;
 }
 
+/** Ce qu'il faut d'un projet pour juger d'une saisie (heures, dépense) : existence ET
+ *  statut/dates pour `accepteSaisieTardive()`. UNE requête — remplace
+ *  projetReferenceValide() dans les routes d'écriture, sans en ajouter une seconde.
+ *  Retourne `{ existe: false }` si l'id ne pointe sur rien ; `null` si aucun projet
+ *  n'est référencé (dépense générale : permis). */
+export type ProjetPourSaisie = { id: number; statut: string | null; date_fin_reelle: string | null; date_fin_prevue: string | null };
+export async function projetPourSaisie(projet_id: any): Promise<{ existe: true; projet: ProjetPourSaisie } | { existe: false } | null> {
+  if (projet_id === null || projet_id === undefined || projet_id === "") return null;
+  const n = Number(projet_id);
+  if (!Number.isFinite(n)) return { existe: false };
+  const p = await one<ProjetPourSaisie>("SELECT id, statut, date_fin_reelle, date_fin_prevue FROM projets WHERE id = ?", [n]);
+  return p ? { existe: true, projet: p } : { existe: false };
+}
+
 // === DÉPENSES ===
 export interface DepenseProjet {
   id?: number; projet_id?: number | null; date: string; montant: number;
@@ -2267,6 +2551,10 @@ export async function ajouterDepenseProjet(d: DepenseProjet & { ajoute_par?: str
 }
 export async function supprimerDepenseProjet(id: number) {
   await run("DELETE FROM depenses_projet WHERE id = ?", [id]);
+}
+/** Rattachement d'une dépense (sans le blob du reçu) — pour juger d'une modification. */
+export async function getDepenseProjet(id: number): Promise<{ id: number; projet_id: number | null; date: string; montant: number } | null> {
+  return await one("SELECT id, projet_id, date, montant FROM depenses_projet WHERE id = ?", [id]);
 }
 export async function modifierDepenseProjet(id: number, d: Partial<DepenseProjet>, versionAttendue?: number): Promise<ResultatMaj> {
   // `valeur || null` était appliqué à TOUS les champs. Le commentaire plus bas notait
@@ -2328,6 +2616,10 @@ export async function listerPhotosChantier(projet_id?: number, options: { sansDa
 }
 export async function getPhotoChantier(id: number): Promise<PhotoChantier | null> {
   return await one<PhotoChantier>("SELECT * FROM photos_chantier WHERE id = ?", [id]);
+}
+/** Métadonnées d'une photo SANS ses blobs (pour le journal d'audit à la suppression). */
+export async function getPhotoChantierMeta(id: number): Promise<any | null> {
+  return await one<any>("SELECT id, projet_id, date, employes, photo_type, description, date_saisie, drive_file_id, ajoute_par FROM photos_chantier WHERE id = ?", [id]);
 }
 export async function getVignettePhoto(id: number): Promise<{ thumb_data?: string; photo_data?: string; photo_type?: string } | null> {
   return await one<any>("SELECT thumb_data, photo_data, photo_type FROM photos_chantier WHERE id = ?", [id]);
@@ -2398,8 +2690,12 @@ export async function ajouterJobBiblio(job: JobBiblio): Promise<number> {
 export async function listerJobsBiblio(): Promise<JobBiblio[]> {
   // `photo_ids` : la liste des id de photos, PAS les images elles-mêmes — la liste resterait
   // sinon plombée par des méga-octets de base64. Les vignettes se chargent une par une.
+  // Les trois colonnes JSON (hover_data_json, soumission_data_json, photos_json) sont
+  // écartées aussi : l'écran ne les lit pas dans la liste, et un JSON Hover pèse.
   return await all<JobBiblio>(
-    `SELECT b.*, (SELECT GROUP_CONCAT(p.id) FROM bibliotheque_photos p WHERE p.job_id = b.id) as photo_ids
+    `SELECT b.id, b.date_ajout, b.adresse, b.type_materiau, b.parement_pi2, b.fascia_pi_lin, b.soffite_pi2,
+            b.nb_etages, b.total_soumission, b.heures_reelles, b.notes_chantier, b.complexite,
+            (SELECT GROUP_CONCAT(p.id) FROM bibliotheque_photos p WHERE p.job_id = b.id) as photo_ids
      FROM bibliotheque_jobs b ORDER BY b.date_ajout DESC LIMIT 200`
   );
 }
@@ -2414,6 +2710,15 @@ export async function ajouterPhotoBiblio(job_id: number, data: string, type?: st
     [job_id, data, type || "image/jpeg", new Date().toISOString()]
   );
   return r.lastInsertRowid;
+}
+/** Plusieurs photos d'une job en UN lot (un INSERT par photo = un aller-retour chacun). */
+export async function ajouterPhotosBiblio(job_id: number, photos: { data: string; type?: string }[]): Promise<number> {
+  const now = new Date().toISOString();
+  await runBatch(photos.map((p) => ({
+    sql: "INSERT INTO bibliotheque_photos (job_id, data, type, date_ajout) VALUES (?, ?, ?, ?)",
+    args: [job_id, p.data, p.type || "image/jpeg", now],
+  })));
+  return photos.length;
 }
 export async function getPhotoBiblio(id: number): Promise<{ data: string; type: string } | null> {
   return await one<{ data: string; type: string }>("SELECT data, type FROM bibliotheque_photos WHERE id = ?", [id]);
@@ -2470,6 +2775,15 @@ async function seedEmployes() {
 export async function listerEmployes(): Promise<Employe[]> {
   await initDb(); await seedEmployes();
   return await all<Employe>("SELECT * FROM employes WHERE actif = 1 ORDER BY nom ASC");
+}
+// Liste SANS les données sensibles (NAS, date de naissance, spécimen de chèque) : c'est ce
+// que servent la liste /employes et tous les écrans qui n'ont besoin que du nom et du taux.
+// `a_specimen` remplace le blob pour l'affichage. La fiche complète passe par getEmploye().
+const EMPLOYE_COLS_LITES = "id, nom, taux_horaire, das_pct, actif, recoit_talon, telephone, courriel, adresse, date_embauche, poste, contact_urgence_nom, contact_urgence_lien, contact_urgence_tel, notes, date_creation, (specimen_cheque_data IS NOT NULL AND specimen_cheque_data != '') AS a_specimen";
+export type EmployeLite = Omit<Employe, "nas" | "date_naissance" | "specimen_cheque_data" | "specimen_cheque_type"> & { a_specimen: number };
+export async function listerEmployesLite(): Promise<EmployeLite[]> {
+  await initDb(); await seedEmployes();
+  return await all<EmployeLite>(`SELECT ${EMPLOYE_COLS_LITES} FROM employes WHERE actif = 1 ORDER BY nom ASC`);
 }
 export async function ajouterEmploye(e: Employe): Promise<number> {
   const r = await run(
@@ -2549,11 +2863,15 @@ export async function modifierAssurance(id: number, a: Partial<Assurance>) {
 export async function supprimerAssurance(id: number) { await run("DELETE FROM assurances WHERE id = ?", [id]); }
 
 // === PAYE / PÉRIODES BI-HEBDOMADAIRES ===
-// Conventions :
-// - Période = 14 jours, débutant un dimanche (jour 0)
-// - Heures normales : <= 40h/semaine (max 80h sur la période)
-// - Heures supplémentaires : > 40h/semaine (taux × 1.5)
-// - DAS : 15% retenu sur le brut
+// Conventions (régime maison, décision de Francis) :
+// - Période = 14 jours, du LUNDI au DIMANCHE deux semaines plus tard, ancrée sur
+//   ANCRE_PAIE (lundi 18 mai 2026) — voir periodeBiHebdo() dans lib/calculs.ts
+// - Heures payées : jusqu'à 80 h sur la quinzaine, au taux normal
+// - Au-delà de 80 h : AUCUNE majoration ×1,5 ; le surplus part en BANQUE d'heures,
+//   1 h pour 1 h, et sert à combler une quinzaine sous 80 h plus tard (choix explicite
+//   de l'utilisateur, jamais automatique)
+// - Paie versée au BRUT ; la DAS (taux de la fiche employé, défaut 15 %) est informative
+// Le calcul d'une quinzaine est la fonction pure calculerPaieQuinzaine() (lib/calculs.ts).
 
 export interface PaiePeriode {
   id?: number; employe: string; debut: string; fin: string;
@@ -2569,11 +2887,14 @@ export interface PaiePeriode {
   heures_ferie?: number;
   /** Détail JSON des fériés de la période : [{ date, nom, heures }]. */
   feries_detail?: string | null;
+  /** Ventilation du brut par taux horaire quand la quinzaine en contient plusieurs
+   *  (sinon une seule entrée). Calculé à la lecture depuis les heures, jamais stocké ;
+   *  absent si les heures de la période n'existent plus. Sert au talon de paie. */
+  gains_par_taux?: GainParTaux[];
 }
 
 // Logique paie centralisée + testée dans lib/calculs.ts
 const periodeBiHebdo = periodeBiHebdoCalc;
-const calculerHeuresPaye = calculerHeuresPayeCalc;
 
 /** Génère/met à jour les périodes de paye à partir des heures saisies.
  *  Retourne la liste des périodes pour un employé donné (ou tous). */
@@ -2626,9 +2947,9 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // 3. BANQUE D'HEURES — traitement CHRONOLOGIQUE par employé.
   //    Pas de prime ×1.5 : les heures au-delà de 80h/quinzaine sont ACCUMULÉES
   //    dans une banque, et servent à compléter une quinzaine sous 80h plus tard.
-  // Même seuil que la logique paie centralisée — le bandeau « heures dues » s'y accroche
-  // aussi, les deux doivent bouger ensemble ou la banque redevient une dette fantôme.
-  const SEUIL = SEUIL_SUP_PERIODE;
+  //    Le calcul d'une quinzaine est délégué à calculerPaieQuinzaine() (pure, testée) ;
+  //    ici on ne fait que l'enchaînement (le solde de l'une = la dispo de la suivante)
+  //    et la persistance.
   // Regrouper les groupes par employé, triés par date de début (ancien → récent)
   const parEmploye = new Map<string, typeof groupes extends Map<string, infer V> ? V[] : never>();
   for (const g of groupes.values()) {
@@ -2653,23 +2974,31 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // quinzaine puis un UPDATE/INSERT par quinzaine — 376 requêtes mesurées pour trois
   // employés. Les écritures sont accumulées et envoyées en un seul lot, et une période
   // dont rien ne change n'est pas réécrite : au régime de croisière, zéro écriture.
+  // La DAS de chaque employé est chargée EN UNE requête aussi (pas une par employé) :
+  // avant, 15 % était codé en dur ici alors que la fiche porte `das_pct`.
+  const [lignesExistantes, fichesDas] = await Promise.all([
+    all<any>(`SELECT * FROM paies_periodes ${employe ? "WHERE employe = ?" : ""}`, employe ? [employe] : []),
+    all<{ nom: string; das_pct: number | null }>("SELECT nom, das_pct FROM employes"),
+  ]);
   const existants = new Map<string, any>();
-  for (const p of await all<any>(`SELECT * FROM paies_periodes ${employe ? "WHERE employe = ?" : ""}`, employe ? [employe] : [])) {
-    existants.set(`${p.employe}|${p.debut}|${p.fin}`, p);
+  for (const p of lignesExistantes) existants.set(`${p.employe}|${p.debut}|${p.fin}`, p);
+  const dasParEmploye = new Map<string, number>();
+  for (const f of fichesDas) {
+    const d = Number(f.das_pct);
+    dasParEmploye.set(String(f.nom || "").trim().toLowerCase(), Number.isFinite(d) && f.das_pct != null ? d : DAS_DEFAUT);
   }
+  const gainsParPeriode = new Map<string, GainParTaux[]>();
   const ecritures: { sql: string; args: any[] }[] = [];
   const egal = (a: any, b: any) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.000001;
   for (const [, liste] of parEmploye) {
     (liste as any[]).sort((a, b) => a.debut.localeCompare(b.debut));
     let banque = 0; // solde courant de la banque (heures accumulées non payées)
     for (const g of liste as any[]) {
-      const travaillees = g.heures.reduce((s: number, e: any) => s + (e.heures || 0), 0);
-      // Taux MOYEN PONDÉRÉ par les heures : respecte les taux réels par entrée.
-      // Avant, on payait toute la quinzaine à UN taux (celui de la 1re entrée vue) →
-      // un employé avec 40 h @ 50 $ + 40 h @ 60 $ était payé 80 h × 60 $ au lieu de
-      // 40×50 + 40×60. Pour un taux unique (cas normal), la moyenne = ce taux.
-      const montantHeures = g.heures.reduce((s: number, e: any) => s + (e.heures || 0) * (e.taux || 0), 0);
       const existant = existants.get(`${g.employe}|${g.debut}|${g.fin}`) || null;
+      // Sur une période PAYÉE, la DAS versée est celle enregistrée : on ne la recalcule pas.
+      const dasPct = existant?.paye && existant.das_pct != null
+        ? Number(existant.das_pct)
+        : dasParEmploye.get(String(g.employe).trim().toLowerCase()) ?? DAS_DEFAUT;
 
       // INDEMNITÉ DE JOUR FÉRIÉ — 1/20 des 4 semaines complètes qui précèdent la semaine du
       // congé (lib/paie-feries.ts). Une période DÉJÀ PAYÉE garde l'indemnité qu'elle a
@@ -2684,41 +3013,31 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
         ? (existant.feries_detail ?? null)
         : (feries.detail && feries.detail.length ? JSON.stringify(feries.detail) : null);
 
-      // Le taux : moyenne pondérée des heures punchées. Quand la quinzaine n'a aucune heure
-      // (congé des Fêtes payé au férié seulement), on prend le taux de la fiche employé.
-      const taux = travaillees > 0 ? montantHeures / travaillees : (fiches.get(g.employe)?.taux || 0);
-
-      // L'indemnité COMPTE dans le seuil de 80 h (LNT art. 53, décision de Francis) : elle
-      // est créditée à la période comme des heures, donc 80 h punchées + 8 h de férié se
-      // paient 80 h et mettent 8 h à la banque — l'employé ne perd rien, il le reporte.
-      const { creditees, payeesDoffice: base, versBanque: surplus } = repartitionFerie(travaillees, heuresFerie, SEUIL);
-      const dispoAvant = banque;                          // banque disponible AVANT cette période
-
-      // Heures tirées de la banque pour combler cette période — CHOISI par l'utilisateur (banque_appliquee).
-      // Jamais automatique : on propose seulement. Plafonné au manque (80 - créditées) et à la dispo.
-      let appliquee = 0;
-      if (existant?.paye) {
-        appliquee = Math.min(existant.banque_appliquee || 0, dispoAvant);
-      } else if (creditees < SEUIL) {
-        appliquee = Math.min(existant?.banque_appliquee || 0, SEUIL - creditees, dispoAvant);
-      }
-      const payees = base + appliquee;
-      banque = dispoAvant + surplus - appliquee;          // solde résultant
-
-      // Taux normal sur les heures payées — AUCUNE prime ×1.5, l'overtime $ n'existe pas
-      const brut = payees * taux;
-      const dasMontant = brut * 0.15;
-      const net = brut - dasMontant;
+      const q = calculerPaieQuinzaine(g.heures, {
+        banqueAvant: banque,
+        banqueAppliqueeDemandee: existant?.banque_appliquee || 0,
+        paye: !!existant?.paye,
+        dasPct,
+        // L'indemnité est créditée comme des heures et compte dans le seuil de 80 h.
+        // `tauxRepli` : une quinzaine qui ne porte QUE le férié (congé des Fêtes) n'a
+        // aucune heure punchée, donc aucun taux moyen — on prend celui de la fiche.
+        heuresFerie,
+        tauxRepli: fiches.get(g.employe)?.taux || 0,
+      });
+      const { travaillees, taux, banque_dispo: dispoAvant, banque_appliquee: appliquee, payees, brut, das: dasMontant, net } = q;
+      banque = q.banque_solde;                            // solde résultant → dispo de la suivante
+      gainsParPeriode.set(`${g.employe}|${g.debut}|${g.fin}`, q.gains_par_taux);
 
       if (existant) {
         if (!existant.paye) {
           const inchangee = egal(existant.heures_normales, payees) && egal(existant.heures_travaillees, travaillees)
             && egal(existant.banque_dispo, dispoAvant) && egal(existant.banque_appliquee, appliquee) && egal(existant.banque_solde, banque)
-            && egal(existant.taux_horaire, taux) && egal(existant.montant_brut, brut) && egal(existant.das_montant, dasMontant) && egal(existant.montant_net, net)
+            && egal(existant.taux_horaire, taux) && egal(existant.das_pct, dasPct)
+            && egal(existant.montant_brut, brut) && egal(existant.das_montant, dasMontant) && egal(existant.montant_net, net)
             && egal(existant.heures_ferie, heuresFerie) && (existant.feries_detail ?? null) === detailFerie;
           if (!inchangee) ecritures.push({
-            sql: `UPDATE paies_periodes SET heures_normales=?, heures_sup=0, heures_travaillees=?, heures_ferie=?, feries_detail=?, banque_dispo=?, banque_appliquee=?, banque_solde=?, taux_horaire=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
-            args: [payees, travaillees, heuresFerie, detailFerie, dispoAvant, appliquee, banque, taux, brut, dasMontant, net, existant.id],
+            sql: `UPDATE paies_periodes SET heures_normales=?, heures_sup=0, heures_travaillees=?, heures_ferie=?, feries_detail=?, banque_dispo=?, banque_appliquee=?, banque_solde=?, taux_horaire=?, das_pct=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
+            args: [payees, travaillees, heuresFerie, detailFerie, dispoAvant, appliquee, banque, taux, dasPct, brut, dasMontant, net, existant.id],
           });
         } else {
           // Période payée : on ne touche JAMAIS aux montants versés. En revanche on
@@ -2736,11 +3055,13 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
       } else {
         ecritures.push({
           sql: `INSERT OR IGNORE INTO paies_periodes (employe, debut, fin, heures_normales, heures_sup, heures_travaillees, heures_ferie, feries_detail, banque_dispo, banque_appliquee, banque_solde, taux_horaire, das_pct, montant_brut, das_montant, montant_net, paye, date_creation) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?)`,
-          args: [g.employe, g.debut, g.fin, payees, travaillees, heuresFerie, detailFerie, dispoAvant, banque, taux, 0.15, brut, dasMontant, net, new Date().toISOString()],
+          args: [g.employe, g.debut, g.fin, payees, travaillees, heuresFerie, detailFerie, dispoAvant, banque, taux, dasPct, brut, dasMontant, net, new Date().toISOString()],
         });
       }
     }
   }
+  // Aucune écriture si rien n'a changé : runBatch() ne fait rien sur un lot vide, donc un
+  // GET /api/paies au régime de croisière ne touche pas la base.
   await runBatch(ecritures);
 
   // 4. Retourner la liste
@@ -2761,6 +3082,7 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
     heures_non_payees: p.paye
       ? heuresDuesPeriodePayee(p.heures_travaillees || 0, (p.heures_normales || 0) - (p.heures_ferie || 0))
       : 0,
+    gains_par_taux: gainsParPeriode.get(`${p.employe}|${p.debut}|${p.fin}`),
   }));
 }
 
@@ -2779,13 +3101,13 @@ export async function nettoyerPayePeriodesOrphelines(): Promise<number> {
   const heuresExistantes = await all<{ employe: string; date: string }>(
     "SELECT DISTINCT employe, date FROM heures_projet WHERE employe IS NOT NULL"
   );
-  if (heuresExistantes.length === 0) {
-    // Une période qui ne porte QUE une indemnité de férié n'a, par définition, aucune heure
-    // punchée : elle n'est pas orpheline. La supprimer ici la ferait renaître au prochain
-    // listerPaiePeriodes, puis mourir — une paie qui clignote, jamais versée.
-    const r = await run("DELETE FROM paies_periodes WHERE paye = 0 AND COALESCE(heures_ferie, 0) <= 0", []);
-    return r.rowsAffected;
-  }
+  // GARDE : aucune heure lue → on ne nettoie RIEN. Avant, ce cas effaçait TOUTES les
+  // périodes non payées ; or « aucune ligne » est aussi ce que renvoie une lecture
+  // tronquée ou une table vidée par erreur — pas seulement une base neuve. Sur une base
+  // neuve il n'y a de toute façon aucune période à nettoyer.
+  // (Cette garde protège du même coup les périodes qui ne portent QU'une indemnité de
+  // férié : sans heure punchée, elles ne sont pas orphelines pour autant.)
+  if (heuresExistantes.length === 0) return 0;
   // Liste les périodes existantes
   const periodes = await all<{ id: number; employe: string; debut: string; fin: string; paye: number; heures_ferie: number | null }>("SELECT id, employe, debut, fin, paye, heures_ferie FROM paies_periodes");
   // Les (employé, période) qui ont encore des heures — calculé EN MÉMOIRE à partir des
@@ -2980,18 +3302,60 @@ export async function exporterTable(table: string, tri?: string, sansColonnes?: 
   return await all<any>(`SELECT ${cols} FROM ${table}${tri ? ` ORDER BY ${tri}` : ""}`);
 }
 
-/** Construit le contenu complet d'une sauvegarde : { champ: lignes[] } + le compte par champ.
- *  Une table absente (schéma plus ancien) donne un tableau vide au lieu de tout faire échouer. */
-export async function contenuSauvegarde(): Promise<{ donnees: Record<string, any[]>; counts: Record<string, number> }> {
+/** Clé de parametres_app où sont gardés les comptes de la dernière sauvegarde réussie. */
+export const CLE_BACKUP_DERNIERS_COUNTS = "backup_derniers_counts";
+/** Seuil d'alerte : une table qui a perdu plus de cette fraction de lignes depuis la
+ *  dernière sauvegarde est signalée (suppression massive, restauration partielle…). */
+export const SEUIL_PERTE_LIGNES = 0.2;
+
+/** Compare les comptes d'aujourd'hui à ceux de la sauvegarde précédente. Renvoie une
+ *  phrase par table qui a perdu plus de SEUIL_PERTE_LIGNES de ses lignes. Fonction pure. */
+export function detecterPertesLignes(
+  counts: Record<string, number>, precedents: Record<string, number> | null | undefined, seuil = SEUIL_PERTE_LIGNES,
+): string[] {
+  const alertes: string[] = [];
+  if (!precedents) return alertes;
+  for (const [champ, avant] of Object.entries(precedents)) {
+    const a = Number(avant) || 0;
+    if (a < 5) continue; // trop petit pour qu'un ratio veuille dire quelque chose
+    const apres = Number(counts[champ]);
+    if (!Number.isFinite(apres)) continue;
+    if (apres < a * (1 - seuil)) {
+      alertes.push(`${champ} : ${a} → ${apres} lignes (-${Math.round((1 - apres / a) * 100)} %)`);
+    }
+  }
+  return alertes;
+}
+
+/** Construit le contenu complet d'une sauvegarde : { champ: lignes[] } + le compte par champ
+ *  + les alertes de perte de lignes par rapport à la sauvegarde précédente.
+ *  Une table qui ne s'exporte pas fait ÉCHOUER la sauvegarde (l'erreur remonte) : avant,
+ *  elle donnait silencieusement un tableau vide, et le fichier déposé sur Drive passait
+ *  pour complet alors qu'il lui manquait, par exemple, toutes les factures. */
+export async function contenuSauvegarde(): Promise<{ donnees: Record<string, any[]>; counts: Record<string, number>; alertes: string[] }> {
   await initDb();
   const donnees: Record<string, any[]> = {};
   const counts: Record<string, number> = {};
   for (const { champ, table, tri, sansColonnes } of TABLES_SAUVEGARDE) {
-    const lignes = await exporterTable(table, tri, sansColonnes).catch(() => [] as any[]);
+    let lignes: any[];
+    try {
+      lignes = await exporterTable(table, tri, sansColonnes);
+    } catch (e: any) {
+      throw new Error(`export de la table ${table} (${champ}) échoué : ${e?.message || e}`);
+    }
     donnees[champ] = lignes;
     counts[champ] = lignes.length;
   }
-  return { donnees, counts };
+  let precedents: Record<string, number> | null = null;
+  try {
+    const brut = await getParametre(CLE_BACKUP_DERNIERS_COUNTS);
+    precedents = brut ? JSON.parse(brut) : null;
+  } catch { precedents = null; }
+  return { donnees, counts, alertes: detecterPertesLignes(counts, precedents) };
+}
+/** À appeler APRÈS un dépôt réussi : les comptes deviennent la référence de la prochaine fois. */
+export async function memoriserCountsSauvegarde(counts: Record<string, number>): Promise<void> {
+  await setParametre(CLE_BACKUP_DERNIERS_COUNTS, JSON.stringify(counts));
 }
 
 // === RESTAURATION DEPUIS UN BACKUP JSON (réparation après sinistre) ===
@@ -3046,9 +3410,43 @@ export async function restaurerBackup(dump: any): Promise<Record<string, Resulta
     } catch (e: any) {
       resultat[champ].erreur = e?.message || String(e);
     }
-    _lastWrite = Date.now();
   }
   return resultat;
+}
+
+// === IDEMPOTENCE (voir lib/idempotence.ts) ===
+export async function lireIdempotence(cle: string): Promise<{ statut: number; corps: string } | null> {
+  const r = await one<{ statut: number; corps: string }>("SELECT statut, corps FROM idempotence WHERE cle = ?", [cle]);
+  return r ? { statut: Number(r.statut), corps: String(r.corps) } : null;
+}
+/** Enregistre la réponse d'une requête réussie. OR IGNORE : deux requêtes simultanées
+ *  avec la même clé ne se font pas échouer l'une l'autre, la première écrite gagne. */
+export async function ecrireIdempotence(cle: string, statut: number, corps: string): Promise<void> {
+  await run("INSERT OR IGNORE INTO idempotence (cle, statut, corps, cree_le) VALUES (?, ?, ?, ?)", [cle, statut, corps, new Date().toISOString()]);
+}
+export async function purgerIdempotence(joursConservation = 7): Promise<number> {
+  const seuil = new Date(Date.now() - joursConservation * 86400000).toISOString();
+  const r = await run("DELETE FROM idempotence WHERE cree_le < ?", [seuil]);
+  return r.rowsAffected;
+}
+
+// === PURGE QUOTIDIENNE DES JOURNAUX (appelée par le cron rappels-quotidiens) ===
+// Un compteur en mémoire « tous les 500 inserts » ne déclenche jamais rien sur serverless
+// (chaque instance repart de zéro) : le journal grossissait sans fin. UN lot, un aller-retour.
+export const PURGE_JOURNAL_JOURS = 90;
+export const PURGE_JOURNAL_MAX_LIGNES = 10000;
+export const PURGE_EMPREINTES_HEURES = 24;
+export async function purgerJournaux(maintenant = Date.now()): Promise<void> {
+  const seuilJournal = new Date(maintenant - PURGE_JOURNAL_JOURS * 86400000).toISOString();
+  const seuilEmpreintes = new Date(maintenant - PURGE_EMPREINTES_HEURES * 3600000).toISOString();
+  const seuilIdem = new Date(maintenant - 7 * 86400000).toISOString();
+  await runBatch([
+    // Empreintes anti-rejeu (lib/rateLimit.ts) : utiles 24 h seulement.
+    { sql: "DELETE FROM journal_activite WHERE type = 'requete.empreinte' AND date < ?", args: [seuilEmpreintes] },
+    { sql: "DELETE FROM journal_activite WHERE date < ?", args: [seuilJournal] },
+    { sql: `DELETE FROM journal_activite WHERE id NOT IN (SELECT id FROM journal_activite ORDER BY id DESC LIMIT ${PURGE_JOURNAL_MAX_LIGNES})`, args: [] },
+    { sql: "DELETE FROM idempotence WHERE cree_le < ?", args: [seuilIdem] },
+  ]);
 }
 
 /** Employé ACTIF par son nom exact (insensible à la casse et aux espaces de bord). Sert à

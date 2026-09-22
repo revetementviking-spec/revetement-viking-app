@@ -147,7 +147,7 @@ export default function SoumissionPublique() {
             </div>
           )}
 
-          <p className="text-center text-[10px] text-slate-400 pt-2">Revêtement Viking Inc. · RBQ 5811-4299-01 · revtementviking@gmail.com</p>
+          <p className="text-center text-[10px] text-slate-400 pt-2">Revêtement Viking Inc. · RBQ 5811-4299-01 · revetementviking@gmail.com</p>
         </div>
       </div>
     </div>

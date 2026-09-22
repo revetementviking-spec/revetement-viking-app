@@ -8,6 +8,8 @@ import { compresserImage, genererVignette } from "@/lib/img";
 import MicVocal from "@/components/MicVocal";
 import ProjetPicker from "@/components/ProjetPicker";
 import { envoyer, nombreSaisi } from "@/lib/envoi";
+import { postOuFile } from "@/lib/fileOffline";
+import ErreurChargement from "@/components/ErreurChargement";
 import { accepteSaisieTardive, estProjetActif, trierProjetsPourSaisie } from "@/lib/statuts-projet";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; onExtra?: () => void; }
@@ -47,16 +49,25 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
   const [loading, setLoading] = useState(false);
   const [ajoutEmpOuvert, setAjoutEmpOuvert] = useState(false);
   const [nouvelEmp, setNouvelEmp] = useState({ nom: "", taux_horaire: "30" });
+  const [erreurEmployes, setErreurEmployes] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // Avant : sans catch, un 500 ou un réseau coupé laissait la liste d'employés vide sans
+  // un mot — et « Sélectionne au moins un employé » à l'enregistrement, sans issue.
   const chargerEmployes = async () => {
-    const r = await fetch("/api/employes");
-    const d: Employe[] = await r.json();
-    setEmployes(d);
-    if (empSelectionnes.size === 0 && d.length > 0) {
-      // Préselectionner Gabriel si présent, sinon le premier de la liste
-      const gabriel = d.find((e) => /gabriel/i.test(e.nom));
-      setEmpSelectionnes(new Set([gabriel ? gabriel.id : d[0].id]));
+    setErreurEmployes(null);
+    try {
+      const r = await fetch("/api/employes");
+      const d: Employe[] = r.ok ? await r.json() : [];
+      if (!r.ok || !Array.isArray(d)) { setErreurEmployes(r.status === 401 ? "session expirée — reconnecte-toi" : `erreur ${r.status}`); return; }
+      setEmployes(d);
+      if (empSelectionnes.size === 0 && d.length > 0) {
+        // Préselectionner Gabriel si présent, sinon le premier de la liste
+        const gabriel = d.find((e) => /gabriel/i.test(e.nom));
+        setEmpSelectionnes(new Set([gabriel ? gabriel.id : d[0].id]));
+      }
+    } catch (e: any) {
+      setErreurEmployes(e?.message === "Failed to fetch" ? "réseau indisponible" : (e?.message || "erreur réseau"));
     }
   };
 
@@ -95,7 +106,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
   }, [ouvert]);
 
   const ajouterPhoto = async (ligneIdx: number, file: File) => {
-    if (file.size > 20 * 1024 * 1024) { toast("Photo > 20 MB", "warning"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast("Photo > 20 Mo", "warning"); return; }
     try {
       const data = await compresserImage(file);
       const thumb = await genererVignette(file).catch(() => null);
@@ -137,10 +148,12 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
   const empsActifs = employes.filter((e) => empSelectionnes.has(e.id));
   // Calcul auto des heures à partir de heure_debut/fin si présents et heures vide
   const heuresEffectives = (l: LigneJour): number => {
-    // Virgule décimale acceptée (« 7,5 ») : +"7,5" donnait NaN → 0 h en silence.
-    if (l.heures) return Number(String(l.heures).replace(",", ".").trim()) || 0;
+    // nombreSaisi (lib/calculs.ts) : « 7,5 », « 7.5 », « 7,5 h » acceptés ; NaN si illisible
+    // (refusé à l'enregistrement, pas converti en 0 h en silence).
+    if (l.heures) { const n = nombreSaisi(l.heures); return Number.isFinite(n) ? n : 0; }
     return calculerHeures(l.heure_debut, l.heure_fin, l.dejeuner_retire);
   };
+  const heuresIllisibles = (l: LigneJour) => !!l.heures && !Number.isFinite(nombreSaisi(l.heures));
   const totalHeures = lignes.reduce((s, l) => s + heuresEffectives(l), 0);
   // Coût total affiché = heures × somme(taux de base) — DAS calculée en arrière-plan
   const coutEmployes = empsActifs.reduce((s, e) => s + e.taux_horaire, 0);
@@ -155,6 +168,8 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
     try { await enregistrerReel(); } finally { enCours.current = false; }
   };
   const enregistrerReel = async () => {
+    const illisible = lignes.find(heuresIllisibles);
+    if (illisible) { toast(`Heures illisibles : « ${illisible.heures} » — écris par exemple 7,5`, "warning"); return; }
     // Une ligne est valide si elle a des heures > 0 OU si début/fin permettent de les calculer
     const valides = lignes
       .map((l) => ({ ...l, heures_effectives: heuresEffectives(l) }))
@@ -190,8 +205,13 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
     }
     setLoading(true);
     try {
-      // Une entrée par employé × ligne (chaque employé fait ces heures sur ce projet)
+      // Une entrée par employé × ligne (chaque employé fait ces heures sur ce projet).
+      // postOuFile (lib/fileOffline.ts) : chaque entrée part avec sa clé d'idempotence ;
+      // réseau coupé sur un toit = mise en file locale, rejouée au retour du réseau avec la
+      // MÊME clé (le serveur ne crée jamais la ligne deux fois). Le bandeau hors-ligne
+      // promettait cette sauvegarde différée depuis longtemps : ici elle existe.
       const erreurs: string[] = [];
+      let enFile = 0;
       for (const emp of empsActifs) {
         for (const l of valides) {
           const descBase = l.description || "";
@@ -200,26 +220,27 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
             : "";
           const desc = [descBase, trace].filter(Boolean).join(" · ");
           const dateLigne = l.date || date;
-          try {
-            const r = await fetch("/api/heures", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                projet_id: Number(l.projet_id), date: dateLigne, heures: Number(l.heures_effectives),
-                description: desc, employe: emp.nom, taux_horaire: Number(emp.taux_horaire) || 0,
-              }),
-            });
-            if (!r.ok) {
-              const d = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
-              erreurs.push(`${emp.nom} · ${l.heures_effectives}h · ${dateLigne} : ${d.error || "inconnu"}`);
-            }
-          } catch (e: any) {
-            erreurs.push(`${emp.nom} · ${dateLigne} : ${e.message || "réseau"}`);
-          }
+          const r = await postOuFile("/api/heures", {
+            projet_id: Number(l.projet_id), date: dateLigne, heures: Number(l.heures_effectives),
+            description: desc, employe: emp.nom, taux_horaire: Number(emp.taux_horaire) || 0,
+            projet_nom: projets.find((p) => p.id === l.projet_id)?.nom,
+          });
+          if (!r.ok) erreurs.push(`${emp.nom} · ${l.heures_effectives}h · ${dateLigne} : ${r.erreur || "inconnu"}`);
+          else if (r.offline) enFile++;
         }
       }
       if (erreurs.length > 0) {
         toast(`❌ ${erreurs.length} erreur(s) à la saisie :\n${erreurs.slice(0, 3).join("\n")}${erreurs.length > 3 ? `\n+${erreurs.length - 3} autres` : ""}`, "error");
         setLoading(false);
+        return;
+      }
+      const totalPhotosVoulues = valides.reduce((s, l) => s + l.photos.length, 0);
+      if (enFile > 0) {
+        // Les photos, elles, ne sont PAS gardées hors ligne (trop lourdes pour le stockage
+        // local) : on le dit, au lieu de les perdre en silence.
+        toast(`📴 Hors ligne — ${enFile} saisie(s) d'heures gardée(s) sur l'appareil, elles partiront au retour du réseau${totalPhotosVoulues > 0 ? `. ${totalPhotosVoulues} photo(s) NON gardée(s) : reprends-les depuis la fiche du projet` : ""}`, "warning");
+        setLignes([{ projet_id: projets[0]?.id || 0, heures: "", description: "", photos: [], heure_debut: "07:00", heure_fin: "15:00", dejeuner_retire: true }]);
+        onClose();
         return;
       }
 
@@ -311,13 +332,16 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
           <div className="mt-2 p-3 bg-emerald-50 border-2 border-emerald-200 rounded-lg space-y-2">
             <input type="text" autoCapitalize="words" placeholder="Nom complet" value={nouvelEmp.nom} onChange={(e) => setNouvelEmp({ ...nouvelEmp, nom: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
             <div className="flex gap-2">
-              <input type="number" inputMode="decimal" placeholder="Taux $/h" value={nouvelEmp.taux_horaire} onChange={(e) => setNouvelEmp({ ...nouvelEmp, taux_horaire: e.target.value })} className="flex-1 px-3 py-2 border rounded text-sm text-right" />
+              {/* type="text" : un <input type="number"> refuse la virgule du clavier québécois (valeur vidée en silence). */}
+              <input type="text" inputMode="decimal" placeholder="Taux $/h (ex. : 30,50)" value={nouvelEmp.taux_horaire} onChange={(e) => setNouvelEmp({ ...nouvelEmp, taux_horaire: e.target.value })} className="flex-1 px-3 py-2 border rounded text-sm text-right" />
               <button onClick={ajouterEmploye} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Ajouter</button>
             </div>
             <p className="text-[10px] text-slate-600">Configurer les infos complètes dans l'onglet <a href="/employes" className="font-bold underline">Employés</a></p>
           </div>
         )}
       </div>
+
+      {erreurEmployes && <div className="mb-3"><ErreurChargement compact erreur={`employés : ${erreurEmployes}`} onReessayer={chargerEmployes} /></div>}
 
       {projets.length === 0 ? (
         <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-900">
@@ -344,7 +368,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
                       <input type="date" value={l.date || date} onChange={(e) => modifier(i, { date: e.target.value })} className="w-full px-2 py-3 border rounded-lg text-sm" title="Date spécifique à cette ligne (par défaut = date globale en haut)" />
                     </div>
                     {lignes.length > 1 && (
-                      <button onClick={() => supprimerLigne(i)} className="w-12 h-12 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-base flex-shrink-0">✕</button>
+                      <button type="button" onClick={() => supprimerLigne(i)} aria-label={`Retirer la ligne ${i + 1}`} className="w-12 h-12 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg text-base flex-shrink-0">✕</button>
                     )}
                   </div>
 
@@ -371,7 +395,7 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
                     <details className="text-[10px]">
                       <summary className="text-slate-500 cursor-pointer">Saisie manuelle des heures</summary>
                       <div className="mt-1">
-                        <input type="number" inputMode="decimal" step={0.25} placeholder="ex: 7.5" value={l.heures} onChange={(e) => modifier(i, { heures: e.target.value })} className="w-full px-2 py-2 border rounded text-sm text-right font-bold" />
+                        <input type="text" inputMode="decimal" placeholder="ex. : 7,5" value={l.heures} onChange={(e) => modifier(i, { heures: e.target.value })} className={`w-full px-2 py-2 border rounded text-sm text-right font-bold ${heuresIllisibles(l) ? "border-red-500" : ""}`} aria-invalid={heuresIllisibles(l)} />
                         <p className="text-[10px] text-slate-500 mt-0.5">Si rempli, écrase le calcul début/fin.</p>
                       </div>
                     </details>
@@ -401,7 +425,10 @@ export default function ModalHeuresJour({ ouvert, onClose, onSuccess, onExtra }:
                         {l.photos.map((p, pi) => (
                           <div key={pi} className="relative w-14 h-14">
                             <img src={p.data} alt={p.nom} className="w-14 h-14 object-cover rounded border" />
-                            <button onClick={() => retirerPhoto(i, pi)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center shadow">✕</button>
+                            {/* Cible tactile 44 px (la pastille visible reste petite) */}
+                            <button type="button" onClick={() => retirerPhoto(i, pi)} aria-label={`Retirer la photo ${p.nom}`} className="absolute -top-3 -right-3 w-11 h-11 flex items-center justify-center">
+                              <span aria-hidden="true" className="bg-red-500 text-white rounded-full w-5 h-5 text-xs font-bold flex items-center justify-center shadow">✕</span>
+                            </button>
                           </div>
                         ))}
                       </div>

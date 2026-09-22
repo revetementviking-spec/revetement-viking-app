@@ -1,18 +1,9 @@
 import { Document, Page, Text, View, StyleSheet, pdf, Svg, Path, Image } from "@react-pdf/renderer";
 import { aujourdhuiMontreal } from "./date";
+import { ENTREPRISE } from "./entreprise";
 
-export const ENTREPRISE = {
-  nom: "Revêtement Viking Inc.",
-  adresse: "1634 Rue Joliette",
-  ville: "Montréal",
-  province: "Qc, Canada",
-  code_postal: "H1W 3E9",
-  telephone: "438-493-2041",
-  courriel: "revetementviking@gmail.com",
-  rbq: "5811-4299-01",
-  tps: "775895501",
-  tvq: "1228912103",
-};
+// Réexporté : lib/pdf-certificat.tsx l'importe d'ici. La source est lib/entreprise.ts.
+export { ENTREPRISE };
 
 const ASSURANCE = { compagnie: "L'Unique Assurance", police: "30840653" };
 
@@ -141,6 +132,9 @@ export const LogoSvg = ({ size = 50 }: { size?: number }) => (
 const Logo = LogoSvg;
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
+// Pourcentage affiché à UNE décimale : « 33,3333 % » imprimé tel quel n'est pas un
+// document client. « 33,3 % » — et l'arrondi au cent des versements suit le calcul, pas l'affichage.
+const pct = (n: number) => (Number.isInteger(n) ? String(n) : (n || 0).toFixed(1).replace(".", ","));
 
 /** Signataire de l'entrepreneur. Distinct du « chargé du projet » : sur le contrat de
  *  référence, Gabriel Quinchon est chargé du projet, mais c'est Francis Quinchon qui
@@ -320,14 +314,14 @@ export function ContratPDF({ c }: { c: ContratData }) {
           Prière d'effectuer les paiements par VIREMENT INTERAC à l'adresse courriel suivante : {ENTREPRISE.courriel}
         </Text>
         {sig > 0 && (
-          <View style={s.row}><Text>À l'envoi du contrat ({sig}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantSig)}</Text></View>
+          <View style={s.row}><Text>À l'envoi du contrat ({pct(sig)}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantSig)}</Text></View>
         )}
-        <View style={s.row}><Text>À la signature du contrat — Dépôt ({depot}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantDepot)}</Text></View>
-        <View style={s.row}><Text>Après la 1re semaine des travaux ({milieu}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantMilieu)}</Text></View>
-        <View style={s.row}><Text>À la fin des travaux — Balance ({fin}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantFin)}</Text></View>
+        <View style={s.row}><Text>À la signature du contrat — Dépôt ({pct(depot)}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantDepot)}</Text></View>
+        <View style={s.row}><Text>Après la 1re semaine des travaux ({pct(milieu)}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantMilieu)}</Text></View>
+        <View style={s.row}><Text>À la fin des travaux — Balance ({pct(fin)}%)</Text><Text style={{ fontWeight: 700 }}>{cad(montantFin)}</Text></View>
         <View style={s.rowFort}><Text>Total du contrat</Text><Text>{cad(c.prix_total)}</Text></View>
 
-        <Text style={s.h1}>5. Assurances</Text>
+        <Text style={s.h1}>4. Assurances</Text>
         <View style={s.twoCol}>
           <View style={s.col}>
             <Text style={s.label}>Nom de la compagnie d'assurance</Text>
@@ -361,7 +355,7 @@ export function ContratPDF({ c }: { c: ContratData }) {
           </View>
           <Text style={s.enTeteSous} render={({ pageNumber, totalPages }) => `Page ${pageNumber} / ${totalPages}`} />
         </View>
-        <Text style={s.h1}>6. Responsabilité des clients</Text>
+        <Text style={s.h1}>5. Responsabilité des clients</Text>
         {[
           "Toutes modifications au plan après signature de ce contrat seront considérées comme des extras et chargées en extra.",
           "Le client est responsable d'obtenir le permis nécessaire pour la réalisation des travaux.",

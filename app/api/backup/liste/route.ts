@@ -43,6 +43,7 @@ export async function GET() {
       backups: backups.slice(0, 15),
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || String(e) }, { status: 500 });
+    console.error("[/api/backup/liste]", e);
+    return NextResponse.json({ ok: false, error: "Liste des sauvegardes indisponible — voir le journal serveur." }, { status: 500 });
   }
 }

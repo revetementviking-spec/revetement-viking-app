@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 const RACCOURCIS: { touche: string; description: string; portee: string }[] = [
   { touche: "?", description: "Afficher / fermer ce panneau", portee: "Partout" },
   { touche: "Ctrl + K", description: "Recherche globale (clients, projets, soumissions)", portee: "Partout" },
-  { touche: "Ctrl + S", description: "Sauvegarder la soumission en cours", portee: "Builder soumission" },
+  { touche: "Ctrl + S", description: "Sauvegarder la soumission en cours", portee: "Formulaire de soumission" },
   { touche: "Esc", description: "Fermer modal / panneau", portee: "Modals" },
   { touche: "Tab", description: "Naviguer entre les champs", portee: "Formulaires" },
 ];

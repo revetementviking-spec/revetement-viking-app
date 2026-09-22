@@ -17,10 +17,14 @@ const ICONES: Record<string, string> = {
 const ROUTES: Record<string, (id: any) => string> = {
   client: (id) => `/clients/${id}`,
   projet: (id) => `/projets/${id}`,
-  soumission: (id) => `/?modifier=${id}`,
+  // `id` d'une soumission = son numéro (lib/db.ts rechercheGlobale) ; le formulaire
+  // d'édition est /soumissions/nouveau?modifier=… — « /?modifier= » ouvrait le tableau
+  // de bord, qui ignore ce paramètre.
+  soumission: (id) => `/soumissions/nouveau?modifier=${encodeURIComponent(String(id))}`,
   contrat: (id) => `/contrats`,
   facture: (id) => `/finances`,
-  depense: (id) => `/depenses`,
+  // Même cible que la recherche de Navigation : l'onglet Dépenses, dépense ouverte.
+  depense: (id) => `/finances?tab=depenses&depense=${encodeURIComponent(String(id))}`,
 };
 
 const NAVIGATION = [
@@ -110,6 +114,9 @@ export default function PaletteCommande() {
 
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Recherche et navigation rapide"
       className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-start justify-center pt-[10vh] px-4"
       onClick={() => setOuvert(false)}
       onKeyDown={(e) => {
@@ -175,7 +182,7 @@ export default function PaletteCommande() {
 
         <div className="p-2 border-t border-slate-100 bg-slate-50 text-[10px] text-slate-500 flex gap-3 justify-end">
           <span><kbd className="bg-white border px-1.5 py-0.5 rounded font-mono">↑↓</kbd> naviguer</span>
-          <span><kbd className="bg-white border px-1.5 py-0.5 rounded font-mono">Enter</kbd> ouvrir</span>
+          <span><kbd className="bg-white border px-1.5 py-0.5 rounded font-mono">Entrée</kbd> ouvrir</span>
           <span><kbd className="bg-white border px-1.5 py-0.5 rounded font-mono">Esc</kbd> fermer</span>
         </div>
       </div>

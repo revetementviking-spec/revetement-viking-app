@@ -2,10 +2,37 @@ import { NextRequest, NextResponse } from "next/server";
 import { sauvegarder, lister, charger, supprimer, changerStatut, enregistrerHeuresReelles, statistiques, trouverOuCreerClient, clientParNom } from "@/lib/db";
 import { journaliser } from "@/lib/audit";
 import { courrielValide } from "@/lib/vocabulaire";
+import { calculerSoumission } from "@/lib/calculateur";
 
 import { ipClient } from "@/lib/ip";
 const ipDe = (req: NextRequest) => ipClient(req);
-function fail(e: any, status = 500) { console.error("[/api/soumissions]", e); return NextResponse.json({ error: e?.message || "erreur" }, { status }); }
+// Message GÉNÉRIQUE au client : le détail (SQL, chemin, table) reste dans le journal serveur.
+function fail(e: any, status = 500) { console.error("[/api/soumissions]", e); return NextResponse.json({ error: "Erreur serveur" }, { status }); }
+
+/** Le total d'une soumission se RECALCULE ici, depuis ses lignes : le `total` envoyé par
+ *  le navigateur est ignoré dès que `data` est calculable. Sinon un client (ou un écran
+ *  périmé) pouvait enregistrer un total sans rapport avec les lignes — et c'est ce total
+ *  qui alimente les statistiques, le CA prévisionnel et la page publique. */
+function totalServeur(body: any): { total: number; recalcule: boolean } {
+  const d = body?.data;
+  if (d && typeof d === "object" && Array.isArray(d.lignes)) {
+    try {
+      const c = calculerSoumission({
+        lignes: d.lignes,
+        fraisActifs: Array.isArray(d.fraisActifs) ? d.fraisActifs : [],
+        fraisGestion: Number.isFinite(Number(d.fraisGestion)) ? Number(d.fraisGestion) : 0,
+        appliquerTaxes: !!d.appliquerTaxes,
+      });
+      return { total: c.total, recalcule: true };
+    } catch (e) {
+      console.warn("[/api/soumissions] total non recalculable, total reçu conservé :", (e as Error)?.message);
+    }
+  } else {
+    console.warn(`[/api/soumissions] soumission ${body?.numero || "(nouvelle)"} sans data.lignes : total reçu conservé (${body?.total})`);
+  }
+  const t = Number(body?.total);
+  return { total: Number.isFinite(t) ? t : 0, recalcule: false };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -53,10 +80,11 @@ export async function POST(req: NextRequest) {
       clientCree = !avant && !!clientId;
     }
 
-    const numero = await sauvegarder(body);
+    const { total } = totalServeur(body);
+    const numero = await sauvegarder({ ...body, total });
     journaliser(nouveau ? "soumission.creee" : "soumission.modifiee", {
       ref_type: "soumission", ref_id: numero,
-      description: `${body.client?.nom || "?"} · ${body.total ? body.total + " $" : "0 $"}`,
+      description: `${body.client?.nom || "?"} · ${total ? total + " $" : "0 $"}`,
       ip: ipDe(req), user_agent: req.headers.get("user-agent") || undefined,
     });
     return NextResponse.json({ numero, ok: true, client_id: clientId, client_cree: clientCree });

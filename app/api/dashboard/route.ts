@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db as getDbClient, listerProjets } from "@/lib/db";
 import { estProjetActif } from "@/lib/statuts-projet";
-import { aujourdhuiMontreal } from "@/lib/date";
+import { aujourdhuiMontreal, jourMontreal } from "@/lib/date";
 
 /** Dashboard enrichi : KPIs business agrégés pour la page d'accueil.
  *  IMPORTANT : revenu et marge utilisent la MÊME logique que la page Finances /
@@ -10,8 +10,10 @@ import { aujourdhuiMontreal } from "@/lib/date";
 export async function GET(_req: NextRequest) {
   try {
     const db: any = getDbClient();
-    const moisCourant = new Date().toISOString().slice(0, 7); // YYYY-MM
+    // Jour et mois de MONTRÉAL : en UTC, le soir au Québec tombait déjà « demain » (et le
+    // 1er du mois à 21 h était déjà le mois suivant — le revenu du mois sautait).
     const aujourdhui = aujourdhuiMontreal();
+    const moisCourant = aujourdhui.slice(0, 7); // YYYY-MM
 
     // Projets avec totaux (marge déjà calculée par la logique centrale, taux réels).
     const projets = await listerProjets();
@@ -36,9 +38,12 @@ export async function GET(_req: NextRequest) {
     }
     const margeMoyennePct = totalBase > 0 ? (totalMarge / totalBase) * 100 : 0;
 
-    // Factures impayées (payee = 0)
+    // Factures impayées (payee = 0). Les factures d'un projet ANNULÉ sont exclues : elles
+    // ne seront jamais encaissées et gonflaient le « à encaisser » du tableau de bord.
     const rImpayees = await db.execute({
-      sql: `SELECT COALESCE(SUM(montant), 0) AS total, COUNT(*) AS n FROM factures_projet WHERE payee = 0 OR payee IS NULL`,
+      sql: `SELECT COALESCE(SUM(fp.montant), 0) AS total, COUNT(*) AS n
+            FROM factures_projet fp LEFT JOIN projets p ON p.id = fp.projet_id
+            WHERE (fp.payee = 0 OR fp.payee IS NULL) AND COALESCE(p.statut, '') != 'annule'`,
       args: [],
     }).catch(() => ({ rows: [{ total: 0, n: 0 }] }));
 
@@ -54,18 +59,18 @@ export async function GET(_req: NextRequest) {
       args: [],
     }).catch(() => ({ rows: [{ total: 0 }] }));
 
-    // Soumissions en attente de réponse (statut envoyee, > 7 jours)
-    const il_y_a_7j = new Date(); il_y_a_7j.setDate(il_y_a_7j.getDate() - 7);
+    // Soumissions en attente de réponse (statut envoyee, > 7 jours) — seuil en jour de Montréal.
+    const il_y_a_7j = jourMontreal(new Date(Date.now() - 7 * 86400000).toISOString());
     const rRelances = await db.execute({
       sql: `SELECT COUNT(*) AS n FROM soumissions WHERE statut = 'envoyee' AND date_envoi < ?`,
-      args: [il_y_a_7j.toISOString().slice(0, 10)],
+      args: [il_y_a_7j],
     }).catch(() => ({ rows: [{ n: 0 }] }));
 
     return NextResponse.json({
-      revenu_mois,
+      revenu_mois: Math.round(revenu_mois * 100) / 100,
       marge_moyenne_pct: Math.round(margeMoyennePct * 10) / 10,
       marge_moyenne_montant: Math.round(totalMarge),
-      factures_impayees_montant: +(rImpayees.rows[0] as any).total || 0,
+      factures_impayees_montant: Math.round((+(rImpayees.rows[0] as any).total || 0) * 100) / 100,
       factures_impayees_nb: +(rImpayees.rows[0] as any).n || 0,
       banque_heures: +(rBanque.rows[0] as any).total || 0,
       projets_en_retard: nbEnRetard,
@@ -73,6 +78,7 @@ export async function GET(_req: NextRequest) {
       projets_actifs: actifs.length,
     });
   } catch (e: any) {
-    return NextResponse.json({ error: e?.message }, { status: 500 });
+    console.error("[/api/dashboard]", e);
+    return NextResponse.json({ error: "Tableau de bord indisponible — voir le journal serveur." }, { status: 500 });
   }
 }

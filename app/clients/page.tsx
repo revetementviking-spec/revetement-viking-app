@@ -5,11 +5,23 @@ import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
-import PipelineCRM from "@/components/PipelineCRM";
+import dynamic from "next/dynamic";
 import AdresseAutocomplete from "@/components/AdresseAutocomplete";
+
+// Chargé à la demande : le kanban tire @dnd-kit (capteurs, glisser-déposer), inutile
+// tant qu'on reste sur la vue « Clients ». Sans SSR : le glisser-déposer n'a de sens
+// que dans le navigateur.
+const PipelineCRM = dynamic(() => import("@/components/PipelineCRM"), {
+  ssr: false,
+  loading: () => <div className="bg-white rounded-lg shadow p-6 text-center text-slate-500">Chargement du pipeline...</div>,
+});
 import { exporterCSV } from "@/lib/csv";
-import { envoyer, ecrire } from "@/lib/envoi";
+import { envoyer, ecrire, lireListe } from "@/lib/envoi";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
+import Pagination, { usePagination } from "@/components/Pagination";
 
 const STATUTS_CRM: Record<string, { label: string; couleur: string }> = {
   prospect: { label: "Prospect", couleur: "bg-amber-100 text-amber-900" },
@@ -37,21 +49,33 @@ export default function ClientsPage() {
   const [tacheForm, setTacheForm] = useState<{ client_id: number | null; titre: string; assignee: string; date_echeance: string }>({ client_id: null, titre: "", assignee: "", date_echeance: "" });
   const [tacheRecherche, setTacheRecherche] = useState("");
   const { toast } = useToast();
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [chargement, setChargement] = useState(true);
 
   const charger = async () => {
-    const [c, p, t] = await Promise.all([
-      fetch("/api/clients").then((r) => r.json()),
-      fetch("/api/projets").then((r) => r.json()),
-      fetch("/api/taches?statut=a_faire").then((r) => r.json()).catch(() => []),
-    ]);
-    setClients(c);
-    setProjets(p);
-    setTaches(t);
+    setChargement(true);
+    try {
+      // Lectures avec filet : un 500 sur /api/clients faisait planter le rendu sur
+      // `undefined.filter` ; un réseau coupé laissait la page vide sans explication.
+      const [c, p, t] = await Promise.all([
+        lireListe("/api/clients"),
+        lireListe("/api/projets"),
+        lireListe("/api/taches?statut=a_faire"),
+      ]);
+      if (!c.ok) { setErreur(c.erreur); return; }
+      setErreur(null);
+      setClients(c.data);
+      // Projets et tâches enrichissent les cartes ; leur échec ne bloque pas la liste.
+      if (p.ok) setProjets(p.data);
+      if (t.ok) setTaches(t.data);
+    } finally { setChargement(false); }
   };
 
   useEffect(() => { charger(); }, []);
 
-  const creer = async () => {
+  // Verrous par ref (lib/verrou.ts) : deux clics du même instant créaient deux fiches.
+  const verrouCreer = useVerrou();
+  const creer = () => verrouCreer.executer(async () => {
     if (!nouveau.nom.trim()) { toast("Nom requis", "warning"); return; }
     // Réponse vérifiée : en cas d'échec, RIEN ne se passait — pas de message, la fenêtre
     // restait ouverte, et l'utilisateur recliquait. Depuis que le serveur refuse un
@@ -62,16 +86,17 @@ export default function ClientsPage() {
     setCreerOuvert(false);
     setNouveau({ nom: "", courriel: "", telephone: "", adresse: "", notes: "", statut: "prospect", source: "", tags: "" });
     charger();
-  };
+  });
 
   const supprimer = async (id: number) => {
     if (!confirm("Supprimer ce client ?")) return;
     // Capture une copie pour pouvoir annuler (re-créer côté serveur si Undo)
     const sauvegarde = clients.find((c) => c.id === id);
-    const r = await fetch(`/api/clients?id=${id}`, { method: "DELETE" });
     // Le serveur refuse (409) si des contrats SIGNÉS sont rattachés : il faut montrer
-    // sa raison, pas un « Erreur suppression » qui n'explique rien.
-    if (!r.ok) { const d = await r.json().catch(() => ({} as any)); toast(d?.error || "Erreur suppression", "error"); return; }
+    // sa raison, pas un « Erreur suppression » qui n'explique rien. envoyer() lit le
+    // message même si la réponse n'est pas du JSON (page 401/413 de la plateforme).
+    const r = await envoyer(`/api/clients?id=${id}`, { methode: "DELETE" });
+    if (!r.ok) { toast(`Suppression refusée : ${r.erreur}`, "error"); return; }
     toast("Client supprimé", "success", {
       action: sauvegarde ? {
         label: "Annuler",
@@ -87,21 +112,19 @@ export default function ClientsPage() {
     charger();
   };
 
-  const creerTache = async () => {
+  const verrouTache = useVerrou();
+  const creerTache = () => verrouTache.executer(async () => {
     if (!tacheForm.client_id) { toast("Choisis un client", "warning"); return; }
     if (!tacheForm.titre.trim()) { toast("Décris la tâche", "warning"); return; }
-    const r = await fetch("/api/client-taches", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: tacheForm.client_id, titre: tacheForm.titre.trim(), assignee: tacheForm.assignee || null, date_echeance: tacheForm.date_echeance || null }),
-    });
-    if ((await r.json()).ok) {
-      toast("✓ Tâche créée", "success");
-      setTacheOuverte(false);
-      setTacheForm({ client_id: null, titre: "", assignee: "", date_echeance: "" });
-      setTacheRecherche("");
-      charger();
-    } else toast("Erreur création tâche", "error");
-  };
+    // `r.ok` vérifié (via ecrire) : `(await r.json()).ok` plantait sur un 401/413 non-JSON
+    // et cachait la raison d'un refus.
+    if (!(await ecrire("/api/client-taches", "POST", { client_id: tacheForm.client_id, titre: tacheForm.titre.trim(), assignee: tacheForm.assignee || null, date_echeance: tacheForm.date_echeance || null }, "Création de la tâche"))) return;
+    toast("✓ Tâche créée", "success");
+    setTacheOuverte(false);
+    setTacheForm({ client_id: null, titre: "", assignee: "", date_echeance: "" });
+    setTacheRecherche("");
+    charger();
+  });
 
   const projetsParClient = (client_id: number) => projets.filter((p) => p.client_id === client_id);
 
@@ -113,6 +136,13 @@ export default function ClientsPage() {
     }
     return true;
   }), [clients, filtreStatut, recherche]);
+
+  // Pagination de l'AFFICHAGE (50 par page) : les compteurs et l'export CSV restent sur
+  // le jeu filtré complet. Retour à la page 1 quand un filtre change.
+  const pg = usePagination(clientsFiltres.length, 50);
+  const clientsVisibles = useMemo(() => clientsFiltres.slice(pg.debut, pg.fin), [clientsFiltres, pg.debut, pg.fin]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { pg.reset(); }, [filtreStatut, recherche, modeAffichage]);
 
   const compteParStatut = useMemo(() => {
     const c: Record<string, number> = {};
@@ -233,7 +263,11 @@ export default function ClientsPage() {
           >📊 Exporter CSV</button>
         </div>
 
-        {clientsFiltres.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : chargement && clients.length === 0 ? (
+          <div className="bg-white rounded-lg shadow p-6 text-center text-slate-500">Chargement...</div>
+        ) : clientsFiltres.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-6xl mb-4">👥</div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucun contact</h3>
@@ -265,7 +299,8 @@ export default function ClientsPage() {
               if (typeof va === "number" && typeof vb === "number") return mult * (va - vb);
               return mult * String(va).localeCompare(String(vb));
             };
-            const listeTriee = [...clientsFiltres].sort(cmp);
+            // Tri sur le jeu filtré complet, puis fenêtre de la page courante.
+            const listeTriee = [...clientsFiltres].sort(cmp).slice(pg.debut, pg.fin);
             const Th = ({ k, label, align }: { k: any; label: string; align?: "right" }) => (
               <th onClick={() => trier(k)} className={`p-2 cursor-pointer select-none hover:bg-slate-200 ${align === "right" ? "text-right" : "text-left"}`}>
                 {label} {triCol === k && <span className="text-emerald-600">{triAsc ? "▲" : "▼"}</span>}
@@ -312,12 +347,14 @@ export default function ClientsPage() {
                     })}
                   </tbody>
                 </table>
+                <Pagination total={clientsFiltres.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="contacts" />
               </section>
             );
           })()
         ) : (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {clientsFiltres.map((c) => {
+            {clientsVisibles.map((c) => {
               const pc = projetsParClient(c.id);
               const tachesClient = taches.filter((t) => t.client_id === c.id);
               const totalPaye = pc.reduce((s, p) => s + (p.total_paye || 0), 0);
@@ -345,12 +382,16 @@ export default function ClientsPage() {
               );
             })}
           </div>
+          <div className="bg-white rounded-lg shadow">
+            <Pagination total={clientsFiltres.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="contacts" />
+          </div>
+          </>
         )}
         </>}
       </main>
 
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+        <Modale onClose={() => setCreerOuvert(false)} titre="Nouveau client" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Nouveau client</h3>
             <In label="Nom *" v={nouveau.nom} o={(v) => setNouveau({ ...nouveau, nom: v })} />
@@ -378,10 +419,10 @@ export default function ClientsPage() {
             <In label="Notes" v={nouveau.notes} o={(v) => setNouveau({ ...nouveau, notes: v })} />
             <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={creer} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Créer</button>
+              <button onClick={creer} disabled={verrouCreer.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrouCreer.occupe ? "…" : "Créer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {tacheOuverte && (() => {
@@ -391,7 +432,7 @@ export default function ClientsPage() {
           : clients
         ).slice(0, 30);
         return (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setTacheOuverte(false)}>
+          <Modale onClose={() => setTacheOuverte(false)} titre="Nouvelle tâche de suivi" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
             <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <h3 className="text-lg font-bold">📌 Nouvelle tâche de suivi</h3>
               <p className="text-xs text-slate-500">Rattache un suivi à un client existant — utile pour une 2ᵉ soumission / un autre projet du même client.</p>
@@ -437,10 +478,10 @@ export default function ClientsPage() {
 
               <div className="flex gap-2 justify-end pt-2">
                 <button onClick={() => setTacheOuverte(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-                <button onClick={creerTache} disabled={!tacheForm.client_id || !tacheForm.titre.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded text-sm font-bold disabled:opacity-50">Créer la tâche</button>
+                <button onClick={creerTache} disabled={verrouTache.occupe || !tacheForm.client_id || !tacheForm.titre.trim()} className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-white rounded text-sm font-bold disabled:opacity-50">{verrouTache.occupe ? "…" : "Créer la tâche"}</button>
               </div>
             </div>
-          </div>
+          </Modale>
         );
       })()}
 

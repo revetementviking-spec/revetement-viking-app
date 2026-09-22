@@ -46,6 +46,13 @@ export default function NotesVocales({ contexteSoumission, onAjustements }: Prop
     };
     r.onend = () => setRecording(false);
     recognitionRef.current = r;
+    // Démontage (changement de page en plein enregistrement) : on coupe le micro, comme
+    // MicVocal. Sinon la reconnaissance continuait et ses rappels touchaient un état démonté.
+    return () => {
+      r.onresult = null; r.onerror = null; r.onend = null;
+      try { r.abort(); } catch { /* jamais démarrée */ }
+      recognitionRef.current = null;
+    };
   }, []);
 
   const demarrer = () => {

@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listerTachesSoumission, parserNotesAsana, asanaEstConfigure } from "@/lib/asana";
-import { listerClients, ajouterClient, modifierClient } from "@/lib/db";
+import { listerClients, sqlAjouterClient, sqlModifierClient, executerLot, type Enonce } from "@/lib/db";
+
+// Taille d'un lot d'écritures : un aller-retour par lot au lieu d'un par tâche Asana.
+const TAILLE_LOT = 50;
 
 /**
  * POST /api/asana/sync — pull les tâches Asana vers le CRM
@@ -21,6 +24,9 @@ export async function POST(_req: NextRequest) {
     for (const c of clients) if (c.asana_gid) parGid.set(c.asana_gid, c);
 
     let crees = 0, majs = 0, ignores = 0;
+    // Les écritures sont ACCUMULÉES puis envoyées par lots (runBatch) : avant, une
+    // requête par tâche Asana — des centaines d'allers-retours vers Turso à chaque synchro.
+    const ecritures: Enonce[] = [];
     for (const t of tachesAsana) {
       const existant = parGid.get(t.gid);
       const infos = parserNotesAsana(t);
@@ -41,14 +47,16 @@ export async function POST(_req: NextRequest) {
           if (infos.courriel) maj.courriel = infos.courriel;
           if (infos.adresse) maj.adresse = infos.adresse;
           if (infos.notes) maj.notes = infos.notes;
-          await modifierClient(existant.id, maj);
+          const e = sqlModifierClient(existant.id, maj);
+          if (e) ecritures.push(e);
           majs++;
         } else {
           ignores++;
         }
       } else {
-        // Création
-        await ajouterClient({
+        // Création. asana_gid et asana_modifie_le sont bien écrits (l'ancien INSERT de
+        // ajouterClient les ignorait : chaque synchro recréait les mêmes fiches).
+        ecritures.push(sqlAjouterClient({
           nom: infos.nom,
           telephone: infos.telephone,
           courriel: infos.courriel,
@@ -61,9 +69,12 @@ export async function POST(_req: NextRequest) {
           tags: tagsBase,
           asana_gid: t.gid,
           asana_modifie_le: t.modified_at,
-        } as any);
+        }));
         crees++;
       }
+    }
+    for (let i = 0; i < ecritures.length; i += TAILLE_LOT) {
+      await executerLot(ecritures.slice(i, i + TAILLE_LOT));
     }
 
     return NextResponse.json({

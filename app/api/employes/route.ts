@@ -1,16 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerEmployes, ajouterEmploye, modifierEmploye, supprimerEmploye, getEmploye } from "@/lib/db";
+import { listerEmployesLite, ajouterEmploye, modifierEmploye, supprimerEmploye, getEmploye } from "@/lib/db";
 import { nombreSaisi } from "@/lib/calculs";
+import { journaliser } from "@/lib/audit";
+import { utilisateurActif } from "@/lib/authUser";
 export const dynamic = "force-dynamic";
+
+// Champs dont tout changement laisse une trace avant/après dans le journal : le taux
+// horaire et la DAS décident de la paie, « actif » décide qui apparaît dans les listes.
+const CHAMPS_AUDITES = ["taux_horaire", "das_pct", "actif"] as const;
+
+// Données d'employé (NAS, coordonnées, contact d'urgence) : jamais gardées par un cache,
+// partagé ou non. L'ancien `s-maxage=60` autorisait un cache CDN à conserver la liste
+// complète — NAS et spécimen de chèque compris.
+const SANS_CACHE = { "Cache-Control": "private, no-store" };
 
 export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
-  if (id) return NextResponse.json(await getEmploye(+id));
-  const data = await listerEmployes();
-  // Liste des employés change très rarement → cache CDN 60s avec SWR 5 min
-  return NextResponse.json(data, {
-    headers: { "Cache-Control": "private, max-age=30, s-maxage=60, stale-while-revalidate=300" },
-  });
+  // Fiche complète (NAS, date de naissance, spécimen) uniquement à l'unité, par `?id=`.
+  if (id) return NextResponse.json(await getEmploye(+id), { headers: SANS_CACHE });
+  // La liste ne porte jamais les champs sensibles (voir listerEmployesLite).
+  return NextResponse.json(await listerEmployesLite(), { headers: SANS_CACHE });
 }
 
 export async function POST(req: NextRequest) {
@@ -47,13 +56,40 @@ export async function PATCH(req: NextRequest) {
     }
     b.taux_horaire = taux;
   }
+  if (b.das_pct !== undefined && b.das_pct !== null && b.das_pct !== "") {
+    const das = nombreSaisi(b.das_pct);
+    if (!Number.isFinite(das) || das < 0 || das > 1) {
+      return NextResponse.json({ error: "das_pct invalide (fraction entre 0 et 1, ex. : 0,15)" }, { status: 400 });
+    }
+    b.das_pct = das;
+  }
+  const avant = await getEmploye(+b.id);
+  if (!avant) return NextResponse.json({ error: "employé introuvable" }, { status: 404 });
   await modifierEmploye(+b.id, b);
+  const changes = CHAMPS_AUDITES.filter((k) => b[k] !== undefined && String(b[k]) !== String((avant as any)[k]));
+  if (changes.length) {
+    const user = await utilisateurActif(req);
+    const extrait = (o: any) => Object.fromEntries(changes.map((k) => [k, o?.[k]]));
+    journaliser("employe.modifie", {
+      ref_type: "employe", ref_id: b.id, utilisateur: user || undefined,
+      description: `${avant.nom} · ${changes.map((k) => `${k} ${(avant as any)[k]} → ${b[k]}`).join(", ")}`,
+      avant: extrait(avant), apres: extrait(b),
+    });
+  }
   return NextResponse.json({ ok: true });
 }
 
 export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id requis" }, { status: 400 });
+  const avant = await getEmploye(+id);
   await supprimerEmploye(+id);
+  // Désactivation (soft delete) : même trace qu'un changement de « actif ».
+  const user = await utilisateurActif(req);
+  journaliser("employe.modifie", {
+    ref_type: "employe", ref_id: id, utilisateur: user || undefined,
+    description: `${avant?.nom || `Employé #${id}`} · actif ${avant?.actif ?? "?"} → 0 (désactivation)`,
+    avant: { actif: avant?.actif ?? null }, apres: { actif: 0 },
+  });
   return NextResponse.json({ ok: true });
 }

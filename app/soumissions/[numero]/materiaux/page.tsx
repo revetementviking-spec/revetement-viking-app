@@ -4,16 +4,25 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Navigation from "@/components/Navigation";
 import { formatCAD } from "@/lib/calculateur";
+import { lireJson } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 export default function MateriauxPage() {
   const params = useParams();
   const numero = params?.numero as string;
   const [data, setData] = useState<any>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
 
-  useEffect(() => {
+  const charger = () => {
     if (!numero) return;
-    fetch(`/api/soumissions/materiaux?numero=${numero}`).then((r) => r.json()).then(setData);
-  }, [numero]);
+    setErreur(null);
+    // Lecture avec filet : un 500 ou un réseau coupé laissait « Chargement... » pour toujours.
+    lireJson<any>(`/api/soumissions/materiaux?numero=${encodeURIComponent(numero)}`).then((r) => {
+      if (r.ok && r.data && Array.isArray(r.data.liste)) setData(r.data);
+      else setErreur(r.ok ? (r.data?.error || "réponse inattendue du serveur") : r.erreur);
+    });
+  };
+  useEffect(() => { charger(); }, [numero]);
 
   const imprimer = () => window.print();
 
@@ -30,8 +39,8 @@ export default function MateriauxPage() {
     const a = document.createElement("a"); a.href = url; a.download = `materiaux-${numero}.csv`; a.click(); URL.revokeObjectURL(url);
   };
 
+  if (erreur) return <div className="min-h-screen bg-slate-50"><Navigation titre="Liste de matériaux" /><div className="p-6"><ErreurChargement erreur={erreur} onReessayer={charger} /></div></div>;
   if (!data) return <div className="min-h-screen bg-slate-50"><Navigation titre="Liste de matériaux" /><div className="p-8 text-center text-slate-500">Chargement...</div></div>;
-  if (data.error) return <div className="min-h-screen bg-slate-50"><Navigation titre="Liste de matériaux" /><div className="p-8 text-center text-red-600">{data.error}</div></div>;
 
   return (
     <div className="min-h-screen bg-slate-50">

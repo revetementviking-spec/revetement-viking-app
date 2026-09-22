@@ -4,13 +4,18 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { formatCAD } from "@/lib/calculateur";
 import { prefetchProjet } from "@/lib/prefetchProjet";
+import { prechargerDiffere } from "@/lib/prefetchClient";
 import { estProjetActif } from "@/lib/statuts-projet";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
 import { aujourdhuiMontreal } from "@/lib/date";
-import { ecrire, nombreSaisi } from "@/lib/envoi";
+import { ecrire, envoyer, nombreSaisi, lireListe } from "@/lib/envoi";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
+import Pagination, { usePagination } from "@/components/Pagination";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
   en_cours: { label: "En cours", couleur: "bg-emerald-100 text-emerald-900" },
@@ -40,28 +45,36 @@ export default function ProjetsPage() {
   // Charge la liste des clients existants pour suggestion dans le modal Nouveau projet
   useEffect(() => {
     if (creerOuvert && clientsExistants.length === 0) {
-      fetch("/api/clients", { cache: "no-store" }).then((r) => r.json()).then((d) => setClientsExistants(Array.isArray(d) ? d : []));
+      lireListe("/api/clients").then((r) => { if (r.ok) setClientsExistants(r.data); });
     }
   }, [creerOuvert]);
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = async () => {
     setLoading(true);
-    const url = filtre ? `/api/projets?statut=${filtre}` : "/api/projets";
-    const r = await fetch(url, { cache: "no-store" });
-    setProjets(await r.json());
-    setLoading(false);
+    try {
+      const url = filtre ? `/api/projets?statut=${filtre}` : "/api/projets";
+      // Lecture avec filet : un 500 faisait planter le rendu sur `.filter` d'un objet
+      // d'erreur ; un réseau coupé laissait « Chargement... » pour toujours.
+      const r = await lireListe(url);
+      if (!r.ok) { setErreur(r.erreur); return; }
+      setErreur(null);
+      setProjets(r.data);
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { charger(); }, [filtre]);
 
-  const creer = async () => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux projets
+  // (et deux fiches client).
+  const verrouCreer = useVerrou();
+  const creer = () => verrouCreer.executer(async () => {
     if (!nouveau.nom.trim()) { toast("Nom du projet requis", "warning"); return; }
     // Virgule décimale : `+"48 000,50"` donnait NaN, refusé par le serveur sans dire pourquoi.
     const prix = nouveau.prix_contrat ? nombreSaisi(nouveau.prix_contrat) : null;
     if (prix !== null && (!Number.isFinite(prix) || prix < 0)) { toast("Prix du contrat invalide (ex. : 48 000,50)", "warning"); return; }
-    const r = await fetch("/api/projets", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await envoyer<any>("/api/projets", {
+      corps: {
         ...nouveau,
         // Le prix de contrat sert AUSSI de budget initial pour les calculs de marge
         budget_estime: prix,
@@ -69,12 +82,12 @@ export default function ProjetsPage() {
         statut: nouveau.statut,
         reno_assistance: nouveau.reno_assistance ? 1 : 0,
         date_debut: nouveau.date_debut || aujourdhuiMontreal(),
-      }),
+      },
     });
-    const d = await r.json().catch(() => ({} as any));
     // Échec silencieux avant : un refus du serveur (courriel invalide, statut inconnu)
     // ne produisait AUCUN message — la fenêtre restait ouverte et on recliquait.
-    if (!d.ok) { toast(`Projet NON créé : ${d.message || d.error || `erreur ${r.status}`}`, "error"); return; }
+    if (!res.ok) { toast(`Projet NON créé : ${res.erreur}`, "error"); return; }
+    const d = res.data || {};
     {
       // Si une facture a été jointe, la sauvegarder via PATCH
       if (facture && d.id) {
@@ -87,7 +100,7 @@ export default function ProjetsPage() {
       setFacture(null);
       charger();
     }
-  };
+  });
 
   const traiterFacture = async (file: File) => {
     const tropLourd = fichierTropLourd(file);
@@ -123,6 +136,11 @@ export default function ProjetsPage() {
     if (triAsc && triEffectif !== "date_debut") list.reverse();
     return list;
   })();
+  // Pagination de l'AFFICHAGE (50 cartes par page) ; les KPIs restent sur tout le jeu.
+  const pg = usePagination(projetsAffiches.length, 50);
+  const projetsVisibles = projetsAffiches.slice(pg.debut, pg.fin);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { pg.reset(); }, [recherche, filtre, tri, triAsc]);
 
   // Considère "en_cours" et "actif" comme des projets en activité
   const estActif = (p: any) => estProjetActif(p.statut);
@@ -201,7 +219,9 @@ export default function ProjetsPage() {
         </div>
 
         {/* Liste projets */}
-        {loading ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : loading ? (
           <div className="bg-white rounded-lg shadow p-6 text-center text-slate-500">Chargement...</div>
         ) : projetsAffiches.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
@@ -211,17 +231,18 @@ export default function ProjetsPage() {
             <button onClick={() => setCreerOuvert(true)} className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold">➕ Nouveau projet</button>
           </div>
         ) : (
+          <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {projetsAffiches.map((p) => (
-              <Link key={p.id} href={`/projets/${p.id}`} prefetch onMouseEnter={() => prefetchProjet(p.id)} onTouchStart={() => prefetchProjet(p.id)} className="group relative bg-white rounded-lg shadow hover:shadow-lg transition p-4 space-y-2">
+            {projetsVisibles.map((p) => (
+              <Link key={p.id} href={`/projets/${p.id}`} prefetch onMouseEnter={() => prefetchProjet(p.id)} onTouchStart={() => prechargerDiffere(() => prefetchProjet(p.id))} className="group relative bg-white rounded-lg shadow hover:shadow-lg transition p-4 space-y-2">
                 <button
                   onClick={async (e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if (!confirm(`Supprimer définitivement « ${p.nom} » ?\n\n⚠️ Irréversible.`)) return;
-                    const r = await fetch(`/api/projets?id=${p.id}`, { method: "DELETE" });
-                    if (r.ok) { toast(`Projet supprimé`, "success"); charger(); }
-                    else toast("Erreur suppression", "error");
+                    // La raison du refus s'affiche (ecrire), pas un « Erreur suppression » muet.
+                    if (!(await ecrire(`/api/projets?id=${p.id}`, "DELETE", undefined, "Suppression du projet"))) return;
+                    toast(`Projet « ${p.nom} » supprimé`, "success"); charger();
                   }}
                   className="min-w-10 min-h-10 flex items-center justify-center absolute top-2 right-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition bg-red-100 hover:bg-red-200 text-red-700 rounded-full w-10 h-10 flex items-center justify-center text-sm z-10"
                   title="Supprimer ce projet"
@@ -278,12 +299,16 @@ export default function ProjetsPage() {
               </Link>
             ))}
           </div>
+          <div className="bg-white rounded-lg shadow">
+            <Pagination total={projetsAffiches.length} page={pg.page} pageSize={pg.pageSize} onPage={pg.setPage} onPageSize={pg.setPageSize} label="projets" />
+          </div>
+          </>
         )}
       </main>
 
       {/* Modal créer projet */}
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+        <Modale onClose={() => setCreerOuvert(false)} titre="Nouveau projet" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Nouveau projet</h3>
             <Input label="Nom du projet *" value={nouveau.nom} onChange={(v) => setNouveau({ ...nouveau, nom: v })} />
@@ -347,7 +372,8 @@ export default function ProjetsPage() {
             })()}
 
             <Input label="Adresse chantier" value={nouveau.adresse_chantier} onChange={(v) => setNouveau({ ...nouveau, adresse_chantier: v })} />
-            <Input label="💰 Prix total du contrat $ *" value={nouveau.prix_contrat} onChange={(v) => setNouveau({ ...nouveau, prix_contrat: v })} type="number" placeholder="Ex: 45000" />
+            {/* type="text" + inputMode : un champ number refuse « 45 000,50 » (virgule du clavier québécois). */}
+            <Input label="💰 Prix total du contrat $ *" value={nouveau.prix_contrat} onChange={(v) => setNouveau({ ...nouveau, prix_contrat: v })} inputMode="decimal" placeholder="Ex. : 45 000,50" />
             <p className="text-[10px] text-slate-500 -mt-2">Ce prix devient la référence pour calculer la marge et la rentabilité du projet.</p>
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -399,10 +425,10 @@ export default function ProjetsPage() {
 
             <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={creer} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-semibold">Créer</button>
+              <button onClick={creer} disabled={verrouCreer.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-semibold">{verrouCreer.occupe ? "…" : "Créer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
       <FAB onSuccess={charger} />
     </div>
@@ -418,11 +444,11 @@ function KPI({ label, value, couleur }: { label: string; value: any; couleur?: s
   );
 }
 
-function Input({ label, value, onChange, placeholder, type = "text" }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
+function Input({ label, value, onChange, placeholder, type = "text", inputMode }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; inputMode?: "decimal" | "numeric" | "text" }) {
   return (
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-      <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" />
+      <input type={type} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" />
     </div>
   );
 }

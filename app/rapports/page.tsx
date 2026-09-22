@@ -4,21 +4,34 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import FAB from "@/components/FAB";
 import { formatCAD } from "@/lib/calculateur";
+import { lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 export default function RapportsPage() {
   const [projets, setProjets] = useState<any[]>([]);
   const [employes, setEmployes] = useState<any[]>([]);
+  const [erreur, setErreur] = useState<string | null>(null);
+  const [chargement, setChargement] = useState(true);
 
-  useEffect(() => {
-    fetch("/api/projets").then((r) => r.json()).then(setProjets);
-    fetch("/api/heures-sommaire?jours=30").then((r) => r.json()).then(setEmployes);
-  }, []);
+  const charger = async () => {
+    setChargement(true);
+    try {
+      // Lectures avec filet : un 500 faisait planter le rendu sur `.map` d'un objet d'erreur.
+      const [p, e] = await Promise.all([lireListe("/api/projets"), lireListe("/api/heures-sommaire?jours=30")]);
+      if (!p.ok) { setErreur(p.erreur); return; }
+      setErreur(null);
+      setProjets(p.data);
+      if (e.ok) setEmployes(e.data);
+    } finally { setChargement(false); }
+  };
+  useEffect(() => { charger(); }, []);
 
   return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="📊 Rapports" soustitre="Export CSV pour comptabilité" />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        {erreur && <ErreurChargement erreur={erreur} onReessayer={charger} />}
         {/* Exports */}
         <section className="bg-gradient-to-br from-emerald-50 to-teal-50 border-2 border-emerald-300 rounded-lg p-5">
           <h2 className="font-bold text-emerald-900 mb-3">📥 Exports CSV</h2>
@@ -64,6 +77,12 @@ export default function RapportsPage() {
         {/* Aperçu projets */}
         <section className="bg-white rounded-lg shadow p-5 overflow-x-auto">
           <h2 className="font-semibold mb-3">🏗️ Projets — aperçu rentabilité</h2>
+          {/* État vide : avant, un tableau réduit à son en-tête, sans un mot. */}
+          {chargement && projets.length === 0 ? (
+            <p className="text-sm text-slate-500">Chargement...</p>
+          ) : projets.length === 0 ? (
+            <p className="text-sm text-slate-500">Aucun projet enregistré pour l'instant.</p>
+          ) : (
           <table className="w-full text-sm min-w-max">
             <thead className="bg-slate-100">
               <tr><th className="p-2 text-left">Projet</th><th className="p-2 text-left">Client</th><th className="p-2 text-right">Budget</th><th className="p-2 text-right">Coût</th><th className="p-2 text-right">Marge</th><th className="p-2 text-right">%</th></tr>
@@ -76,11 +95,12 @@ export default function RapportsPage() {
                   <td className="p-2 text-right">{formatCAD(p.budget_estime || 0)}</td>
                   <td className="p-2 text-right text-amber-700">{formatCAD(p.cout_total)}</td>
                   <td className={`p-2 text-right font-bold ${p.marge < 0 ? "text-red-700" : "text-emerald-700"}`}>{formatCAD(p.marge)}</td>
-                  <td className="p-2 text-right">{p.marge_pct.toFixed(0)}%</td>
+                  <td className="p-2 text-right">{(p.marge_pct || 0).toFixed(0)}%</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          )}
         </section>
       </main>
       <FAB />

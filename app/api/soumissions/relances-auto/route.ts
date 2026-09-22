@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, getParametre, setParametre } from "@/lib/db";
 import { sendEmail, emailEstConfigure } from "@/lib/email";
-import { aujourdhuiMontreal } from "@/lib/date";
+import { aujourdhuiMontreal, jourMontreal } from "@/lib/date";
+import { verifierCron } from "@/lib/cron-auth";
 
 export const dynamic = "force-dynamic";
 
-/** Cron quotidien : détecte les soumissions ENVOYÉES sans réponse depuis 7+ jours
+/** Cron quotidien (vercel.json : `0 13 * * *` = 13 h UTC, soit 9 h à Montréal l'été et
+ *  8 h l'hiver) : détecte les soumissions ENVOYÉES sans réponse depuis 7+ jours
  *  et envoie un email récap à Francis (assigne par défaut). */
 export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
   // Fail-closed : sans CRON_SECRET, route désactivée (sinon déclenchable publiquement).
-  if (!cronSecret) return NextResponse.json({ error: "CRON_SECRET non configuré — route désactivée" }, { status: 503 });
-  const auth = req.headers.get("authorization") || "";
-  if (auth !== `Bearer ${cronSecret}`) return NextResponse.json({ error: "non autorisé" }, { status: 401 });
+  const refus = verifierCron(req);
+  if (refus) return refus;
   if (!emailEstConfigure()) return NextResponse.json({ ok: false, raison: "email_non_configure" });
 
   const dest = process.env.FRANCIS_EMAIL || process.env.GABRIEL_EMAIL;
@@ -24,8 +24,9 @@ export async function GET(req: NextRequest) {
   const cleGuard = `relance_soum_envoi_${aujourdhui}`;
   if (await getParametre(cleGuard)) return NextResponse.json({ ok: true, nb: 0, deja_envoye: true });
 
-  const il_y_a_7j = new Date(); il_y_a_7j.setDate(il_y_a_7j.getDate() - 7);
-  const seuil = il_y_a_7j.toISOString().slice(0, 10);
+  // Seuil en jour de MONTRÉAL (date_envoi est un horodatage ISO ; comparer à un jour UTC
+  // décalait le seuil d'une journée le soir au Québec).
+  const seuil = jourMontreal(new Date(Date.now() - 7 * 86400000).toISOString());
 
   const c: any = db();
   const r = await c.execute({

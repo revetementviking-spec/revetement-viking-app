@@ -1,4 +1,5 @@
 import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
+import { estProjetActif } from "./statuts-projet";
 
 // Rapport de rentabilité PDF — même calcul que l'onglet Finances > Rentabilité.
 const FACTEUR = 1.14975;
@@ -32,8 +33,10 @@ function ligneOf(p: any) {
 }
 
 function RapportRentabilite({ projets, filtre, date }: { projets: any[]; filtre: string; date: string }) {
+  // « actif » couvre les DEUX statuts d'activité (actif, en_cours) : un chantier démarré
+  // par « Commencer ce chantier » sortait du rapport des projets actifs.
   const lignes = projets
-    .filter((p) => filtre === "tous" ? p.statut !== "annule" : p.statut === filtre)
+    .filter((p) => filtre === "tous" ? p.statut !== "annule" : filtre === "actif" ? estProjetActif(p.statut) : p.statut === filtre)
     .map(ligneOf);
   const t = lignes.reduce((a, l) => ({ prix: a.prix + l.prix, extras: a.extras + l.extras, revenuAT: a.revenuAT + l.revenuAT, cout: a.cout + l.cout, marge: a.marge + l.marge }), { prix: 0, extras: 0, revenuAT: 0, cout: 0, marge: 0 });
   const margeMoy = t.revenuAT > 0 ? (t.marge / t.revenuAT) * 100 : 0;

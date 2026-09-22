@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ajouterPushSubscription, supprimerPushSubscription } from "@/lib/db";
+import { ajouterPushSubscription, db, initDb } from "@/lib/db";
 import { utilisateurActif } from "@/lib/authUser";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +26,13 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  const user = await utilisateurActif(req);
+  if (!user) return NextResponse.json({ error: "non connecté" }, { status: 401 });
   const b = await req.json().catch(() => ({}));
-  if (!b?.endpoint) return NextResponse.json({ error: "endpoint requis" }, { status: 400 });
-  await supprimerPushSubscription(b.endpoint);
+  if (!b?.endpoint || typeof b.endpoint !== "string") return NextResponse.json({ error: "endpoint requis" }, { status: 400 });
+  // On ne retire que SES abonnements : avant, n'importe quel utilisateur connecté pouvait
+  // désabonner l'autre en devinant (ou en ayant vu) l'URL de son endpoint.
+  await initDb();
+  await db().execute({ sql: "DELETE FROM push_subscriptions WHERE endpoint = ? AND utilisateur = ?", args: [b.endpoint, user] });
   return NextResponse.json({ ok: true });
 }

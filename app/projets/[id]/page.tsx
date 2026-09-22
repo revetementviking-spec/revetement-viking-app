@@ -14,10 +14,14 @@ import ExtrasVue from "@/components/ExtrasVue";
 import DocumentsProjet from "@/components/DocumentsProjet";
 import MicVocal from "@/components/MicVocal";
 import { estProjetActif } from "@/lib/statuts-projet";
-import { envoyer, nombreSaisi, ecrire } from "@/lib/envoi";
+import { envoyer, nombreSaisi, ecrire, lireJson, lireListe } from "@/lib/envoi";
 import { postOuFile } from "@/lib/fileOffline";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { dateISOLocale } from "@/lib/calculs";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 // Ajoute n jours à une date ISO (yyyy-mm-dd) en heure locale, sans dérive de fuseau.
 function ajouterJours(iso: string, n: number): string {
@@ -88,8 +92,6 @@ export default function ProjetDetail() {
   const today = aujourdhuiMontreal();
   const [hForm, setHForm] = useState({ date: today, heures: "", description: "", employe: "", taux_horaire: "" });
   const [employes, setEmployes] = useState<any[]>([]);
-  const [hFiltreEmp, setHFiltreEmp] = useState("");
-  const [hTri, setHTri] = useState<"date_desc" | "date_asc" | "heures_desc" | "heures_asc" | "employe">("date_desc");
   // === Vue semaine pour onglet heures (style horaire global) ===
   const [vueH, setVueH] = useState<"semaine" | "liste">("semaine");
   const [semaineDebutH, setSemaineDebutH] = useState<Date>(() => {
@@ -102,18 +104,17 @@ export default function ProjetDetail() {
   const [clients, setClients] = useState<any[]>([]);
   const ouvrirEditInfo = () => {
     setEditInfo({ nom: projet?.nom || "", client_id: projet?.client_id ?? null });
-    if (clients.length === 0) fetch("/api/clients").then((r) => r.json()).then((d) => setClients(Array.isArray(d) ? d : [])).catch(() => {});
+    if (clients.length === 0) lireListe("/api/clients").then((r) => { if (r.ok) setClients(r.data); else toast(`Liste des clients indisponible : ${r.erreur}`, "warning"); });
   };
-  const sauverEditInfo = async () => {
+  const verrouEditInfo = useVerrou();
+  const sauverEditInfo = () => verrouEditInfo.executer(async () => {
     if (!editInfo) return;
     if (!editInfo.nom.trim()) { toast("Le nom du projet est requis", "warning"); return; }
-    const r = await fetch("/api/projets", {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, nom: editInfo.nom.trim(), client_id: editInfo.client_id }),
-    });
-    if ((await r.json()).ok) { toast("Projet mis à jour", "success"); setEditInfo(null); charger(); }
-    else toast("Erreur", "error");
-  };
+    // `r.ok` vérifié via ecrire : un 401 ou un 500 renvoyait un corps sans `ok`, et
+    // l'écran disait « Erreur » sans la raison — ou plantait sur un corps non-JSON.
+    if (!(await ecrire("/api/projets", "PATCH", { id, nom: editInfo.nom.trim(), client_id: editInfo.client_id }, "Mise à jour du projet"))) return;
+    toast("Projet mis à jour", "success"); setEditInfo(null); charger();
+  });
   const [coutDetail, setCoutDetail] = useState(false);
   const [lightboxId, setLightboxId] = useState<number | null>(null);
   const [resumeIa, setResumeIa] = useState<string | null>(null);
@@ -130,52 +131,58 @@ export default function ProjetDetail() {
       else toast("IA : " + res.erreur, "error");
     } finally { setResumeBusy(false); }
   };
-  const [hRecherche, setHRecherche] = useState("");
-  const [hPeriode, setHPeriode] = useState<string>(""); // "" = toutes, ou "YYYY-MM-DD|YYYY-MM-DD"
   const [dForm, setDForm] = useState({ date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux" });
+  // Erreur de chargement de la fiche : affichée avec « Réessayer » au lieu d'un
+  // « Chargement... » éternel (500, réseau coupé, projet supprimé entre-temps).
+  const [erreurChargement, setErreurChargement] = useState<string | null>(null);
 
-  const charger = async () => {
+  /** Recharge la fiche. Retourne les données fraîches (ou null si l'appel a échoué),
+   *  pour que l'appelant puisse raisonner sur l'état à jour sans attendre un re-rendu. */
+  const charger = async (): Promise<{ projet: any; heures: any[]; depenses: any[]; photos: any[] } | null> => {
     // 1 seul aller-retour combiné (projet + heures + dépenses + photos)
-    try {
-      const r = await fetch(`/api/projets/${id}/full`, { cache: "no-store" });
-      const d = await r.json();
-      setProjet(d.projet);
-      setHeures(d.heures || []);
-      setDepenses(d.depenses || []);
-      setPhotos(d.photos || []);
+    const r = await lireJson<any>(`/api/projets/${id}/full`);
+    if (r.ok && r.data && r.data.projet) {
+      const d = r.data;
+      const frais = { projet: d.projet, heures: Array.isArray(d.heures) ? d.heures : [], depenses: Array.isArray(d.depenses) ? d.depenses : [], photos: Array.isArray(d.photos) ? d.photos : [] };
+      setProjet(frais.projet);
+      setHeures(frais.heures);
+      setDepenses(frais.depenses);
+      setPhotos(frais.photos);
+      setErreurChargement(null);
       setProjetPrefetch(id, d); // garde le cache à jour pour les retours rapides
       // Compteurs des onglets Extras, Documents et Notes — requêtes à part et non
       // bloquantes : elles ne doivent ni ralentir l'affichage de la fiche, ni la faire
       // échouer si elles ratent.
-      fetch(`/api/extras?projet_id=${id}`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((l) => Array.isArray(l) && setNbExtras(l.length))
-        .catch(() => {});
-      fetch(`/api/projet-fichiers?projet_id=${id}`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((l) => Array.isArray(l) && setNbDocs(l.length))
-        .catch(() => {});
-      fetch(`/api/notes-rapides?projet_id=${id}`, { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((l) => Array.isArray(l) && setNbNotes(l.length))
-        .catch(() => {});
-    } catch {
-      // Repli : anciennes requêtes séparées si l'endpoint combiné échoue
-      const noStore = { cache: "no-store" as RequestCache };
-      const [p, h, dep, ph] = await Promise.all([
-        fetch(`/api/projets?id=${id}`, noStore).then((r) => r.json()),
-        fetch(`/api/heures?projet_id=${id}`, noStore).then((r) => r.json()),
-        fetch(`/api/depenses?projet_id=${id}`, noStore).then((r) => r.json()),
-        fetch(`/api/photos?projet_id=${id}&data=0`, noStore).then((r) => r.json()).catch(() => []),
-      ]);
-      setProjet(p); setHeures(h); setDepenses(dep); setPhotos(ph);
+      lireListe(`/api/extras?projet_id=${id}`).then((l) => l.ok && setNbExtras(l.data.length));
+      lireListe(`/api/projet-fichiers?projet_id=${id}`).then((l) => l.ok && setNbDocs(l.data.length));
+      lireListe(`/api/notes-rapides?projet_id=${id}`).then((l) => l.ok && setNbNotes(l.data.length));
+      return frais;
     }
+    // Un 401 : Garde401 redirige déjà vers /login, inutile d'insister.
+    if (!r.ok && r.statut === 401) { setErreurChargement(r.erreur); return null; }
+    // Repli : anciennes requêtes séparées si l'endpoint combiné échoue
+    const [p, h, dep, ph] = await Promise.all([
+      lireJson<any>(`/api/projets?id=${id}`),
+      lireListe(`/api/heures?projet_id=${id}`),
+      lireListe(`/api/depenses?projet_id=${id}`),
+      lireListe(`/api/photos?projet_id=${id}&data=0`),
+    ]);
+    if (!p.ok || !p.data || !p.data.id) {
+      setErreurChargement(p.ok ? "projet introuvable" : p.erreur);
+      return null;
+    }
+    const frais = { projet: p.data, heures: h.ok ? h.data : [], depenses: dep.ok ? dep.data : [], photos: ph.ok ? ph.data : [] };
+    setProjet(frais.projet); setHeures(frais.heures); setDepenses(frais.depenses); setPhotos(frais.photos);
+    setErreurChargement(null);
+    return frais;
   };
 
   useEffect(() => {
     charger();
-    fetch("/api/employes").then((r) => r.json()).then(setEmployes);
-    fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null)).then((d) => d?.user && setUtilisateur(d.user)).catch(() => {});
+    lireListe("/api/employes").then((r) => { if (r.ok) setEmployes(r.data); });
+    // Qui est connecté : sert uniquement au libellé « Facturé par Francis ! ». Le serveur
+    // repose la question à la session au moment d'écrire, donc un échec ici est sans gravité.
+    lireJson<{ user?: string }>("/api/auth/me").then((r) => { if (r.ok && r.data?.user) setUtilisateur(r.data.user); });
   }, [id]);
 
   /** Confirme (ou retire) « la facture est partie chez le client ».
@@ -204,8 +211,10 @@ export default function ProjetDetail() {
   const ajouterHeures = async () => {
     if (envoiHeures.current) return;
     if (!hForm.heures) { toast("Heures requises", "warning"); return; }
+    if (!Number.isFinite(nombreSaisi(hForm.heures)) || nombreSaisi(hForm.heures) <= 0) { toast("Nombre d'heures illisible (ex. : 7,5)", "warning"); return; }
     if (!hForm.employe) { toast("Sélectionne un employé", "warning"); return; }
     if (!hForm.taux_horaire) { toast("Taux horaire manquant", "warning"); return; }
+    if (!Number.isFinite(nombreSaisi(hForm.taux_horaire))) { toast("Taux horaire illisible (ex. : 30,50)", "warning"); return; }
     envoiHeures.current = true;
     setBusyHeures(true);
     // postOuFile (et non envoyer) : réseau coupé sur un toit = la saisie est mise en file
@@ -222,22 +231,25 @@ export default function ProjetDetail() {
     {
       toast(`${hForm.heures} h ajoutées pour ${hForm.employe}`, "success");
       setHForm({ ...hForm, heures: "", description: "" });
-      charger();
-      // Suggestion photo : si >2h saisies aujourd'hui et 0 photo du jour → propose
-      setTimeout(() => {
-        const today = aujourdhuiMontreal();
-        const totalToday = heures.filter((h: any) => h.date === today).reduce((s: number, h: any) => s + (h.heures || 0), 0) + (+hForm.heures || 0);
-        const photosToday = photos.filter((p: any) => p.date === today).length;
-        if (totalToday >= 2 && photosToday === 0) {
-          toast(`📸 ${totalToday.toFixed(1)}h saisies aujourd'hui sans photo — pense à en prendre quelques-unes du chantier !`, "info");
-        }
-      }, 600);
+      // Suggestion photo : si >2h saisies aujourd'hui et 0 photo du jour → propose.
+      // Calculée sur la RÉPONSE du serveur, pas sur la fermeture `heures` du rendu
+      // précédent : celle-ci ne contenait ni la saisie qu'on vient de faire, ni celles
+      // d'un collègue depuis le dernier chargement.
+      const frais = await charger();
+      const totalToday = (frais?.heures || []).filter((h: any) => h.date === today).reduce((s: number, h: any) => s + (h.heures || 0), 0);
+      const photosToday = (frais?.photos || []).filter((p: any) => p.date === today).length;
+      if (frais && totalToday >= 2 && photosToday === 0) {
+        toast(`📸 ${totalToday.toFixed(1)}h saisies aujourd'hui sans photo — pense à en prendre quelques-unes du chantier !`, "info");
+      }
     }
   };
 
   const ajouterDepense = async () => {
     if (envoiDepense.current) return;
     if (!dForm.montant) { toast("Montant requis", "warning"); return; }
+    // nombreSaisi lit « 1 250,75 » ; un montant illisible est refusé ici, pas envoyé
+    // au serveur comme NaN → null.
+    if (!Number.isFinite(nombreSaisi(dForm.montant))) { toast("Montant illisible (ex. : 1 250,75)", "warning"); return; }
     envoiDepense.current = true;
     setBusyDepense(true);
     const r = await postOuFile("/api/depenses",
@@ -259,6 +271,7 @@ export default function ProjetDetail() {
   const supprimer = async (type: string, ligneId: number) => {
     if (!confirm("Supprimer cette entrée ?")) return;
     if (!(await ecrire(`/api/${type}?id=${ligneId}`, "DELETE", undefined, "Suppression"))) return;
+    toast(type === "heures" ? "Entrée d'heures supprimée" : "Dépense supprimée", "info");
     charger();
   };
 
@@ -311,7 +324,9 @@ ${VIKING_EMAIL}
   if (!projet) return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="Projet" />
-      <div className="p-12 text-center text-slate-500">Chargement...</div>
+      {erreurChargement
+        ? <div className="p-6"><ErreurChargement erreur={erreurChargement} onReessayer={() => { setErreurChargement(null); charger(); }} /></div>
+        : <div className="p-12 text-center text-slate-500">Chargement...</div>}
     </div>
   );
 
@@ -324,6 +339,9 @@ ${VIKING_EMAIL}
       <Navigation titre={`🏗️ ${projet.nom}`} soustitre={`${projet.numero ? projet.numero + " · " : ""}${projet.client_nom || ""}`} />
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        {/* La fiche affichée vient du cache ou d'un chargement précédent : si le
+            rechargement échoue, on le dit au lieu de laisser des chiffres périmés muets. */}
+        {erreurChargement && <ErreurChargement compact erreur={erreurChargement} onReessayer={() => { setErreurChargement(null); charger(); }} />}
 
         {/* 📌 INFOS PROJET + CLIENT EN TÊTE */}
         <section className="bg-gradient-to-br from-slate-100 to-white border-2 border-slate-200 rounded-lg p-4 md:p-5">
@@ -346,8 +364,9 @@ ${VIKING_EMAIL}
                       // Si une durée est connue, recalcule la fin prévue (début + durée).
                       const patch: any = { id: projet.id, date_debut: v };
                       if (v && projet.duree_jours) patch.date_fin_prevue = ajouterJours(v, projet.duree_jours);
-                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-                      if (r.ok) { toast("Date prévue mise à jour", "success"); charger(); }
+                      // Branche d'erreur : un refus laissait l'ancienne date à l'écran sans un mot.
+                      if (!(await ecrire("/api/projets", "PATCH", patch, "Date prévue"))) return;
+                      toast("Date prévue mise à jour", "success"); charger();
                     }}
                     className="w-full px-2 min-h-10 border rounded text-xs"
                   />
@@ -365,8 +384,8 @@ ${VIKING_EMAIL}
                       // La durée pilote la fin prévue quand une date de début existe.
                       const patch: any = { id: projet.id, duree_jours: n };
                       if (n && projet.date_debut) patch.date_fin_prevue = ajouterJours(projet.date_debut, n);
-                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-                      if (r.ok) { toast("Durée prévue mise à jour", "success"); charger(); }
+                      if (!(await ecrire("/api/projets", "PATCH", patch, "Durée prévue"))) return;
+                      toast("Durée prévue mise à jour", "success"); charger();
                     }}
                     className="w-full px-2 min-h-10 border rounded text-xs text-right"
                   />
@@ -381,8 +400,8 @@ ${VIKING_EMAIL}
                       // Ajuster la fin manuellement recalcule la durée pour rester cohérent.
                       const patch: any = { id: projet.id, date_fin_prevue: v };
                       if (v && projet.date_debut) patch.duree_jours = diffJours(projet.date_debut, v);
-                      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
-                      if (r.ok) { toast("Date de fin mise à jour", "success"); charger(); }
+                      if (!(await ecrire("/api/projets", "PATCH", patch, "Date de fin"))) return;
+                      toast("Date de fin mise à jour", "success"); charger();
                     }}
                     className="w-full px-2 min-h-10 border rounded text-xs"
                   />
@@ -471,9 +490,9 @@ ${VIKING_EMAIL}
             <button
               onClick={async () => {
                 if (!confirm(`Supprimer définitivement le projet « ${projet.nom} » ?\n\n⚠️ Cette action est irréversible. Les heures, dépenses, photos et contrats liés deviendront orphelins.`)) return;
-                const r = await fetch(`/api/projets?id=${id}`, { method: "DELETE" });
-                if (r.ok) { toast(`Projet « ${projet.nom} » supprimé`, "success"); router.push("/projets"); }
-                else toast("Erreur suppression", "error");
+                // La raison du refus (ex. contrat signé rattaché) s'affiche, pas un « Erreur suppression » muet.
+                if (!(await ecrire(`/api/projets?id=${id}`, "DELETE", undefined, "Suppression du projet"))) return;
+                toast(`Projet « ${projet.nom} » supprimé`, "success"); router.push("/projets");
               }}
               className="text-xs px-3 py-1 bg-red-100 text-red-700 hover:bg-red-200 rounded font-semibold"
               title="Supprimer le projet définitivement"
@@ -486,18 +505,18 @@ ${VIKING_EMAIL}
                 <button
                   onClick={async () => {
                     if (!confirm("Retirer le badge « Reno assistance » de ce projet ?")) return;
-                    const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: projet.id, reno_assistance: 0 }) });
-                    if (r.ok) { toast("Badge retiré", "success"); charger(); }
-                    else toast("Erreur", "error");
+                    if (!(await ecrire("/api/projets", "PATCH", { id: projet.id, reno_assistance: 0 }, "Retrait du badge"))) return;
+                    toast("Badge retiré", "success"); charger();
                   }}
-                  className="ml-1 text-amber-900 hover:text-red-700 font-bold leading-none"
+                  className="ml-1 min-w-11 min-h-11 inline-flex items-center justify-center text-amber-900 hover:text-red-700 font-bold leading-none"
                   title="Retirer le badge Reno assistance"
-                  aria-label="Retirer"
+                  aria-label="Retirer le badge Reno assistance"
                 >×</button>
               </span>
             ) : null}
           </div>
-          {projet.date_debut && <span className="text-xs text-slate-500">Démarré : {new Date(projet.date_debut).toLocaleDateString("fr-CA")}</span>}
+          {/* dateISOLocale : new Date("AAAA-MM-JJ") = minuit UTC → la veille à Montréal. */}
+          {projet.date_debut && <span className="text-xs text-slate-500">Démarré : {dateISOLocale(String(projet.date_debut).slice(0, 10)).toLocaleDateString("fr-CA")}</span>}
         </div>
 
         {/* Les notes du chantier vivent dans leur propre onglet (« 🗒️ Notes »), avec les
@@ -676,7 +695,7 @@ ${VIKING_EMAIL}
               <h3 className="font-semibold mb-3">⏱️ Saisir des heures</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <FieldDate label="Date" value={hForm.date} onChange={(v) => setHForm({ ...hForm, date: v })} />
-                <FieldNum label="Heures *" value={hForm.heures} onChange={(v) => setHForm({ ...hForm, heures: v })} step={0.5} />
+                <FieldNum label="Heures *" value={hForm.heures} onChange={(v) => setHForm({ ...hForm, heures: v })} placeholder="Ex. : 7,5" />
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Employé *</label>
                   <select
@@ -749,8 +768,13 @@ ${VIKING_EMAIL}
               const supprimerSel = async () => {
                 if (selectionH.size === 0) return;
                 if (!confirm(`Supprimer ${selectionH.size} entrée(s) sélectionnée(s) ?`)) return;
-                await Promise.all(Array.from(selectionH).map((id) => fetch(`/api/heures?id=${id}`, { method: "DELETE" })));
-                toast(`${selectionH.size} entrée(s) supprimée(s)`, "success");
+                // Compte les vrais succès : une suppression refusée ne doit pas être
+                // annoncée comme faite (l'entrée réapparaissait au rechargement).
+                const res = await Promise.all(Array.from(selectionH).map((id) => envoyer(`/api/heures?id=${id}`, { methode: "DELETE" })));
+                const ok = res.filter((r) => r.ok).length;
+                const echecs = res.length - ok;
+                if (ok > 0) toast(`${ok} entrée(s) supprimée(s)`, "success");
+                if (echecs > 0) toast(`${echecs} suppression(s) refusée(s) : ${res.find((r) => !r.ok)?.erreur || "erreur"}`, "error");
                 setSelectionH(new Set());
                 charger();
               };
@@ -885,11 +909,11 @@ ${VIKING_EMAIL}
                                   <td className="p-2 whitespace-nowrap"><span className="text-slate-400 text-[10px] mr-1">{jourCt}</span>{h.date}</td>
                                   <td className="p-2 font-medium">{h.employe || "—"}</td>
                                   <td className="p-2 text-right font-bold">{(h.heures || 0).toFixed(1)} h</td>
-                                  <td className="p-2 text-right text-slate-600">{(h.taux_horaire || 0).toFixed(2)} $</td>
+                                  <td className="p-2 text-right text-slate-600">{formatCAD(h.taux_horaire || 0)}</td>
                                   <td className="p-2 text-right font-bold text-emerald-700">{formatCAD((h.heures || 0) * (h.taux_horaire || 0))}</td>
                                   <td className="p-2 text-xs text-slate-600 truncate max-w-xs">{h.description || ""}</td>
                                   <td className="p-2 text-right">
-                                    <button onClick={() => supprimer("heures", h.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                                    <button onClick={() => supprimer("heures", h.id)} aria-label="Supprimer cette entrée d'heures" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                                   </td>
                                 </tr>
                               );
@@ -903,122 +927,6 @@ ${VIKING_EMAIL}
               );
             })()}
 
-            {/* Code mort retiré (commit 9442fae+) :
-                ancien filtre bi-hebdo + ancien rendu liste qui utilisaient
-                `new Date(h.date)` (bug timezone). Tout est maintenant géré
-                par la vue grille/liste ci-dessus avec dateLocal(). */}
-            {false && heures.length > 0 && (() => {
-              // Calcul des périodes bi-hebdo (mêmes ancres que le module Paye : dimanche 2026-01-04)
-              const ancre = new Date("2026-01-04T12:00:00");
-              const periodeDe = (dateStr: string) => {
-                const d = new Date(dateStr + "T12:00:00");
-                const diffJ = Math.floor((d.getTime() - ancre.getTime()) / 86400000);
-                const num = Math.floor(diffJ / 14);
-                const deb = new Date(ancre); deb.setDate(ancre.getDate() + num * 14);
-                const fin = new Date(deb); fin.setDate(deb.getDate() + 13);
-                return { debut: deb.toISOString().slice(0, 10), fin: fin.toISOString().slice(0, 10), num };
-              };
-              // Périodes uniques dans les heures saisies
-              const periodesMap = new Map<string, { debut: string; fin: string }>();
-              for (const h of heures) {
-                const p = periodeDe(h.date);
-                periodesMap.set(p.debut, { debut: p.debut, fin: p.fin });
-              }
-              const periodes = Array.from(periodesMap.values()).sort((a, b) => b.debut.localeCompare(a.debut));
-
-              const filtrees = heures.filter((h: any) => {
-                if (hFiltreEmp && h.employe !== hFiltreEmp) return false;
-                if (hRecherche && !(h.description || "").toLowerCase().includes(hRecherche.toLowerCase())) return false;
-                if (hPeriode) {
-                  const [d, f] = hPeriode.split("|");
-                  if (h.date < d || h.date > f) return false;
-                }
-                return true;
-              });
-              const totalH = filtrees.reduce((s: number, h: any) => s + (h.heures || 0), 0);
-              const totalC = filtrees.reduce((s: number, h: any) => s + (h.heures || 0) * (h.taux_horaire || 0), 0);
-
-              return (
-                <div className="bg-white rounded-lg shadow p-3 space-y-2">
-                  {/* Chips périodes bi-hebdo */}
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    <span className="text-xs font-semibold text-slate-600">📅 Période paye :</span>
-                    <button onClick={() => setHPeriode("")} className={`px-2.5 py-1 rounded text-xs font-semibold ${!hPeriode ? "bg-slate-900 text-white" : "bg-slate-100 hover:bg-slate-200"}`}>Tout</button>
-                    {periodes.map((p) => {
-                      const cle = `${p.debut}|${p.fin}`;
-                      const label = `${p.debut.slice(5)} → ${p.fin.slice(5)}`;
-                      return (
-                        <button key={cle} onClick={() => setHPeriode(cle)} className={`px-2.5 py-1 rounded text-xs font-semibold ${hPeriode === cle ? "bg-emerald-600 text-white" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200"}`} title={`${p.debut} → ${p.fin}`}>{label}</button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <input type="search" placeholder="🔍 Recherche description" value={hRecherche} onChange={(e) => setHRecherche(e.target.value)} className="flex-1 min-w-40 px-3 py-1.5 border rounded text-sm" />
-                    <select value={hFiltreEmp} onChange={(e) => setHFiltreEmp(e.target.value)} className="px-3 py-1.5 border rounded text-sm bg-white">
-                      <option value="">Tous les employés</option>
-                      {Array.from(new Set(heures.map((h: any) => h.employe).filter(Boolean))).map((e: any) => <option key={e} value={e}>{e}</option>)}
-                    </select>
-                    <select value={hTri} onChange={(e) => setHTri(e.target.value as any)} className="px-3 py-1.5 border rounded text-sm bg-white">
-                      <option value="date_desc">Date ↓ (récent)</option>
-                      <option value="date_asc">Date ↑ (ancien)</option>
-                      <option value="heures_desc">Plus d'heures</option>
-                      <option value="heures_asc">Moins d'heures</option>
-                      <option value="employe">Employé A→Z</option>
-                    </select>
-                    <span className="text-xs text-slate-600 ml-auto">{filtrees.length} entrée(s) · <strong>{totalH.toFixed(1)} h</strong> · <strong>{formatCAD(totalC)}</strong></span>
-                  </div>
-                </div>
-              );
-            })()}
-
-            {/* Ancien rendu liste détaillé — désactivé : remplacé par vue grille/liste ci-dessus */}
-            {false && (
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              {heures.length === 0 ? (
-                <p className="p-6 text-center text-slate-500 text-sm">Aucune heure saisie</p>
-              ) : (
-                <div className="divide-y">
-                  {(() => {
-                    let list = heures.filter((h: any) => {
-                      if (hFiltreEmp && h.employe !== hFiltreEmp) return false;
-                      if (hRecherche && !(h.description || "").toLowerCase().includes(hRecherche.toLowerCase())) return false;
-                      if (hPeriode) {
-                        const [d, f] = hPeriode.split("|");
-                        if (h.date < d || h.date > f) return false;
-                      }
-                      return true;
-                    });
-                    list = [...list].sort((a: any, b: any) => {
-                      if (hTri === "date_desc") return b.date.localeCompare(a.date);
-                      if (hTri === "date_asc") return a.date.localeCompare(b.date);
-                      if (hTri === "heures_desc") return (b.heures || 0) - (a.heures || 0);
-                      if (hTri === "heures_asc") return (a.heures || 0) - (b.heures || 0);
-                      if (hTri === "employe") return (a.employe || "").localeCompare(b.employe || "");
-                      return 0;
-                    });
-                    return list;
-                  })().map((h: any) => (
-                    <div key={h.id} className="p-3 flex items-center justify-between gap-2 hover:bg-slate-50">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="font-semibold">{new Date(h.date).toLocaleDateString("fr-CA")}</span>
-                          <span className="text-emerald-700 font-bold">{h.heures} h</span>
-                          {h.employe && <span className="text-xs text-slate-500">· {h.employe}</span>}
-                          <span className="text-xs text-slate-500">· {h.taux_horaire}$/h</span>
-                        </div>
-                        {h.description && <div className="text-xs text-slate-600 mt-0.5 truncate">{h.description}</div>}
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold">{formatCAD(h.heures * h.taux_horaire)}</div>
-                        <button onClick={() => supprimer("heures", h.id)} className="text-xs text-red-600 hover:underline">Supprimer</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            )}
           </div>
         )}
 
@@ -1030,7 +938,7 @@ ${VIKING_EMAIL}
               <h3 className="font-semibold mb-3">💸 Ajouter une dépense</h3>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                 <FieldDate label="Date" value={dForm.date} onChange={(v) => setDForm({ ...dForm, date: v })} />
-                <FieldNum label="Montant *" value={dForm.montant} onChange={(v) => setDForm({ ...dForm, montant: v })} />
+                <FieldNum label="Montant *" value={dForm.montant} onChange={(v) => setDForm({ ...dForm, montant: v })} placeholder="Ex. : 1 250,75" />
                 <Field label="Fournisseur" value={dForm.fournisseur} onChange={(v) => setDForm({ ...dForm, fournisseur: v })} placeholder="Gentek, MAC..." />
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1">Catégorie</label>
@@ -1054,7 +962,7 @@ ${VIKING_EMAIL}
                     <div key={d.id} className="p-3 flex items-center justify-between gap-2 hover:bg-slate-50">
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-sm flex-wrap">
-                          <span className="font-semibold">{new Date(d.date).toLocaleDateString("fr-CA")}</span>
+                          <span className="font-semibold">{dateISOLocale(String(d.date).slice(0, 10)).toLocaleDateString("fr-CA")}</span>
                           {d.fournisseur && <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{d.fournisseur}</span>}
                           {d.categorie && <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded">{d.categorie}</span>}
                           {(d.a_recu || d.recu_data) && (
@@ -1065,7 +973,7 @@ ${VIKING_EMAIL}
                       </div>
                       <div className="text-right">
                         <div className="font-bold text-orange-700">{formatCAD(d.montant)}</div>
-                        <button onClick={() => supprimer("depenses", d.id)} className="text-xs text-red-600 hover:underline">Supprimer</button>
+                        <button onClick={() => supprimer("depenses", d.id)} className="inline-flex items-center min-h-11 px-2 text-xs text-red-600 hover:underline">Supprimer</button>
                       </div>
                     </div>
                   ))}
@@ -1078,7 +986,7 @@ ${VIKING_EMAIL}
 
       {/* MODAL ÉDITION nom / client du projet */}
       {editInfo && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEditInfo(null)}>
+        <Modale onClose={() => setEditInfo(null)} titre="Modifier le projet" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">✏️ Modifier le projet</h3>
             <div>
@@ -1095,10 +1003,10 @@ ${VIKING_EMAIL}
             </div>
             <div className="flex gap-2 justify-end pt-1">
               <button onClick={() => setEditInfo(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={sauverEditInfo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Enregistrer</button>
+              <button onClick={sauverEditInfo} disabled={verrouEditInfo.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrouEditInfo.occupe ? "…" : "Enregistrer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {lightboxId !== null && (() => {
@@ -1250,8 +1158,9 @@ function PhotosTab({ projet, photos, heures, onUpdate, onOpenPhoto }: { projet: 
                         )}
                         <button
                           onClick={async () => { if (confirm(`Supprimer cette ${estVideo ? "vidéo" : "photo"} ?`)) { if (!(await ecrire(`/api/photos?id=${p.id}`, "DELETE", undefined, "Suppression"))) return; onUpdate(); } }}
-                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 transition"
-                        >✕</button>
+                          aria-label={`Supprimer cette ${estVideo ? "vidéo" : "photo"}`}
+                          className="absolute top-0 right-0 min-w-11 min-h-11 flex items-center justify-center text-white text-xs font-bold opacity-100 md:opacity-0 md:group-hover:opacity-100 transition"
+                        ><span className="bg-red-500 rounded-full w-6 h-6 flex items-center justify-center">✕</span></button>
                       </div>
                       );
                     })}
@@ -1298,11 +1207,10 @@ function PhotoUploader({ projet_id, onUpload }: { projet_id: number; onUpload: (
         // Réponse vérifiée : sans ça, une photo refusée (session expirée, image trop
         // lourde) avançait quand même la barre de progression et disparaissait sans un
         // mot — on quittait le chantier en croyant l'avoir documenté.
-        const rp = await fetch("/api/photos", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ projet_id, date, description: description || f.name, photo_data: data, photo_type: "image/jpeg", employes: "Manuel", thumb_data: thumb }),
-        }).catch(() => null);
-        if (!rp || !rp.ok) echecs.push(f.name);
+        const rp = await envoyer("/api/photos", {
+          corps: { projet_id, date, description: description || f.name, photo_data: data, photo_type: "image/jpeg", employes: "Manuel", thumb_data: thumb },
+        });
+        if (!rp.ok) echecs.push(`${f.name} (${rp.erreur})`);
         setProgress({ total: files.length, done: i + 1 });
       }
       onUpload();
@@ -1343,20 +1251,26 @@ function PhotoUploader({ projet_id, onUpload }: { projet_id: number; onUpload: (
       </div>
       {busy && (
         <div className="mt-2">
-          <div className="text-xs text-slate-600 mb-1">⏳ Upload {progress.done}/{progress.total}...</div>
+          <div className="text-xs text-slate-600 mb-1">⏳ Téléversement {progress.done}/{progress.total}...</div>
           <div className="h-1.5 bg-slate-200 rounded overflow-hidden">
             <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
           </div>
         </div>
       )}
-      <div className="text-[10px] text-slate-500 mt-2">📦 Compression auto : 5 MB → ~300 ko · upload 10× plus rapide · max 20 MB / photo</div>
+      <div className="text-[10px] text-slate-500 mt-2">📦 Compression auto : 5 Mo → ~300 Ko · envoi 10× plus rapide · max 20 Mo / photo</div>
     </div>
   );
 }
 
 function ClientInfo({ client_id }: { client_id?: number | null }) {
   const [c, setC] = useState<any>(null);
-  const charger = () => { if (client_id) fetch(`/api/clients?id=${client_id}`, { cache: "no-store" }).then((r) => r.json()).then(setC).catch(() => {}); };
+  const [erreur, setErreur] = useState<string | null>(null);
+  const charger = () => {
+    if (!client_id) return;
+    setErreur(null);
+    // Avant : un 404/500 laissait « Chargement... » à l'infini sous le nom du client.
+    lireJson<any>(`/api/clients?id=${client_id}`).then((r) => { if (r.ok && r.data && r.data.id) setC(r.data); else setErreur(r.ok ? "fiche client introuvable" : r.erreur); });
+  };
   useEffect(() => { charger(); }, [client_id]);
   const changerStatut = async (statut: string) => {
     if (!client_id) return;
@@ -1364,7 +1278,7 @@ function ClientInfo({ client_id }: { client_id?: number | null }) {
     charger();
   };
   if (!client_id) return <div className="text-xs text-slate-500 italic">Aucun client lié</div>;
-  if (!c) return <div className="text-xs text-slate-400">Chargement...</div>;
+  if (!c) return erreur ? <ErreurChargement compact erreur={erreur} onReessayer={charger} /> : <div className="text-xs text-slate-400">Chargement...</div>;
   const STATUTS_CLIENT = ["prospect", "actif", "inactif", "perdu"];
   return (
     <div className="text-sm space-y-0.5 mt-1">
@@ -1391,7 +1305,9 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
   const [contratOuvert, setContratOuvert] = useState(false);
   const [factureOuverte, setFactureOuverte] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
-  const [sauveBusy, setSauveBusy] = useState(false);
+  // Verrou par ref (lib/verrou.ts) : `if (sauveBusy) return` sur un état laissait
+  // passer deux clics du même instant.
+  const verrouPrix = useVerrou();
   const { toast } = useToast();
   // Le champ n'était initialisé qu'au tout premier rendu. Or l'OCR de facture (plus bas)
   // écrit `prix_contrat` dans la même page : le champ restait donc VIDE, et un « Modifier »
@@ -1401,23 +1317,21 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
     if (edit) return;
     setPrix(projet.prix_contrat ? String(projet.prix_contrat) : "");
   }, [projet.prix_contrat, edit]);
-  const sauver = async () => {
-    if (sauveBusy) return;
+  const sauver = () => verrouPrix.executer(async () => {
     // nombreSaisi et non `+prix` : « 51 738,75 » (espace + virgule, ce que produit
     // l'affichage canadien) donnait NaN, sérialisé en null — le prix s'effaçait.
     const brut = nombreSaisi(prix);
-    if (prix.trim() && !Number.isFinite(brut)) { alert("Montant illisible. Ex. : 51738,75"); return; }
+    if (prix.trim() && !Number.isFinite(brut)) { toast("Montant illisible. Ex. : 51 738,75", "warning"); return; }
     const valeur = prix.trim() ? brut : null;
-    setSauveBusy(true);
     // Sync les deux champs pour que toutes les pages (liste, détail, finances) reflètent le changement
     const r = await envoyer("/api/projets", {
       methode: "PATCH",
       corps: { id: projet.id, prix_contrat: valeur, budget_estime: valeur },
-    }).finally(() => setSauveBusy(false));
-    if (!r.ok) { alert(`Prix NON enregistré : ${r.erreur}`); return; }
+    });
+    if (!r.ok) { toast(`Prix NON enregistré : ${r.erreur}`, "error"); return; }
     setEdit(false);
     onUpdate();
-  };
+  });
   const traiterContrat = async (file?: File) => {
     if (!file) return;
     const tropLourd = fichierTropLourd(file);
@@ -1461,15 +1375,15 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
       // facture déposée sur un projet déjà chiffré n'était jamais lue.
       setOcrBusy(true);
       try {
-        const r = await fetch("/api/facture-ocr", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dataUrl }),
-        }).then((x) => x.json()).catch(() => null);
+        // envoyer() : un 413/500 non-JSON ne fait plus lever `x.json()` en silence.
+        const ocr = await envoyer<{ total?: number; confiance?: string; error?: string }>("/api/facture-ocr", { corps: { dataUrl } });
+        const r = ocr.ok ? ocr.data : null;
 
-        if (!r?.ok || !r.total) {
+        if (!r || !r.total) {
           // On le DIT au lieu d'échouer en silence : sans message, il croirait que le
           // prix s'est rempli et repartirait avec un projet à 0 $.
-          toast(`Facture jointe, mais le total n'a pas pu être lu${r?.error ? ` (${r.error})` : ""}. Saisis-le à la main dans « Prix du contrat ».`, "warning");
+          const raison = ocr.ok ? r?.error : ocr.erreur;
+          toast(`Facture jointe, mais le total n'a pas pu être lu${raison ? ` (${raison})` : ""}. Saisis-le à la main dans « Prix du contrat ».`, "warning");
           return;
         }
 
@@ -1512,9 +1426,10 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
           <div className="text-xs text-slate-500 uppercase font-semibold mb-1">Prix total du contrat</div>
           {edit ? (
             <div className="flex gap-2">
-              <input type="number" value={prix} onChange={(e) => setPrix(e.target.value)} placeholder="Ex: 51738.75" className="flex-1 px-3 py-2 border rounded text-sm text-right" />
-              <button onClick={sauver} className="px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold">✓</button>
-              <button onClick={() => { setEdit(false); setPrix(projet.prix_contrat ? String(projet.prix_contrat) : ""); }} className="px-3 py-2 bg-slate-200 rounded text-sm">✕</button>
+              {/* type="text" + inputMode : un champ number refuse la virgule décimale du clavier québécois. */}
+              <input type="text" inputMode="decimal" value={prix} onChange={(e) => setPrix(e.target.value)} placeholder="Ex. : 51 738,75" className="flex-1 px-3 py-2 border rounded text-sm text-right" />
+              <button onClick={sauver} disabled={verrouPrix.occupe} aria-label="Enregistrer le prix" className="px-3 py-2 min-w-11 min-h-11 bg-emerald-600 disabled:opacity-50 text-white rounded text-sm font-bold">{verrouPrix.occupe ? "…" : "✓"}</button>
+              <button onClick={() => { setEdit(false); setPrix(projet.prix_contrat ? String(projet.prix_contrat) : ""); }} aria-label="Annuler" className="px-3 py-2 min-w-11 min-h-11 bg-slate-200 rounded text-sm">✕</button>
             </div>
           ) : (
             <div className="text-2xl font-bold text-emerald-700">{projet.prix_contrat ? formatCAD(projet.prix_contrat) : <span className="text-slate-400 text-sm font-normal italic">Non défini</span>}</div>
@@ -1573,7 +1488,7 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
 
       {/* Visualiseur contrat signé plein écran avec bouton retour */}
       {contratOuvert && (
-        <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
+        <Modale onClose={() => setContratOuvert(false)} titre={`Contrat signé — ${projet.nom}`} fermerAuClicFond={false} className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
           <div className="flex items-center justify-between p-3 text-white safe-top">
             <button onClick={() => setContratOuvert(false)} className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold text-sm">← Retour</button>
             <span className="text-sm opacity-80">Contrat signé — {projet.nom}</span>
@@ -1588,12 +1503,12 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
               <iframe src={`/api/projets/${projet.id}/contrat#view=FitH&toolbar=1`} title="Contrat signé" className="w-full h-full border-0" />
             )}
           </div>
-        </div>
+        </Modale>
       )}
 
       {/* Visualiseur facture plein écran */}
       {factureOuverte && (
-        <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
+        <Modale onClose={() => setFactureOuverte(false)} titre={`Facture — ${projet.nom}`} fermerAuClicFond={false} className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
           <div className="flex items-center justify-between p-3 text-white safe-top">
             <button onClick={() => setFactureOuverte(false)} className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold text-sm">← Retour</button>
             <span className="text-sm opacity-80">Facture — {projet.nom}</span>
@@ -1608,7 +1523,7 @@ function ContratFactureSection({ projet, onUpdate }: { projet: any; onUpdate: ()
               <iframe src={`/api/projets/${projet.id}/facture#view=FitH&toolbar=1`} title="Facture" className="w-full h-full border-0" />
             )}
           </div>
-        </div>
+        </Modale>
       )}
     </section>
   );
@@ -1626,8 +1541,11 @@ function Stat({ label, value, sub, couleur }: { label: string; value: any; sub?:
 function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" /></div>;
 }
-function FieldNum({ label, value, onChange, step = 1 }: { label: string; value: string; onChange: (v: string) => void; step?: number }) {
-  return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="number" min="0" step={step} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={(e) => { if (e.key === "-") e.preventDefault(); }} inputMode="decimal" className="w-full px-3 py-2 border rounded text-sm text-right" /></div>;
+// type="text" + inputMode="decimal" : un champ `number` refuse « 7,5 » (virgule du
+// clavier québécois) et vide la valeur en silence. La lecture passe par nombreSaisi()
+// à la soumission, qui refuse un NaN avec un message.
+function FieldNum({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="text" inputMode="decimal" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm text-right" /></div>;
 }
 function FieldDate({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return <div><label className="block text-xs font-medium text-slate-600 mb-1">{label}</label><input type="date" value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-3 py-2 border rounded text-sm" /></div>;
@@ -1644,10 +1562,12 @@ function NotesRapidesProjet({ projet_id, onChange }: { projet_id: number; onChan
   // chargement en boucle.
   const signaler = useRef(onChange);
   signaler.current = onChange;
-  const charger = () => fetch(`/api/notes-rapides?projet_id=${projet_id}`, { cache: "no-store" })
-    .then((r) => r.json())
-    .then((d) => { const l = Array.isArray(d) ? d : []; setNotes(l); signaler.current?.(l.length); })
-    .catch(() => {});
+  const [erreurNotes, setErreurNotes] = useState<string | null>(null);
+  const charger = () => lireListe(`/api/notes-rapides?projet_id=${projet_id}`)
+    .then((r) => {
+      if (!r.ok) { setErreurNotes(r.erreur); return; }
+      setErreurNotes(null); setNotes(r.data); signaler.current?.(r.data.length);
+    });
   useEffect(() => { charger(); }, [projet_id]);
 
   const ajouter = async () => {
@@ -1710,7 +1630,9 @@ function NotesRapidesProjet({ projet_id, onChange }: { projet_id: number; onChan
         </div>
       </div>
 
-      {notes.length === 0 && (
+      {erreurNotes && <div className="mb-3"><ErreurChargement compact erreur={erreurNotes} onReessayer={charger} /></div>}
+
+      {notes.length === 0 && !erreurNotes && (
         <p className="text-sm text-slate-500 bg-slate-50 rounded p-3">
           Aucune note pour l'instant. Tout ce qui se dit sur le chantier et qui doit se retrouver plus tard va ici.
         </p>
@@ -1727,7 +1649,7 @@ function NotesRapidesProjet({ projet_id, onChange }: { projet_id: number; onChan
                 <span>{new Date(n.date_creation).toLocaleString("fr-CA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
               </div>
             </div>
-            <button onClick={() => supprimer(n.id)} className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded">🗑</button>
+            <button onClick={() => supprimer(n.id)} aria-label="Supprimer cette note" className="min-w-11 min-h-11 flex items-center justify-center text-xs text-red-500 hover:bg-red-50 rounded">🗑</button>
           </li>
         ))}
       </ul>

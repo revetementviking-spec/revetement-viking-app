@@ -5,8 +5,11 @@ import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import { formatCAD } from "@/lib/calculateur";
 import ZoneDepot from "@/components/ZoneDepot";
-import { ecrire } from "@/lib/envoi";
+import { ecrire, lireListe, nombreSaisi } from "@/lib/envoi";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 const TYPES = ["Auto / flotte", "Responsabilité civile", "Chantier / RBQ", "Équipement / outils", "Cautionnement", "Autre"];
 
@@ -28,9 +31,11 @@ export default function AssurancesPage() {
   const [form, setForm] = useState<any>(vide);
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = () => {
-    fetch("/api/assurances", { cache: "no-store" }).then((r) => r.json()).then(setAssurances).catch(() => {});
-    fetch("/api/vehicules", { cache: "no-store" }).then((r) => r.json()).then(setVehicules).catch(() => {});
+    // Lectures avec filet : un 500 faisait planter le rendu sur `.reduce` d'un objet d'erreur.
+    lireListe("/api/assurances").then((r) => { if (r.ok) { setErreur(null); setAssurances(r.data); } else setErreur(r.erreur); });
+    lireListe("/api/vehicules").then((r) => { if (r.ok) setVehicules(r.data); });
   };
   useEffect(() => { charger(); }, []);
 
@@ -44,21 +49,26 @@ export default function AssurancesPage() {
   };
   const uploadDoc = (e: React.ChangeEvent<HTMLInputElement>) => traiterDoc(e.target.files?.[0]);
 
-  const sauver = async () => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux polices.
+  const verrou = useVerrou();
+  const sauver = () => verrou.executer(async () => {
     if (!form.compagnie?.trim() && !form.type?.trim()) { toast("Type ou compagnie requis", "warning"); return; }
-    const body = { ...form, vehicule_id: form.vehicule_id ? +form.vehicule_id : null, prime_annuelle: form.prime_annuelle ? +form.prime_annuelle : null, ...(edit ? { id: edit.id } : {}) };
+    // nombreSaisi et non `+` : « 1 250,50 » (virgule du clavier québécois) donnait NaN → null.
+    const prime = form.prime_annuelle ? nombreSaisi(form.prime_annuelle) : null;
+    if (prime !== null && !Number.isFinite(prime)) { toast("Prime annuelle illisible (ex. : 1 250,50)", "warning"); return; }
+    const body = { ...form, vehicule_id: form.vehicule_id ? +form.vehicule_id : null, prime_annuelle: prime, ...(edit ? { id: edit.id } : {}) };
     // Avant : fetch nu + r.json() — sur un 413 (document trop lourd, réponse HTML de la
     // plateforme), le JSON.parse levait et l'écran restait muet, formulaire ouvert.
     if (!(await ecrire("/api/assurances", edit ? "PATCH" : "POST", body, "Enregistrement"))) return;
     toast(edit ? "Assurance modifiée" : "Assurance ajoutée", "success");
     setCreerOuvert(false); setEdit(null); setForm(vide); charger();
-  };
+  });
   const supprimer = async (id: number) => {
     if (!confirm("Supprimer cette assurance ?")) return;
     if (!(await ecrire(`/api/assurances?id=${id}`, "DELETE", undefined, "Suppression"))) return;
     toast("Supprimée", "info"); charger();
   };
-  const ouvrirEdit = (a: any) => { setEdit(a); setForm({ ...vide, ...a, vehicule_id: a.vehicule_id || "", prime_annuelle: a.prime_annuelle || "", document_data: "", document_type: a.document_type || "" }); setCreerOuvert(true); };
+  const ouvrirEdit = (a: any) => { setEdit(a); setForm({ ...vide, ...a, vehicule_id: a.vehicule_id || "", prime_annuelle: a.prime_annuelle != null ? String(a.prime_annuelle) : "", document_data: "", document_type: a.document_type || "" }); setCreerOuvert(true); };
 
   const totalPrimes = assurances.reduce((s, a) => s + (a.prime_annuelle || 0), 0);
   const aRenouveler = assurances.filter((a) => { const j = joursAvant(a.date_renouvellement); return j !== null && j <= 45; });
@@ -87,7 +97,9 @@ export default function AssurancesPage() {
           </section>
         )}
 
-        {assurances.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : assurances.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center text-slate-500"><div className="text-5xl mb-3">🛡️</div>Aucune assurance enregistrée.</div>
         ) : (
           <div className="space-y-3">
@@ -102,9 +114,9 @@ export default function AssurancesPage() {
                       <div className="text-xs text-slate-500">{a.type}{a.numero_police ? ` · police ${a.numero_police}` : ""}{vehic ? ` · ${vehic.nom}` : ""}</div>
                     </div>
                     <div className="flex gap-2 flex-shrink-0">
-                      {(a.a_document || a.document_type) && <button onClick={() => setDocOuvert({ id: a.id, type: a.document_type })} className="text-xs text-blue-700 hover:underline">📎 Doc</button>}
-                      <button onClick={() => ouvrirEdit(a)} className="text-xs text-emerald-700 hover:underline">✏️</button>
-                      <button onClick={() => supprimer(a.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                      {(a.a_document || a.document_type) && <button onClick={() => setDocOuvert({ id: a.id, type: a.document_type })} className="min-h-11 px-2 inline-flex items-center text-xs text-blue-700 hover:underline">📎 Doc</button>}
+                      <button onClick={() => ouvrirEdit(a)} aria-label={`Modifier l'assurance ${a.compagnie || a.type}`} className="min-w-11 min-h-11 inline-flex items-center justify-center text-xs text-emerald-700 hover:bg-emerald-50 rounded">✏️</button>
+                      <button onClick={() => supprimer(a.id)} aria-label={`Supprimer l'assurance ${a.compagnie || a.type}`} className="min-w-11 min-h-11 inline-flex items-center justify-center text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2 text-sm">
@@ -129,7 +141,7 @@ export default function AssurancesPage() {
 
       {/* Modal créer/éditer */}
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+        <Modale onClose={() => setCreerOuvert(false)} titre={edit ? "Modifier l'assurance" : "Nouvelle assurance"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">{edit ? "Modifier" : "Nouvelle"} assurance</h3>
             <div>
@@ -151,7 +163,8 @@ export default function AssurancesPage() {
               <I label="Début" v={form.date_debut} on={(x: string) => setForm({ ...form, date_debut: x })} type="date" />
               <I label="Renouvellement" v={form.date_renouvellement} on={(x: string) => setForm({ ...form, date_renouvellement: x })} type="date" />
             </div>
-            <I label="Prime annuelle ($)" v={form.prime_annuelle} on={(x: string) => setForm({ ...form, prime_annuelle: x })} type="number" />
+            {/* type="text" + inputMode : un champ number refuse « 1 250,50 » (virgule du clavier québécois). */}
+            <I label="Prime annuelle ($)" v={form.prime_annuelle} on={(x: string) => setForm({ ...form, prime_annuelle: x })} inputMode="decimal" ph="Ex. : 1 250,50" />
             <ZoneDepot onFichiers={(files) => traiterDoc(files[0])} accept="image/*,application/pdf" multiple={false} messageSurvol="📎 Dépose le document">
             <div className="border border-dashed border-slate-300 rounded p-2">
               <label className="block text-xs font-medium text-slate-600 mb-1">Document (police PDF/photo) — glisse-dépose accepté</label>
@@ -165,15 +178,15 @@ export default function AssurancesPage() {
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 rounded text-sm">Annuler</button>
-              <button onClick={sauver} className="px-4 py-2 bg-emerald-600 text-white rounded text-sm font-bold">Sauver</button>
+              <button onClick={sauver} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : "Sauver"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {/* Visualiseur document */}
       {docOuvert && (
-        <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
+        <Modale onClose={() => setDocOuvert(null)} titre="Document d'assurance" fermerAuClicFond={false} className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
           <div className="flex items-center justify-between p-3 text-white safe-top">
             <button onClick={() => setDocOuvert(null)} className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold text-sm">← Retour</button>
             <span className="text-sm opacity-80">Document d'assurance</span>
@@ -188,17 +201,17 @@ export default function AssurancesPage() {
               <iframe src={`/api/assurances/${docOuvert.id}/document#view=FitH&toolbar=1`} title="Document" className="w-full h-full border-0" />
             )}
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );
 }
 
-function I({ label, v, on, ph, type = "text" }: { label: string; v: string; on: (x: string) => void; ph?: string; type?: string }) {
+function I({ label, v, on, ph, type = "text", inputMode }: { label: string; v: string; on: (x: string) => void; ph?: string; type?: string; inputMode?: "decimal" | "numeric" | "text" }) {
   return (
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-      <input type={type} value={v} onChange={(e) => on(e.target.value)} placeholder={ph} className="w-full px-3 py-2 border rounded text-sm" />
+      <input type={type} inputMode={inputMode} value={v} onChange={(e) => on(e.target.value)} placeholder={ph} className="w-full px-3 py-2 border rounded text-sm" />
     </div>
   );
 }

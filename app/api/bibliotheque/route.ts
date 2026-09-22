@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ajouterJobBiblio, listerJobsBiblio, supprimerJobBiblio, jobsSimilaires, ajouterPhotoBiblio } from "@/lib/db";
+import { ajouterJobBiblio, listerJobsBiblio, supprimerJobBiblio, jobsSimilaires, ajouterPhotosBiblio } from "@/lib/db";
 
 // Les photos vont en BASE (table bibliotheque_photos), plus sur le disque local : sur Vercel
 // le système de fichiers est éphémère, les fichiers écrits disparaissaient au déploiement
@@ -24,15 +24,17 @@ export async function POST(req: NextRequest) {
 
     const id = await ajouterJobBiblio({ ...payload, photos_json: null, date_ajout: new Date().toISOString() });
 
-    // Photos : dataURL déjà compressées côté navigateur (lib/img.ts).
+    // Photos : dataURL déjà compressées côté navigateur (lib/img.ts). Un seul lot
+    // d'INSERT (un aller-retour) au lieu d'un INSERT par photo.
     let enregistrees = 0, ignorees = 0;
     if (Array.isArray(photos)) {
+      const valides: { data: string; type: string }[] = [];
       for (const p of photos.slice(0, MAX_PHOTOS)) {
         const m = typeof p === "string" ? p.match(/^data:(image\/[a-zA-Z+]+);base64,/) : null;
         if (!m || p.length > MAX_PHOTO) { ignorees++; continue; }
-        await ajouterPhotoBiblio(id, p, m[1]);
-        enregistrees++;
+        valides.push({ data: p, type: m[1] });
       }
+      enregistrees = await ajouterPhotosBiblio(id, valides);
     }
     return NextResponse.json({ ok: true, id, photos: enregistrees, photos_ignorees: ignorees });
   } catch (e: any) {

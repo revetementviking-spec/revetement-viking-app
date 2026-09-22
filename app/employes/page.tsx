@@ -7,8 +7,11 @@ import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import ZoneDepot from "@/components/ZoneDepot";
 import { aujourdhuiMontreal } from "@/lib/date";
-import { ecrire, nombreSaisi } from "@/lib/envoi";
+import { ecrire, nombreSaisi, lireListe } from "@/lib/envoi";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 const POSTES = ["Installateur", "Apprenti", "Chef d'équipe", "Estimateur", "Administration", "Autre"];
 
@@ -19,22 +22,30 @@ export default function EmployesPage() {
   const [filtreActif, setFiltreActif] = useState<"actifs" | "tous" | "inactifs">("actifs");
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = async () => {
-    const r = await fetch("/api/employes");
-    setEmployes(await r.json());
+    // Lecture avec filet : un 500 faisait planter le rendu sur `.filter` d'un objet d'erreur.
+    const r = await lireListe("/api/employes");
+    if (!r.ok) { setErreur(r.erreur); return; }
+    setErreur(null);
+    setEmployes(r.data);
   };
 
   useEffect(() => { charger(); }, []);
 
-  const reset = () => ({ nom: "", taux_horaire: "", das_pct: 0.15, recoit_talon: 1, poste: "Installateur", telephone: "", courriel: "", adresse: "", date_naissance: "", nas: "", date_embauche: aujourdhuiMontreal(), contact_urgence_nom: "", contact_urgence_lien: "", contact_urgence_tel: "", notes: "", specimen_cheque_data: "", specimen_cheque_type: "" });
+  const reset = () => ({ nom: "", taux_horaire: "", das_pct: "0.15", recoit_talon: 1, poste: "Installateur", telephone: "", courriel: "", adresse: "", date_naissance: "", nas: "", date_embauche: aujourdhuiMontreal(), contact_urgence_nom: "", contact_urgence_lien: "", contact_urgence_tel: "", notes: "", specimen_cheque_data: "", specimen_cheque_type: "" });
   const [form, setForm] = useState<any>(reset());
 
-  const sauver = async () => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux employés.
+  const verrou = useVerrou();
+  const sauver = () => verrou.executer(async () => {
     if (!form.nom?.trim() || !form.taux_horaire) { toast("Nom et taux requis", "warning"); return; }
     // Virgule décimale : `+"30,50"` donnait NaN et le serveur le stockait tel quel.
     const taux = nombreSaisi(form.taux_horaire);
     if (!Number.isFinite(taux) || taux <= 0) { toast("Taux horaire invalide (ex. : 30,50)", "warning"); return; }
-    const body = { ...form, taux_horaire: taux, das_pct: nombreSaisi(form.das_pct) || 0.15, recoit_talon: form.recoit_talon ? 1 : 0 };
+    const das = String(form.das_pct ?? "").trim() ? nombreSaisi(form.das_pct) : 0.15;
+    if (!Number.isFinite(das) || das < 0 || das > 1) { toast("DAS invalide : une fraction entre 0 et 1 (ex. : 0,15)", "warning"); return; }
+    const body = { ...form, taux_horaire: taux, das_pct: das, recoit_talon: form.recoit_talon ? 1 : 0 };
     if (edit) {
       if (!(await ecrire("/api/employes", "PATCH", { id: edit.id, ...body }, "Enregistrement"))) return;
       toast(`✓ ${form.nom} mis à jour`, "success");
@@ -46,11 +57,22 @@ export default function EmployesPage() {
     setCreerOuvert(false);
     setForm(reset());
     charger();
-  };
+  });
 
-  const ouvrirEdit = (e: any) => {
-    setEdit(e);
-    setForm({ ...reset(), ...e, taux_horaire: String(e.taux_horaire), das_pct: e.das_pct ?? 0.15, recoit_talon: e.recoit_talon ?? 1 });
+  const ouvrirEdit = async (e: any) => {
+    // La liste ne porte plus le NAS, la date de naissance ni le spécimen de chèque :
+    // la fiche complète est demandée à l'unité, sinon l'enregistrement écraserait ces
+    // champs avec du vide.
+    let fiche = e;
+    try {
+      const r = await fetch(`/api/employes?id=${e.id}`, { cache: "no-store" });
+      if (r.ok) fiche = { ...e, ...(await r.json()) };
+    } catch {
+      toast("Fiche complète indisponible (hors ligne ?) — réessaie avant de modifier", "warning");
+      return;
+    }
+    setEdit(fiche);
+    setForm({ ...reset(), ...fiche, taux_horaire: String(fiche.taux_horaire), das_pct: String(fiche.das_pct ?? 0.15), recoit_talon: fiche.recoit_talon ?? 1 });
     setCreerOuvert(true);
   };
 
@@ -108,7 +130,9 @@ export default function EmployesPage() {
           ))}
         </div>
 
-        {affiches.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : affiches.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-6xl mb-4">👷</div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucun employé</h3>
@@ -134,7 +158,7 @@ export default function EmployesPage() {
                   {e.adresse && <div className="text-slate-600 truncate">📍 {e.adresse}</div>}
                   {e.date_embauche && <div className="text-slate-500">📅 Embauché : {e.date_embauche}</div>}
                   {e.contact_urgence_nom && <div className="text-amber-700">🚨 {e.contact_urgence_nom}{e.contact_urgence_tel ? ` · ${e.contact_urgence_tel}` : ""}</div>}
-                  {e.specimen_cheque_data && <div className="text-emerald-700">📎 Spécimen chèque archivé</div>}
+                  {(e.a_specimen || e.specimen_cheque_data) && <div className="text-emerald-700">📎 Spécimen chèque archivé</div>}
                 </div>
                 <div className="flex gap-1 pt-2 border-t">
                   <button onClick={() => ouvrirEdit(e)} className="flex-1 px-2 py-1.5 bg-slate-100 hover:bg-slate-200 rounded text-xs font-semibold">✏️ Modifier</button>
@@ -151,7 +175,7 @@ export default function EmployesPage() {
       </main>
 
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { setCreerOuvert(false); setEdit(null); }}>
+        <Modale onClose={() => { setCreerOuvert(false); setEdit(null); }} titre={edit ? `Modifier ${edit.nom}` : "Nouvel employé"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-2xl w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(ev) => ev.stopPropagation()}>
             <h3 className="text-lg font-bold">{edit ? `Modifier ${edit.nom}` : "Nouvel employé"}</h3>
 
@@ -186,10 +210,11 @@ export default function EmployesPage() {
                   <In label="Date embauche" v={form.date_embauche} o={(v) => setForm({ ...form, date_embauche: v })} type="date" />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <In label="Taux horaire $/h *" v={form.taux_horaire} o={(v) => setForm({ ...form, taux_horaire: v })} type="number" />
+                  {/* type="text" + inputMode : un champ number refuse « 30,50 » (virgule du clavier québécois). */}
+                  <In label="Taux horaire $/h *" v={form.taux_horaire} o={(v) => setForm({ ...form, taux_horaire: v })} inputMode="decimal" placeholder="Ex. : 30,50" />
                   <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">DAS %</label>
-                    <input type="number" step={0.01} value={form.das_pct} onChange={(ev) => setForm({ ...form, das_pct: ev.target.value })} className="w-full px-3 py-2 border rounded text-sm text-right" />
+                    <label className="block text-xs font-medium text-slate-600 mb-1">DAS (fraction, ex. : 0,15)</label>
+                    <input type="text" inputMode="decimal" value={form.das_pct} onChange={(ev) => setForm({ ...form, das_pct: ev.target.value })} placeholder="0,15" className="w-full px-3 py-2 border rounded text-sm text-right" />
                   </div>
                 </div>
                 <label className="flex items-start gap-2 cursor-pointer bg-slate-50 border rounded p-2 mt-1">
@@ -252,10 +277,10 @@ export default function EmployesPage() {
 
             <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => { setCreerOuvert(false); setEdit(null); }} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={sauver} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">{edit ? "Mettre à jour" : "Créer"}</button>
+              <button onClick={sauver} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : edit ? "Mettre à jour" : "Créer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       <FAB onSuccess={charger} />
@@ -263,11 +288,11 @@ export default function EmployesPage() {
   );
 }
 
-function In({ label, v, o, type = "text", placeholder }: { label: string; v: string; o: (v: string) => void; type?: string; placeholder?: string }) {
+function In({ label, v, o, type = "text", placeholder, inputMode }: { label: string; v: string; o: (v: string) => void; type?: string; placeholder?: string; inputMode?: "decimal" | "numeric" | "text" }) {
   return (
     <div>
       <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-      <input type={type} value={v || ""} onChange={(e) => o(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" />
+      <input type={type} inputMode={inputMode} value={v || ""} onChange={(e) => o(e.target.value)} placeholder={placeholder} className="w-full px-3 py-2 border rounded text-sm" />
     </div>
   );
 }

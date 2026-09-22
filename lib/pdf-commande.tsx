@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, StyleSheet, pdf } from "@react-pdf/renderer";
 import type { SoumissionCalculee } from "./calculateur";
 import { formatCAD } from "./calculateur";
+import { ENTREPRISE } from "./entreprise";
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 10, fontFamily: "Helvetica", color: "#1e293b" },
@@ -43,8 +44,8 @@ export function CommandeMateriauxPDF({ numeroSoumission, date, client, calcul }:
             <View style={styles.header}>
               <View>
                 <Text style={styles.h1}>BON DE COMMANDE</Text>
-                <Text style={styles.small}>Revêtement Viking Inc. · RBQ 5811-4299-01</Text>
-                <Text style={styles.small}>info@entreprisesxpress.ca</Text>
+                <Text style={styles.small}>{ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq}</Text>
+                <Text style={styles.small}>{ENTREPRISE.courriel} · {ENTREPRISE.telephone}</Text>
               </View>
               <View style={{ textAlign: "right" }}>
                 <Text style={styles.h1}>{fournisseur}</Text>

@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, StyleSheet, pdf, Svg, Path } from "@react-pdf/renderer";
 import type { SoumissionCalculee } from "./calculateur";
 import { formatCAD } from "./calculateur";
+import { ENTREPRISE } from "./entreprise";
 
 const styles = StyleSheet.create({
   page: { padding: 40, fontSize: 9, fontFamily: "Helvetica", color: "#1e293b" },
@@ -79,9 +80,9 @@ export function SoumissionPDF({ client, numeroSoumission, date, calcul }: Props)
               <Path d="M360 180 L390 165 L370 158 L390 148 L370 142 L385 132" stroke="#0f172a" strokeWidth={5} fill="none" />
             </Svg>
             <View>
-              <Text style={styles.h1}>Revêtement Viking Inc.</Text>
-            <Text style={styles.small}>RBQ 5811-4299-01</Text>
-            <Text style={styles.small}>info@entreprisesxpress.ca</Text>
+              <Text style={styles.h1}>{ENTREPRISE.nom}</Text>
+            <Text style={styles.small}>RBQ {ENTREPRISE.rbq}</Text>
+            <Text style={styles.small}>{ENTREPRISE.courriel} · {ENTREPRISE.telephone}</Text>
             <Text style={styles.small}>Revêtement extérieur — Soffite · Fascia · Solin · Parement</Text>
             </View>
           </View>
@@ -186,7 +187,7 @@ export function SoumissionPDF({ client, numeroSoumission, date, calcul }: Props)
         </View>
 
         <Text style={styles.footer}>
-          Revêtement Viking Inc. · RBQ 5811-4299-01 · info@entreprisesxpress.ca
+          {ENTREPRISE.nom} · RBQ {ENTREPRISE.rbq} · TPS {ENTREPRISE.tps} · TVQ {ENTREPRISE.tvq} · {ENTREPRISE.courriel}
         </Text>
       </Page>
     </Document>

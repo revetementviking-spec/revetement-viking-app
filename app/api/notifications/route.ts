@@ -5,24 +5,26 @@ import {
   soumissionsARelancer, compterPhotosErreursDrive, listerTaches,
   mentionsRecentes, relancesPourUser, db,
 } from "@/lib/db";
-import { aujourdhuiMontreal } from "@/lib/date";
+import { aujourdhuiMontreal, jourMontreal } from "@/lib/date";
 import { utilisateurActif } from "@/lib/authUser";
 import { SQL_PROJET_ACTIF } from "@/lib/statuts-projet";
 
 async function alertesBusiness(user: string | null) {
   const c: any = db();
   const auj = aujourdhuiMontreal();
-  const il_y_a_30j = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-
-  const dans3j = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  // Seuils en jour de MONTRÉAL (les dates comparées sont des jours civils saisis au Québec).
+  const il_y_a_30j = jourMontreal(new Date(Date.now() - 30 * 86400000).toISOString());
+  const dans3j = jourMontreal(new Date(Date.now() + 3 * 86400000).toISOString());
   // Les 4 requêtes partent en parallèle (avant : séquentielles → 4 allers-retours
   // Turso à chaque poll de la cloche).
   const [fIm, pR, tEch, tGen] = await Promise.all([
-    // Factures impayées > 30 jours
+    // Factures impayées > 30 jours (celles d'un projet ANNULÉ ne seront jamais encaissées :
+    // elles n'ont rien à faire dans la cloche).
     c.execute({
       sql: `SELECT fp.id, fp.numero, fp.montant, fp.date, p.nom AS projet_nom, p.id AS projet_id
             FROM factures_projet fp LEFT JOIN projets p ON p.id = fp.projet_id
-            WHERE (fp.payee = 0 OR fp.payee IS NULL) AND fp.date < ? ORDER BY fp.date ASC LIMIT 20`,
+            WHERE (fp.payee = 0 OR fp.payee IS NULL) AND fp.date < ? AND COALESCE(p.statut, '') != 'annule'
+            ORDER BY fp.date ASC LIMIT 20`,
       args: [il_y_a_30j],
     }).catch(() => ({ rows: [] })),
     // Projets en retard

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerFacturesProjet, ajouterFactureProjet, marquerFacturePayee, annulerPaiementFacture, supprimerFactureProjet, projetReferenceValide, doublonsDeLaPieceEnregistree } from "@/lib/db";
+import { listerFacturesProjet, ajouterFactureProjet, marquerFacturePayee, annulerPaiementFacture, supprimerFactureProjet, projetReferenceValide, numeroFactureExiste, doublonsDeLaPieceEnregistree } from "@/lib/db";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { nombreSaisi } from "@/lib/calculs";
 import { validerEcritureArgent } from "@/lib/validation-argent";
@@ -8,7 +8,9 @@ import { validerEcritureArgent } from "@/lib/validation-argent";
 import { journaliser } from "@/lib/audit";
 import { utilisateurActif } from "@/lib/authUser";
 
-function fail(e: any, status = 500) { console.error("[/api/factures]", e); return NextResponse.json({ error: e?.message || "erreur" }, { status }); }
+// Message GÉNÉRIQUE au client : le détail (chemin de fichier, SQL, nom de table) va dans
+// le journal serveur, pas dans la réponse.
+function fail(e: any, status = 500) { console.error("[/api/factures]", e); return NextResponse.json({ error: "Erreur serveur" }, { status }); }
 
 export async function GET(req: NextRequest) {
   try {
@@ -34,7 +36,20 @@ export async function POST(req: NextRequest) {
     if (!(await projetReferenceValide(body.projet_id))) {
       return NextResponse.json({ error: "projet introuvable — la facture serait rattachée à un projet qui n'existe pas" }, { status: 400 });
     }
+    // Numéro : généré (F-NNN, MAX+1) s'il est absent ; refusé s'il est déjà pris — deux
+    // factures « F-012 » dans deux projets, c'est un recouvrement impossible à suivre.
+    const numero = String(body.numero || "").trim();
+    if (numero && await numeroFactureExiste(numero)) {
+      return NextResponse.json({ error: "numéro déjà pris", message: `Le numéro de facture ${numero} existe déjà. Laisse le champ vide pour un numéro automatique.` }, { status: 409 });
+    }
+    body.numero = numero || undefined;
     body.montant = montant;
+    // `montant_paye` (encaissé, paiement partiel possible) : facultatif, borné.
+    if (body.montant_paye !== undefined && body.montant_paye !== null && body.montant_paye !== "") {
+      const mp = nombreSaisi(body.montant_paye);
+      if (!isFinite(mp) || mp < 0) return NextResponse.json({ error: "montant_paye invalide" }, { status: 400 });
+      body.montant_paye = mp;
+    } else delete body.montant_paye;
     const id = await ajouterFactureProjet(body);
     const u = await utilisateurActif(req);
     journaliser("facture.creee", { req, utilisateur: u || undefined, ref_type: "facture", ref_id: id,

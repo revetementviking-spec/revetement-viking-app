@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { getContratPipelineParToken, getClient } from "@/lib/db";
+import { getContratPipelineParToken, getContratPipelineBlobs, getClient } from "@/lib/db";
 import type { CertificatData, VerdictIntegrite } from "@/lib/pdf-certificat";
 
 /** Recalcule l'empreinte SHA-256 des octets du PDF signé archivé et la confronte à celle
@@ -17,9 +17,15 @@ export function verifierIntegrite(contrat: any): { actuelle?: string; verdict: V
 
 /** Rassemble tout ce que le certificat doit attester pour un contrat donné. */
 export async function construireCertificat(token: string): Promise<{ contrat: any; data: CertificatData } | null> {
-  const co = await getContratPipelineParToken(token);
-  if (!co) return null;
-  const cl = await getClient(co.client_id).catch(() => null);
+  // Métadonnées + blobs : le certificat a besoin du PDF signé (empreinte recalculée) et de
+  // l'image de la signature. Le contrat rendu porte les deux, comme l'ancien `SELECT *`.
+  const meta = await getContratPipelineParToken(token);
+  if (!meta) return null;
+  const [cl, blobs] = await Promise.all([
+    getClient(meta.client_id).catch(() => null),
+    getContratPipelineBlobs(token),
+  ]);
+  const co: any = { ...meta, ...(blobs || {}) };
   let duJson: any = {};
   try { duJson = JSON.parse(co.data_json || "{}"); } catch { /* data_json illisible : on garde le reste */ }
   const { actuelle, verdict } = verifierIntegrite(co);

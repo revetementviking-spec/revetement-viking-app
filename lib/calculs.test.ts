@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, nombreSaisi,
-  dateISOLocale, periodeBiHebdo, calculerHeuresPaye, calculerPaye, indexJourSemaine,
-  heuresDuesPeriodePayee,
+  dateISOLocale, periodeBiHebdo, calculerPaieQuinzaine, indexJourSemaine,
+  heuresDuesPeriodePayee, SEUIL_SUP_PERIODE,
 } from "./calculs";
 
 describe("calculerMargeProjet (rentabilité AVANT taxes)", () => {
@@ -185,24 +185,106 @@ describe("periodeBiHebdo (ancrage lundi 18 mai 2026)", () => {
   });
 });
 
-describe("calculerHeuresPaye (sup = >80h sur la quinzaine)", () => {
-  it("aucune heure sup sous 80h sur la quinzaine", () => {
-    const h = [{ date: "2026-05-19", heures: 45 }, { date: "2026-05-26", heures: 30 }]; // 75h
-    const r = calculerHeuresPaye(h, "2026-05-18");
-    expect(r.normales).toBe(75);
-    expect(r.sup).toBe(0);
+// Régime maison (décision de Francis) : AUCUNE majoration ×1,5. Le surplus au-delà de
+// 80 h par quinzaine va en banque, 1 h pour 1 h. Ces tests FIGENT les résultats que
+// listerPaiePeriodes (lib/db.ts) produisait avant d'être branché sur cette fonction pure :
+// mêmes heures, mêmes montants, même solde de banque.
+describe("calculerPaieQuinzaine (régime banque d'heures, 1 h pour 1 h, sans ×1,5)", () => {
+  it("sous 80 h : tout est payé au taux, rien en banque", () => {
+    const r = calculerPaieQuinzaine([{ heures: 45, taux: 45 }, { heures: 30, taux: 45 }]);
+    expect(r.travaillees).toBe(75);
+    expect(r.payees).toBe(75);
+    expect(r.surplus).toBe(0);
+    expect(r.banque_solde).toBe(0);
+    expect(r.brut).toBe(75 * 45);
+    expect(r.das).toBeCloseTo(75 * 45 * 0.15, 6);
+    expect(r.net).toBeCloseTo(75 * 45 * 0.85, 6);
   });
-  it("45h une semaine + 30h l'autre = 75h → 0 sup (avant: aurait donné 5 sup)", () => {
-    const h = [{ date: "2026-05-19", heures: 45 }, { date: "2026-05-26", heures: 30 }];
-    const r = calculerHeuresPaye(h, "2026-05-18");
-    expect(r.sup).toBe(0);
+
+  it("Gabriel 84,5 h à 45 $ : 80 h payées, 4,5 h en banque, AUCUNE prime", () => {
+    const r = calculerPaieQuinzaine([{ heures: 50, taux: 45 }, { heures: 34.5, taux: 45 }]);
+    expect(r.base).toBe(80);
+    expect(r.surplus).toBeCloseTo(4.5, 6);
+    expect(r.payees).toBe(80);
+    expect(r.brut).toBe(3600);              // 80 × 45 — pas 80×45 + 4,5×45×1,5
+    expect(r.banque_solde).toBeCloseTo(4.5, 6);
   });
-  it("compte les heures sup au-delà de 80h sur la quinzaine", () => {
-    // 50h + 40h = 90h → 80 normales + 10 sup
-    const h = [{ date: "2026-05-19", heures: 50 }, { date: "2026-05-26", heures: 40 }];
-    const r = calculerHeuresPaye(h, "2026-05-18");
-    expect(r.normales).toBe(80);
-    expect(r.sup).toBe(10);
+
+  it("Maxime 40 h à 30 $ : brut 1 200, DAS 180, net 1 020", () => {
+    const r = calculerPaieQuinzaine([{ heures: 40, taux: 30 }]);
+    expect(r.brut).toBe(1200);
+    expect(r.das).toBeCloseTo(180, 6);
+    expect(r.net).toBeCloseTo(1020, 6);
+  });
+
+  it("deux taux dans la même quinzaine : 40 h @ 50 $ + 40 h @ 60 $ = 4 400 $, taux moyen 55 $", () => {
+    const r = calculerPaieQuinzaine([{ heures: 40, taux: 50 }, { heures: 40, taux: 60 }]);
+    expect(r.taux).toBe(55);
+    expect(r.brut).toBe(4400);
+    expect(r.gains_par_taux).toEqual([
+      { taux: 50, heures: 40, montant: 2000 },
+      { taux: 60, heures: 40, montant: 2400 },
+    ]);
+  });
+
+  it("un seul taux → une seule ligne de ventilation, égale au brut", () => {
+    const r = calculerPaieQuinzaine([{ heures: 30, taux: 45 }, { heures: 20, taux: 45 }]);
+    expect(r.gains_par_taux).toHaveLength(1);
+    expect(r.gains_par_taux[0].montant).toBe(r.brut);
+  });
+
+  it("deux taux ET surplus : la ventilation est ramenée aux heures payées, sa somme = brut", () => {
+    const r = calculerPaieQuinzaine([{ heures: 60, taux: 50 }, { heures: 40, taux: 60 }]); // 100 h
+    expect(r.payees).toBe(80);
+    const somme = r.gains_par_taux.reduce((s, g) => s + g.montant, 0);
+    expect(somme).toBeCloseTo(r.brut, 6);
+    expect(r.gains_par_taux.reduce((s, g) => s + g.heures, 0)).toBeCloseTo(80, 6);
+  });
+
+  it("la banque comble une quinzaine courte — plafonnée au manque et à la dispo", () => {
+    const r = calculerPaieQuinzaine([{ heures: 70, taux: 45 }], { banqueAvant: 4.5, banqueAppliqueeDemandee: 20 });
+    expect(r.banque_appliquee).toBeCloseTo(4.5, 6);   // dispo < manque (10)
+    expect(r.payees).toBeCloseTo(74.5, 6);
+    expect(r.banque_solde).toBe(0);
+    const r2 = calculerPaieQuinzaine([{ heures: 70, taux: 45 }], { banqueAvant: 30, banqueAppliqueeDemandee: 20 });
+    expect(r2.banque_appliquee).toBe(10);              // manque (80 − 70) < demandé
+    expect(r2.banque_solde).toBe(20);
+  });
+
+  it("la banque n'est jamais appliquée automatiquement (aucune demande = 0)", () => {
+    const r = calculerPaieQuinzaine([{ heures: 70, taux: 45 }], { banqueAvant: 30 });
+    expect(r.banque_appliquee).toBe(0);
+    expect(r.banque_solde).toBe(30);
+  });
+
+  it("période payée : l'appliqué reste ce qui a été versé (borné à la dispo)", () => {
+    const r = calculerPaieQuinzaine([{ heures: 85, taux: 45 }], { banqueAvant: 3, banqueAppliqueeDemandee: 8, paye: true });
+    expect(r.banque_appliquee).toBe(3);
+    expect(r.payees).toBe(83);
+  });
+
+  it("DAS de la fiche employé (pas 15 % codé en dur)", () => {
+    const r = calculerPaieQuinzaine([{ heures: 80, taux: 45 }], { dasPct: 0.2 });
+    expect(r.das).toBeCloseTo(720, 6);
+    expect(calculerPaieQuinzaine([{ heures: 80, taux: 45 }], { dasPct: null as any }).das).toBeCloseTo(540, 6);
+  });
+
+  it("chaîne de quinzaines : le solde de l'une est la dispo de la suivante (cas juin 2026)", () => {
+    let banque = 0;
+    const totaux: number[] = [];
+    for (const h of [84.5, 91.5, 84.25]) {
+      const r = calculerPaieQuinzaine([{ heures: h, taux: 45 }], { banqueAvant: banque });
+      totaux.push(r.brut);
+      banque = r.banque_solde;
+    }
+    expect(totaux).toEqual([3600, 3600, 3600]);
+    expect(banque).toBeCloseTo(4.5 + 11.5 + 4.25, 6);
+  });
+
+  it("aucune heure : tout à zéro, pas de NaN", () => {
+    const r = calculerPaieQuinzaine([]);
+    expect(r.taux).toBe(0); expect(r.brut).toBe(0); expect(r.gains_par_taux).toEqual([]);
+    expect(SEUIL_SUP_PERIODE).toBe(80);
   });
 });
 
@@ -235,23 +317,6 @@ describe("heuresDuesPeriodePayee (dette réelle vs surplus de banque)", () => {
   it("arrondi au centième, jamais négatif", () => {
     expect(heuresDuesPeriodePayee(45.333, 45)).toBe(0.33);
     expect(heuresDuesPeriodePayee(0, 0)).toBe(0);
-  });
-});
-
-describe("calculerPaye (brut/DAS/net)", () => {
-  it("Gabriel 40h normales à 45$ + 5h sup", () => {
-    const r = calculerPaye(40, 5, 45);
-    // brut = 40*45 + 5*45*1.5 = 1800 + 337.5 = 2137.5
-    expect(r.brut).toBeCloseTo(2137.5, 2);
-    // DAS 15% = 320.625 ; net = 1816.875
-    expect(r.das).toBeCloseTo(320.625, 3);
-    expect(r.net).toBeCloseTo(1816.875, 3);
-  });
-  it("Maxime 40h à 30$ sans sup, DAS 15%", () => {
-    const r = calculerPaye(40, 0, 30);
-    expect(r.brut).toBe(1200);
-    expect(r.das).toBeCloseTo(180, 2);
-    expect(r.net).toBeCloseTo(1020, 2);
   });
 });
 

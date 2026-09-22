@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ToastsProvider } from "@/components/Toasts";
@@ -62,11 +62,20 @@ export const metadata: Metadata = {
 
 export const themeColor = "#0f172a";
 
-export const viewport = {
+export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   // Pas de maximumScale=1 : l'utilisateur doit pouvoir zoomer (a11y — WCAG 1.4.4 Resize text).
+  // `cover` : la PWA installée (barre d'état translucide) remplit l'écran jusque sous
+  // l'encoche ; sans lui, `env(safe-area-inset-*)` vaut 0 et les rembourrages posés dans
+  // Navigation (haut) et la barre du bas ne servaient à rien.
+  viewportFit: "cover",
 };
+
+// Thème sombre appliqué AVANT l'hydratation (pas de flash clair, pas de lecture de
+// localStorage dans un rendu) : un seul mécanisme, `html.vk-dark` + localStorage `vk-theme`
+// (globals.css, components/BoutonTheme.tsx).
+const SCRIPT_THEME = `(function(){try{if(localStorage.getItem("vk-theme")==="dark")document.documentElement.classList.add("vk-dark")}catch(e){}})()`;
 
 export default function RootLayout({
   children,
@@ -77,8 +86,12 @@ export default function RootLayout({
     <html
       lang="fr-CA"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      // La classe `vk-dark` est ajoutée par le script ci-dessous avant l'hydratation :
+      // React verrait un className différent du rendu serveur et le signalerait.
+      suppressHydrationWarning
     >
       <head>
+        <script dangerouslySetInnerHTML={{ __html: SCRIPT_THEME }} />
         {/* Préconnexions DNS pour APIs externes — gain ~100-300ms sur première requête */}
         <link rel="preconnect" href="https://api.open-meteo.com" crossOrigin="anonymous" />
         <link rel="preconnect" href="https://geocoding-api.open-meteo.com" crossOrigin="anonymous" />

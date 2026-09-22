@@ -14,13 +14,21 @@ export const dynamic = "force-dynamic";
 // vieille sauvegarde reste restaurable. Les champs ajoutés depuis (contrats signés,
 // factures, extras…) sont restaurés s'ils sont présents, sans être obligatoires.
 const CHAMPS_REQUIS = ["soumissions", "clients", "projets", "employes", "heures", "depenses", "contrats", "paies", "biblio"];
-const TAILLE_MAX = 200 * 1024 * 1024; // 200 Mo — filet contre un payload aberrant
+// La plateforme (Vercel) refuse tout corps au-delà de 4,5 Mo, AVANT que ce code tourne :
+// l'ancien plafond de 200 Mo ne pouvait jamais être atteint et l'utilisateur voyait un
+// 413 HTML sans explication. On vérifie `content-length` avant même de lire le corps.
+const TAILLE_MAX = 4.5 * 1024 * 1024;
+const MESSAGE_TROP_GROS = "Fichier trop volumineux pour un envoi direct (plafond 4,5 Mo) : passe par la restauration depuis Google Drive (/sync).";
 
 export async function POST(req: NextRequest) {
   try {
+    const annonce = Number(req.headers.get("content-length") || 0);
+    if (annonce > TAILLE_MAX) {
+      return NextResponse.json({ ok: false, error: MESSAGE_TROP_GROS }, { status: 413 });
+    }
     const texte = await req.text();
     if (texte.length > TAILLE_MAX) {
-      return NextResponse.json({ ok: false, error: "Fichier trop volumineux (> 200 Mo)." }, { status: 413 });
+      return NextResponse.json({ ok: false, error: MESSAGE_TROP_GROS }, { status: 413 });
     }
     let b: any;
     try { b = JSON.parse(texte); } catch { return NextResponse.json({ ok: false, error: "JSON invalide" }, { status: 400 }); }
@@ -78,6 +86,7 @@ export async function POST(req: NextRequest) {
         : `✓ Restauration terminée — ${insereTotal} nouvelle(s) ligne(s) insérée(s). Les lignes déjà existantes ont été ignorées ; aucune donnée existante n'a été modifiée ou supprimée.`,
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message }, { status: 500 });
+    console.error("[/api/restore]", e);
+    return NextResponse.json({ ok: false, error: "Restauration échouée — voir le journal serveur." }, { status: 500 });
   }
 }

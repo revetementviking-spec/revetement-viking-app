@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, lireListe } from "@/lib/envoi";
 
 // Écran des factures en double. Deux familles, jamais mélangées (voir lib/doublons-factures.ts) :
 // les factures de FOURNISSEURS (dépenses — payer deux fois) et les factures CLIENT émises
@@ -27,10 +27,10 @@ export default function DoublonsVue() {
 
   const charger = async () => {
     setChargement(true);
-    // `envoyer` poste par DÉFAUT (c'est un helper d'écriture) : sans `methode: "GET"`,
-    // la lecture partait en POST, la route répondait 400 « cle requise », et l'écran
-    // affichait « aucun doublon » — le pire des mensonges pour une alerte d'argent.
-    const r = await envoyer<any[]>("/api/doublons", { methode: "GET" });
+    // `lireListe` = lecture AVEC filet (lib/envoi.ts). Surtout pas `envoyer()`, qui POSTe
+    // par défaut : la lecture partait alors en POST, la route répondait 400 « cle requise »,
+    // et l'écran affichait « aucun doublon » — le pire des mensonges pour une alerte d'argent.
+    const r = await lireListe<any>("/api/doublons");
     // Une erreur de lecture ne doit pas se déguiser en « aucun doublon » : c'est
     // exactement le genre de silence qui fait payer une facture deux fois.
     if (!r.ok) { toast(`Lecture des doublons impossible : ${r.erreur}`, "error"); setChargement(false); return; }

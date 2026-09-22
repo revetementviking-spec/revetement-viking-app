@@ -5,18 +5,29 @@ import { useRouter } from "next/navigation";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import { compresserImage, genererVignette } from "@/lib/img";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, envoyer, lireJson } from "@/lib/envoi";
+import { purgerLocal } from "@/lib/purge-locale";
+import ErreurChargement from "@/components/ErreurChargement";
 
 export default function ParametresPage() {
   const router = useRouter();
   const { toast } = useToast();
   const [profil, setProfil] = useState<any>(null);
   const [chargement, setChargement] = useState(true);
+  const [erreurProfil, setErreurProfil] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/auth/profil").then((r) => r.ok ? r.json() : null).then((p) => { setProfil(p || { username: "" }); setChargement(false); });
-  }, []);
+  // Avant : un 500 ou un réseau coupé laissait « Chargement… » à vie (promesse rejetée,
+  // jamais de setChargement(false)). Ici : état d'erreur affiché, avec « Réessayer ».
+  const chargerProfil = async () => {
+    setChargement(true);
+    setErreurProfil(null);
+    const r = await lireJson<any>("/api/auth/profil");
+    if (r.ok) setProfil(r.data || { username: "" });
+    else setErreurProfil(r.erreur);
+    setChargement(false);
+  };
+  useEffect(() => { chargerProfil(); }, []);
 
   const sauver = async () => {
     setBusy(true);
@@ -31,7 +42,7 @@ export default function ParametresPage() {
     const f = e.target.files?.[0];
     if (!f) return;
     if (!f.type.startsWith("image/")) { toast("Image seulement", "warning"); return; }
-    if (f.size > 8 * 1024 * 1024) { toast("Image > 8 MB", "warning"); return; }
+    if (f.size > 8 * 1024 * 1024) { toast("Image > 8 Mo", "warning"); return; }
     try {
       // Vignette ~400px pour l'avatar (léger)
       const vignette = await genererVignette(f, 400, 0.8);
@@ -44,13 +55,17 @@ export default function ParametresPage() {
   const deconnexion = async () => {
     if (!confirm("Te déconnecter de l'application ?")) return;
     if (!(await ecrire("/api/login", "DELETE", undefined, "Suppression"))) return;
+    // Rien de l'usager ne doit rester sur l'appareil (cache, brouillons, file hors-ligne).
+    await purgerLocal();
     router.replace("/login");
   };
 
-  if (chargement) return (
+  if (chargement || erreurProfil || !profil) return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="⚙️ Paramètres" />
-      <main className="max-w-2xl mx-auto p-4 text-center text-slate-500">Chargement…</main>
+      <main className="max-w-2xl mx-auto p-4 text-center text-slate-500">
+        {chargement ? "Chargement…" : <ErreurChargement erreur={erreurProfil || "profil vide"} onReessayer={chargerProfil} />}
+      </main>
     </div>
   );
 

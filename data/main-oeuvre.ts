@@ -1,4 +1,4 @@
-// Catalogue main-d'œuvre - Entreprises Xpress Inc.
+// Catalogue main-d'œuvre - Revêtement Viking Inc.
 // Taux horaire 90$/h (taux facturé client, vente directe)
 // Temps standards basés sur moyennes industrie québécoise (APCHQ/Gentek-Kaycan)
 // À ajuster selon expérience réelle de Francis.

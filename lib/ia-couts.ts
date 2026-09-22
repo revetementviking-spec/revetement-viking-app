@@ -1,5 +1,6 @@
 // Journal des coûts IA — tokens et coût estimé de CHAQUE appel au modèle.
 import { db, initDb } from "@/lib/db";
+import { aujourdhuiMontreal } from "@/lib/date";
 
 // Tarifs USD par 1M de tokens, PAR MODÈLE. L'app en utilise trois niveaux (Haiku, Sonnet,
 // Opus) : appliquer le tarif Opus à un appel Haiku surestimait la dépense de 5×, et
@@ -82,7 +83,8 @@ export async function enregistrerCoutIA(p: { outil: string; model: string; usage
 
 /** Total du mois courant (USD) + nombre d'appels. */
 export async function coutMoisCourantIA(): Promise<{ mois: string; total_usd: number; nb: number }> {
-  const mois = new Date().toISOString().slice(0, 7); // AAAA-MM
+  // Mois de MONTRÉAL (le 1er du mois à 21 h au Québec est encore « ce mois-ci »).
+  const mois = aujourdhuiMontreal().slice(0, 7); // AAAA-MM
   try {
     await assurerTable();
     const r = await db().execute({

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import Script from "next/script";
 import Navigation from "@/components/Navigation";
+import { lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 /** Vue carte interactive des projets actifs.
  * Utilise Leaflet via CDN (gratuit, OpenStreetMap tiles) — pas de clé API.
@@ -41,11 +43,15 @@ export default function CarteProjets() {
   const [projets, setProjets] = useState<any[]>([]);
   const [pretLeaflet, setPretLeaflet] = useState(false);
   const [chargement, setChargement] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
   const mapRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/projets").then((r) => r.json()).then((d) => { setProjets(Array.isArray(d) ? d : []); }).catch(() => {});
+    // ?lite=1 : la carte n'a besoin que de id, nom, adresse_chantier, statut et
+    // client_nom (tous dans la réponse allégée) — la liste complète recalculait coûts et
+    // marges de chaque projet pour rien.
+    lireListe("/api/projets?lite=1").then((r) => { if (r.ok) { setErreur(null); setProjets(r.data); } else setErreur(r.erreur); });
   }, []);
 
   useEffect(() => {
@@ -116,6 +122,7 @@ export default function CarteProjets() {
             }, () => alert("Permission géolocalisation refusée"));
           }} className="ml-auto px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold">📍 Projets autour de moi</button>
         </div>
+        {erreur && <ErreurChargement erreur={erreur} onReessayer={() => { setErreur(null); lireListe("/api/projets?lite=1").then((r) => { if (r.ok) setProjets(r.data); else setErreur(r.erreur); }); }} />}
         <div ref={containerRef} className="bg-white rounded-lg shadow" style={{ height: "calc(100vh - 200px)", minHeight: 400 }} />
         {chargement && <div className="text-center text-xs text-slate-500">📍 Géocodage des adresses en cours...</div>}
       </main>

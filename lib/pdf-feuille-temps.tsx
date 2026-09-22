@@ -58,7 +58,7 @@ export function FeuilleTempsPDF({ projet, lignes }: Props) {
         ))}
         <View style={s.total}>
           <Text>Total : {totalH.toFixed(1)} h</Text>
-          <Text>{totalC.toFixed(2)} $ (DAS inclus si applicable)</Text>
+          <Text>{totalC.toFixed(2)} $ (avant charges sociales et taxes)</Text>
         </View>
       </Page>
     </Document>

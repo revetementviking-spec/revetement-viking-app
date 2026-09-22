@@ -1,15 +1,20 @@
 // Backup complet de la DB → Drive (Viking/Backups/backup-YYYY-MM-DD-HHMM.json)
 import { NextRequest, NextResponse } from "next/server";
-import { contenuSauvegarde, TABLES_EXCLUES_SAUVEGARDE, toutesHeuresPourExport } from "@/lib/db";
+import { contenuSauvegarde, memoriserCountsSauvegarde, TABLES_EXCLUES_SAUVEGARDE, toutesHeuresPourExport } from "@/lib/db";
 import { driveEstActif, trouverOuCreerSousDossier, uploaderFichier, sauvegarderClasseurCSV } from "@/lib/drive";
+import { celluleCSV } from "@/lib/csv";
+import { timingSafeEqual } from "@/lib/rateLimit";
+import { enregistrerErreurClient } from "@/lib/erreurs-client";
+import { journaliser } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
+// Export de toutes les tables + dépôt Drive + classeur des heures : bien au-delà des 10 s
+// par défaut d'une fonction Vercel quand la base a quelques années de données.
+export const maxDuration = 300;
 
-// Échappement CSV (guillemets, virgules, sauts de ligne)
-function csvEchap(v: any): string {
-  const s = v == null ? "" : String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
+// Échappement CSV (guillemets, virgules, sauts de ligne) + neutralisation des formules :
+// ce CSV devient un Google Sheet, qui exécuterait un « =IMPORTXML(...) » saisi en description.
+const csvEchap = celluleCSV;
 function construireCSVHeures(lignes: any[]): string {
   const entete = ["Date", "Employé", "Projet", "Heures", "Taux ($/h)", "Coût ($)", "Description", "Saisi par"];
   const rows = lignes.map((h) => [
@@ -20,29 +25,49 @@ function construireCSVHeures(lignes: any[]): string {
   return [entete.join(","), ...rows].join("\n");
 }
 
-/** Sauvegarde lisible des heures dans un Google Sheet "horaireemploye2026" (back-up dédié).
- *  Best-effort : ne fait jamais échouer le backup principal. */
-async function exporterHeuresVersSheet(): Promise<{ ok: boolean; lignes?: number; lien?: string; error?: string }> {
-  try {
-    const lignes = await toutesHeuresPourExport();
-    const csv = construireCSVHeures(lignes);
-    const r = await sauvegarderClasseurCSV(
-      "horaireemploye2026", csv,
-      `Heures employés · ${lignes.length} entrées · maj ${new Date().toLocaleDateString("fr-CA")}`
-    );
-    return { ok: true, lignes: lignes.length, lien: r.webViewLink };
-  } catch (e: any) {
-    return { ok: false, error: e?.message || "erreur export heures" };
-  }
+/** Sauvegarde lisible des heures dans un Google Sheet "horaireemploye2026" (back-up dédié). */
+async function exporterHeuresVersSheet(): Promise<{ lignes: number; lien?: string }> {
+  const lignes = await toutesHeuresPourExport();
+  const csv = construireCSVHeures(lignes);
+  const r = await sauvegarderClasseurCSV(
+    "horaireemploye2026", csv,
+    `Heures employés · ${lignes.length} entrées · maj ${new Date().toLocaleDateString("fr-CA")}`
+  );
+  return { lignes: lignes.length, lien: r.webViewLink };
 }
 
-async function effectuerBackup(): Promise<{ ok: boolean; nom?: string; webViewLink?: string; tailles?: any; error?: string; heures_sheet?: any }> {
+type ResultatBackup = {
+  ok: boolean; nom?: string; webViewLink?: string; tailles?: any; error?: string;
+  heures_sheet?: { ok: boolean; lignes?: number; lien?: string; error?: string };
+  echecs_partiels?: string[]; alertes?: string[];
+};
+
+/** Alerte : journal d'erreurs (direct en base) + push aux deux utilisateurs. */
+async function alerter(message: string) {
+  await enregistrerErreurClient({ message, path: "/api/backup", userAgent: "cron-vercel" });
+  try {
+    const { envoyerPushUtilisateur, pushEstConfigure } = await import("@/lib/push");
+    if (pushEstConfigure()) {
+      for (const u of ["Francis", "Gabriel"]) {
+        await envoyerPushUtilisateur(u, { title: "⚠️ Sauvegarde Viking", body: message.slice(0, 160), url: "/sync", tag: "backup-echec" }).catch(() => {});
+      }
+    }
+  } catch {}
+}
+
+async function effectuerBackup(): Promise<ResultatBackup> {
   if (!(await driveEstActif())) return { ok: false, error: "Drive non actif — connecte Drive avant de lancer un backup." };
   // Toutes les tables métier, pilotées par la liste unique TABLES_SAUVEGARDE de lib/db.ts
   // (la même que celle utilisée par /api/restore, donc impossible qu'elles divergent).
+  // Une table qui ne s'exporte pas fait ÉCHOUER la sauvegarde (contenuSauvegarde lève) :
+  // avant, elle donnait un tableau vide et le fichier passait pour complet.
   // Les exclusions volontaires — blobs, cache, et surtout les jetons OAuth — sont listées
   // avec leur raison dans TABLES_EXCLUES_SAUVEGARDE et reportées dans le fichier.
-  const { donnees, counts } = await contenuSauvegarde();
+  const { donnees, counts, alertes } = await contenuSauvegarde();
+  // Une table qui a perdu plus de 20 % de ses lignes depuis la sauvegarde précédente est
+  // signalée AVANT le dépôt : le fichier part quand même (c'est peut-être voulu), mais
+  // Francis le sait le matin même, pas le jour où il cherche les lignes disparues.
+  if (alertes.length) await alerter(`Sauvegarde : perte de lignes depuis la précédente — ${alertes.join(" ; ")}`);
   const dump = {
     version: 2,
     date_backup: new Date().toISOString(),
@@ -56,19 +81,53 @@ async function effectuerBackup(): Promise<{ ok: boolean; nom?: string; webViewLi
   const ts = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
   const nom = `backup-${ts}.json`;
   const total = Object.values(counts).reduce((s, n) => s + n, 0);
-  const dossierId = await trouverOuCreerSousDossier("Backups");
-  const r = await uploaderFichier({ nom, dataUrl, dossierId, description: `Backup DB · ${total} enregistrements · ${counts.projets || 0} projets · ${counts.clients || 0} clients · ${counts.contrats_signes || 0} contrats signés` });
-  // Back-up lisible des heures dans un Google Sheet dédié (best-effort, ne bloque pas).
-  const heuresSheet = await exporterHeuresVersSheet();
-  return { ok: true, nom, webViewLink: r.webViewLink, tailles: dump.counts, heures_sheet: heuresSheet };
+
+  // Les deux étapes sont indépendantes et partent EN PARALLÈLE : le dépôt du fichier JSON
+  // sur Drive, et le classeur lisible des heures. Un échec partiel est journalisé et
+  // renvoyé ; on ne répond « échec » (500) que si TOUT a échoué.
+  const [depot, sheet] = await Promise.allSettled([
+    (async () => {
+      const dossierId = await trouverOuCreerSousDossier("Backups");
+      return uploaderFichier({ nom, dataUrl, dossierId, description: `Backup DB · ${total} enregistrements · ${counts.projets || 0} projets · ${counts.clients || 0} clients · ${counts.contrats_signes || 0} contrats signés` });
+    })(),
+    exporterHeuresVersSheet(),
+  ]);
+  const echecs: string[] = [];
+  if (depot.status === "rejected") echecs.push(`dépôt Drive : ${depot.reason?.message || depot.reason}`);
+  if (sheet.status === "rejected") echecs.push(`classeur des heures : ${sheet.reason?.message || sheet.reason}`);
+  for (const e of echecs) console.error("[/api/backup] échec partiel —", e);
+
+  if (depot.status === "fulfilled") {
+    // Les comptes deviennent la référence de la prochaine comparaison — seulement si le
+    // fichier est bien déposé.
+    await memoriserCountsSauvegarde(counts).catch((e) => console.warn("[/api/backup] counts non mémorisés :", e?.message));
+  }
+  if (echecs.length) {
+    await journaliser("backup.execute", { description: `Sauvegarde ${nom} avec échec partiel : ${echecs.join(" ; ")}` });
+  }
+  const toutEchoue = depot.status === "rejected" && sheet.status === "rejected";
+  return {
+    ok: !toutEchoue,
+    nom,
+    webViewLink: depot.status === "fulfilled" ? depot.value.webViewLink : undefined,
+    tailles: dump.counts,
+    heures_sheet: sheet.status === "fulfilled" ? { ok: true, ...sheet.value } : { ok: false, error: String(sheet.reason?.message || sheet.reason) },
+    echecs_partiels: echecs.length ? echecs : undefined,
+    alertes: alertes.length ? alertes : undefined,
+    error: toutEchoue ? echecs.join(" ; ") : (depot.status === "rejected" ? echecs[0] : undefined),
+  };
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(_req: NextRequest) {
   try {
     const r = await effectuerBackup();
+    if (!r.ok) await alerter(`Backup échoué: ${r.error}`);
+    else if (r.echecs_partiels) await alerter(`Backup partiel : ${r.echecs_partiels.join(" ; ")}`);
     return NextResponse.json(r, { status: r.ok ? 200 : 500 });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
+    console.error("[/api/backup POST]", e);
+    await alerter(`Backup échoué (exception): ${e?.message || e}`);
+    return NextResponse.json({ ok: false, error: "Sauvegarde échouée — voir le journal serveur." }, { status: 500 });
   }
 }
 
@@ -81,35 +140,21 @@ export async function GET(req: NextRequest) {
   if (!secret) {
     return NextResponse.json({ error: "CRON_SECRET non configuré — route désactivée" }, { status: 503 });
   }
-  if (auth !== `Bearer ${secret}`) {
+  // Comparaison à temps constant : un `!==` s'arrête au premier octet différent.
+  if (!timingSafeEqual(auth, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   // L'alerte était posée UNIQUEMENT sur la branche `!r.ok`. Or le cas le plus probable —
   // Google révoque le refresh_token — fait LEVER effectuerBackup(), donc on tombait dans
   // le catch, qui n'alertait pas : 500 silencieux tous les matins, aucun courriel, aucun
   // push, rien dans la cloche. Des semaines sans sauvegarde, découvertes le jour où on en
-  // a besoin. L'alerte couvre maintenant les deux chemins.
-  const alerter = async (message: string) => {
-    try {
-      await fetch(new URL("/api/log-erreur", req.url).toString(), {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, path: "/api/backup", userAgent: "cron-vercel" }),
-        signal: AbortSignal.timeout(10_000),
-      });
-    } catch {}
-    try {
-      const { envoyerPushUtilisateur, pushEstConfigure } = await import("@/lib/push");
-      if (pushEstConfigure()) {
-        for (const u of ["Francis", "Gabriel"]) {
-          await envoyerPushUtilisateur(u, { title: "⚠️ Sauvegarde Viking échouée", body: message.slice(0, 160), url: "/sync", tag: "backup-echec" }).catch(() => {});
-        }
-      }
-    } catch {}
-  };
-
+  // a besoin. L'alerte couvre maintenant les deux chemins (et les échecs partiels).
+  // Écriture DIRECTE en base : l'auto-appel HTTP vers /api/log-erreur partait sans cookie
+  // et mourait en 401 dans le middleware — l'erreur n'était jamais consignée.
   try {
     const r = await effectuerBackup();
     if (!r.ok) await alerter(`Backup échoué: ${r.error}`);
+    else if (r.echecs_partiels) await alerter(`Backup partiel : ${r.echecs_partiels.join(" ; ")}`);
     return NextResponse.json(r, { status: r.ok ? 200 : 500 });
   } catch (e: any) {
     const { estDriveDeconnecte } = await import("@/lib/drive");

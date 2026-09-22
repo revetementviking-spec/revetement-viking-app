@@ -1,7 +1,7 @@
 // Service Worker — Revêtement Viking
 // Cache-first pour les assets, network-first pour les pages, fallback offline
 
-const CACHE_VERSION = "viking-v6";
+const CACHE_VERSION = "viking-v7";
 // Nombre maximal de fichiers gardés dans le cache d'exécution. Sans plafond, chaque
 // déploiement ajoutait son jeu de fichiers hachés et rien n'était jamais retiré.
 const MAX_ENTREES_RUNTIME = 300;
@@ -21,6 +21,24 @@ const API_CACHE = `${CACHE_VERSION}-api`;
 const PRECACHE_URLS = [
   "/manifest.json",
 ];
+// Page de repli hors ligne (app/hors-ligne/page.tsx) : statique, sans données. Avant, le
+// repli était le HTML de « / » — des chiffres périmés présentés comme frais, ou la page de
+// connexion si c'est elle qui avait été mise en cache. URL absolue : c'est la clé du cache.
+const PAGE_HORS_LIGNE = self.location.origin + "/hors-ligne";
+
+/** Une réponse ne vaut d'être mise en cache que si elle est COMPLÈTE et DIRECTE : une
+ *  redirection (session expirée → /login) ou une erreur 500 resservie hors ligne prenait
+ *  la place de la page demandée. */
+function reponseCachable(res) {
+  return !!res && res.ok && res.type === "basic" && !res.redirected;
+}
+
+async function precacherPageHorsLigne(cache) {
+  try {
+    const res = await fetch(PAGE_HORS_LIGNE, { cache: "no-store" });
+    if (reponseCachable(res)) await cache.put(PAGE_HORS_LIGNE, res);
+  } catch (e) { /* l'installation ne doit pas échouer pour ça */ }
+}
 
 // Endpoints API en LECTURE SEULE (GET) servis en stale-while-revalidate :
 // affichage instantané même en réseau faible/chantier. (Pas d'auth ni de mutations.)
@@ -34,7 +52,8 @@ function estApiLecture(pathname) {
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(STATIC_CACHE).then((cache) => cache.addAll(PRECACHE_URLS))
+    caches.open(STATIC_CACHE)
+      .then((cache) => cache.addAll(PRECACHE_URLS).then(() => precacherPageHorsLigne(cache)))
       .then(() => self.skipWaiting())
   );
 });
@@ -84,11 +103,13 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(RUNTIME_CACHE).then((c) => c.put(request, copy));
+          if (reponseCachable(res)) {
+            const copy = res.clone();
+            caches.open(RUNTIME_CACHE).then((c) => c.put(request, copy));
+          }
           return res;
         })
-        .catch(() => caches.match(request).then((res) => res || caches.match("/")))
+        .catch(() => caches.match(request).then((res) => res || caches.match(PAGE_HORS_LIGNE)))
     );
     return;
   }

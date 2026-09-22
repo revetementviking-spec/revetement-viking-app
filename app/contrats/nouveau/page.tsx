@@ -45,7 +45,9 @@ const VIDE: Champs = {
   proprietaire: "", locataire: "",
   memeAdresse: true,
   adresse_travaux: "", ville_travaux: "", code_postal_travaux: "", province_travaux: "Québec, Canada",
-  charge_projet: "Francis Quinchon",
+  // Chargé de projet : remplacé par l'usager connecté dès que /api/auth/me répond ;
+  // Gabriel (président) par défaut, pas Francis.
+  charge_projet: "Gabriel",
   date_debut_travaux: "",
   prix_total: "",
   depot_pct: "33.3333", paiement_milieu_pct: "33.3333", paiement_fin_pct: "33.3334",
@@ -85,6 +87,12 @@ function NouveauContrat() {
   useEffect(() => {
     fetch("/api/clients").then((r) => (r.ok ? r.json() : [])).then((l) => Array.isArray(l) && setClients(l)).catch(() => {});
     fetch("/api/soumissions").then((r) => (r.ok ? r.json() : [])).then((l) => Array.isArray(l) && setSoumissions(l)).catch(() => {});
+    // Chargé de projet = l'usager connecté (Gabriel ou Francis), tant que le champ n'a
+    // pas été modifié à la main.
+    fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null)).then((d) => {
+      const u = typeof d?.user === "string" ? d.user.trim() : "";
+      if (u) setF((x) => (x.charge_projet === VIDE.charge_projet ? { ...x, charge_projet: u } : x));
+    }).catch(() => {});
   }, []);
 
   // Pré-remplissage depuis la fiche CRM (?client_id=)

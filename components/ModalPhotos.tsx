@@ -222,7 +222,7 @@ export default function ModalPhotos({ ouvert, onClose, onSuccess, projetIdInitia
               <div className="space-y-2">
                 <div className="text-xs text-slate-600 flex justify-between">
                   <span><strong>{files.length}</strong> fichier(s) sélectionné(s)</span>
-                  <span>{(tailleTotal / 1024 / 1024).toFixed(1)} MB total → compressé</span>
+                  <span>{(tailleTotal / 1024 / 1024).toFixed(1)} Mo total → compressé</span>
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                   {files.map((f, i) => {
@@ -235,8 +235,11 @@ export default function ModalPhotos({ ouvert, onClose, onSuccess, projetIdInitia
                         ) : (
                           <img src={url} alt={f.name} className="w-full h-full object-cover rounded" />
                         )}
-                        <button onClick={() => retirer(i)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center shadow">✕</button>
-                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 truncate rounded-b">{(f.size / 1024 / 1024).toFixed(1)} MB</div>
+                        {/* Cible tactile 44 px (la pastille visible reste petite) */}
+                        <button type="button" onClick={() => retirer(i)} aria-label={`Retirer ${f.name}`} className="absolute -top-3 -right-3 w-11 h-11 flex items-center justify-center">
+                          <span aria-hidden="true" className="bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center shadow">✕</span>
+                        </button>
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 truncate rounded-b">{(f.size / 1024 / 1024).toFixed(1)} Mo</div>
                       </div>
                     );
                   })}

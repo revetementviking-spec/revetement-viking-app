@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { envoyer, lireListe } from "@/lib/envoi";
 
 /** Bouton micro flottant universel : dictée rapide d'une note attachée à un projet.
  *  - Visible en bas à droite sur mobile (et desktop)
@@ -18,11 +19,12 @@ export default function MicroFlottant() {
 
   useEffect(() => {
     if (ouvert && projets.length === 0) {
-      fetch("/api/projets?statut=actif", { cache: "no-store" }).then((r) => r.json()).then((d) => {
-        const arr = Array.isArray(d) ? d : [];
-        setProjets(arr);
-        if (arr.length > 0 && !projetId) setProjetId(arr[0].id);
-      }).catch(() => {});
+      // ?lite=1 : seul le nom sert au sélecteur ; inutile de recalculer coûts et marges.
+      lireListe("/api/projets?statut=actif&lite=1").then((r) => {
+        if (!r.ok) return;
+        setProjets(r.data);
+        if (r.data.length > 0 && !projetId) setProjetId(r.data[0].id);
+      });
     }
   }, [ouvert]);
 
@@ -71,16 +73,12 @@ export default function MicroFlottant() {
   const sauvegarder = async () => {
     if (!texte.trim()) return;
     setStatut("envoi");
-    try {
-      const r = await fetch("/api/notes-rapides", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projet_id: projetId || null, texte, source: "vocal" }),
-      });
-      if (r.ok) {
-        setStatut("ok");
-        setTimeout(() => { setOuvert(false); setTexte(""); setStatut(""); }, 1200);
-      } else setStatut("erreur");
-    } catch { setStatut("erreur"); }
+    // envoyer() ne lève jamais et vérifie `r.ok` ET le corps `{ ok:false }`.
+    const r = await envoyer("/api/notes-rapides", { corps: { projet_id: projetId || null, texte, source: "vocal" } });
+    if (r.ok) {
+      setStatut("ok");
+      setTimeout(() => { setOuvert(false); setTexte(""); setStatut(""); }, 1200);
+    } else setStatut("erreur");
   };
 
   if (!visible) return null;

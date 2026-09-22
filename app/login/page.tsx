@@ -2,6 +2,7 @@
 
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
+import { envoyer } from "@/lib/envoi";
 
 function LoginForm() {
   const params = useSearchParams();
@@ -11,7 +12,8 @@ function LoginForm() {
   // On refuse aussi « //ailleurs.com » (URL protocole-relative).
   const brut = params.get("redirect") || "/";
   const redirect = brut.startsWith("/") && !brut.startsWith("//") ? brut : "/";
-  const [user, setUser] = useState<"Gabriel" | "Francis">("Francis");
+  // Gabriel est le président et l'usager principal : c'est lui qui doit être pré-choisi.
+  const [user, setUser] = useState<"Gabriel" | "Francis">("Gabriel");
   const [password, setPassword] = useState("");
   const [erreur, setErreur] = useState("");
   const [loading, setLoading] = useState(false);
@@ -21,15 +23,15 @@ function LoginForm() {
     setLoading(true);
     setErreur("");
     try {
-      const r = await fetch("/api/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user, password }) });
+      // envoyer() : réponse lue même si elle n'est pas du JSON (429 du rate-limit, page
+      // HTML de la plateforme) — avant, `r.json()` échouait et le message était vide.
+      const r = await envoyer("/api/login", { corps: { user, password } });
       if (r.ok) {
         window.location.href = redirect;
       } else {
-        const d = await r.json().catch(() => ({}));
-        setErreur(d.error || "Mot de passe incorrect");
+        // Sur cette page, un 401 est un mauvais mot de passe, pas une session expirée.
+        setErreur(r.data?.error || (r.statut === 401 ? "Mot de passe incorrect" : r.erreur || "Erreur de connexion"));
       }
-    } catch {
-      setErreur("Erreur de connexion");
     } finally {
       setLoading(false);
     }
@@ -47,7 +49,7 @@ function LoginForm() {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Utilisateur</label>
             <div className="grid grid-cols-2 gap-2">
-              {(["Francis", "Gabriel"] as const).map((u) => (
+              {(["Gabriel", "Francis"] as const).map((u) => (
                 <button key={u} type="button" onClick={() => setUser(u)} className={`px-3 py-3 rounded-lg font-bold border-2 transition ${user === u ? "bg-emerald-600 text-white border-emerald-700" : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300"}`}>
                   👤 {u}
                 </button>

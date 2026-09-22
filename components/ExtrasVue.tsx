@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/Toasts";
 import { formatCAD } from "@/lib/calculateur";
 import ModalExtra from "@/components/ModalExtra";
-import { envoyer } from "@/lib/envoi";
+import { envoyer, lireListe, nombreSaisi } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
 
 const ICONE: Record<string, string> = { montant: "💰", heures: "⏱️", materiaux: "📦" };
 
@@ -20,15 +22,22 @@ export default function ExtrasVue({ projetId, onChange }: { projetId?: number; o
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(false);
   const [edition, setEdition] = useState<{ id: number; description: string; montant: string; heures: string; nature: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [erreur, setErreur] = useState<string | null>(null);
+  // Verrou par ref (lib/verrou.ts) : `if (busy) return` sur un état laissait passer
+  // deux clics du même instant sur « Enregistrer ».
+  const verrou = useVerrou();
   const { toast } = useToast();
 
   const charger = async () => {
     setLoading(true);
-    const q = `statut=${onglet}${projetId ? `&projet_id=${projetId}` : ""}`;
-    const d = await fetch(`/api/extras?${q}`).then((r) => r.json()).catch(() => []);
-    setExtras(Array.isArray(d) ? d : []);
-    setLoading(false);
+    try {
+      const q = `statut=${onglet}${projetId ? `&projet_id=${projetId}` : ""}`;
+      // Lecture avec filet : un échec ressemblait à « aucun extra en attente 🎉 ».
+      const r = await lireListe(`/api/extras?${q}`);
+      if (!r.ok) { setErreur(r.erreur); return; }
+      setErreur(null);
+      setExtras(r.data);
+    } finally { setLoading(false); }
   };
   useEffect(() => { charger(); }, [onglet, projetId]);
 
@@ -64,21 +73,27 @@ export default function ExtrasVue({ projetId, onChange }: { projetId?: number; o
     nature: e.nature || "montant",
   });
 
-  const enregistrer = async () => {
-    if (!edition || busy) return;
+  const enregistrer = () => verrou.executer(async () => {
+    if (!edition) return;
     if (!edition.description.trim()) { toast("La description ne peut pas être vide", "warning"); return; }
+    // Un montant ou des heures illisibles sont refusés ici, avec un message, au lieu de
+    // partir tels quels au serveur.
+    const montantTexte = edition.nature === "heures" ? "" : edition.montant.trim();
+    const heuresTexte = edition.nature === "heures" ? edition.heures.trim() : "";
+    if (montantTexte && !Number.isFinite(nombreSaisi(montantTexte))) { toast("Montant illisible (ex. : 1 250,75)", "warning"); return; }
+    if (heuresTexte && !Number.isFinite(nombreSaisi(heuresTexte))) { toast("Heures illisibles (ex. : 6,5)", "warning"); return; }
     // On n'envoie que les champs pertinents à la nature choisie : un extra « heures » ne
     // doit pas traîner un montant, et inversement.
     const corps: any = { id: edition.id, description: edition.description.trim(), nature: edition.nature };
-    corps.montant = edition.nature === "heures" ? null : (edition.montant.trim() || null);
-    corps.heures = edition.nature === "heures" ? (edition.heures.trim() || null) : null;
-    setBusy(true);
-    const r = await envoyer("/api/extras", { methode: "PATCH", corps }).finally(() => setBusy(false));
+    corps.montant = montantTexte ? nombreSaisi(montantTexte) : null;
+    corps.heures = heuresTexte ? nombreSaisi(heuresTexte) : null;
+    const r = await envoyer("/api/extras", { methode: "PATCH", corps });
     if (!r.ok) { toast(`Modification refusée : ${r.erreur}`, "error"); return; }
     toast("Extra modifié", "success");
     setEdition(null);
     rafraichir();
-  };
+  });
+  const busy = verrou.occupe;
 
   const total = extras.reduce((s, e) => s + (e.montant || 0), 0);
 
@@ -98,7 +113,9 @@ export default function ExtrasVue({ projetId, onChange }: { projetId?: number; o
         </div>
       )}
 
-      {loading ? (
+      {erreur ? (
+        <ErreurChargement erreur={erreur} onReessayer={charger} />
+      ) : loading ? (
         <div className="bg-white rounded-lg shadow p-8 text-center text-slate-500">Chargement…</div>
       ) : extras.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-12 text-center text-slate-500">
@@ -143,17 +160,18 @@ export default function ExtrasVue({ projetId, onChange }: { projetId?: number; o
                     <input
                       value={ed.heures}
                       onChange={(ev) => setEdition({ ...ed, heures: ev.target.value })}
-                      inputMode="decimal" placeholder="Ex. : 6,5"
+                      type="text" inputMode="decimal" placeholder="Ex. : 6,5"
                       className="w-full px-3 py-2 border rounded text-sm text-right font-bold min-h-[44px]"
                     />
                   </label>
                 ) : (
                   <label className="block">
-                    <span className="block text-xs font-medium text-slate-600 mb-1">Montant (laisser vide si à déterminer)</span>
+                    {/* Les extras sont facturés taxes incluses, comme le contrat : on le dit. */}
+                    <span className="block text-xs font-medium text-slate-600 mb-1">Montant (taxes incluses) — laisser vide si à déterminer</span>
                     <input
                       value={ed.montant}
                       onChange={(ev) => setEdition({ ...ed, montant: ev.target.value })}
-                      inputMode="decimal" placeholder="Ex. : 1 250,75"
+                      type="text" inputMode="decimal" placeholder="Ex. : 1 250,75"
                       className="w-full px-3 py-2 border rounded text-sm text-right font-bold min-h-[44px]"
                     />
                   </label>
@@ -169,8 +187,9 @@ export default function ExtrasVue({ projetId, onChange }: { projetId?: number; o
           ) : (
             <div key={e.id} className="bg-white rounded-lg shadow p-4 flex gap-3">
               {e.a_photo && (
-                <a href={`/api/extras/${e.id}/photo`} target="_blank" rel="noreferrer" className="flex-shrink-0">
-                  <img src={`/api/extras/${e.id}/photo`} alt="Justif" className="w-16 h-16 object-cover rounded border" />
+                <a href={`/api/extras/${e.id}/photo`} target="_blank" rel="noreferrer" className="flex-shrink-0 min-w-11 min-h-11" aria-label="Ouvrir la photo justificative">
+                  {/* La route /api/extras/[id]/photo sert déjà la vignette (thumb_data) quand elle existe. */}
+                  <img src={`/api/extras/${e.id}/photo`} alt="Photo justificative" loading="lazy" className="w-16 h-16 object-cover rounded border" />
                 </a>
               )}
               <div className="min-w-0 flex-1">

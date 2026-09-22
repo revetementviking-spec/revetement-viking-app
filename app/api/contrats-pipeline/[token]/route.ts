@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { getContratPipelineParToken, signerContratPipeline, getClient, marquerContratVu, creerProjetDepuisContrat } from "@/lib/db";
 import { genererContratBlob } from "@/lib/pdf-contrat";
+import { aujourdhuiMontreal } from "@/lib/date";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +21,20 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
   // Enregistre la première vue (preuve de transmission style DocuSign)
   marquerContratVu(token, ipDe(req)).catch(() => {});
   const cl = await getClient(c.client_id);
+  // Le jeton n'est PAS renvoyé : le visiteur l'a déjà (il est dans l'URL), et un JSON
+  // public qui le répète n'a aucune raison d'exister (demande de l'agent sécurité).
   return NextResponse.json({
     numero: c.numero,
-    token: c.token,
     statut: c.statut,
     data: JSON.parse(c.data_json || "{}"),
     signature_nom: c.signature_nom,
     signature_date: c.signature_date,
     client_nom: cl?.nom,
-    a_pdf_signe: !!c.pdf_signe,
+    // Drapeaux calculés en SQL (getContratPipelineParToken ne rapatrie plus les blobs).
+    a_pdf_signe: !!Number(c.a_pdf_signe),
     // Métadonnées de l'annexe seulement — le fichier lui-même passe par sa propre route,
     // sinon on renverrait plusieurs Mo de base64 à chaque affichage de la page.
-    annexe: c.annexe_data ? { nom: c.annexe_nom || "devis", type: c.annexe_type || "application/pdf" } : null,
+    annexe: Number(c.a_annexe) ? { nom: c.annexe_nom || "devis", type: c.annexe_type || "application/pdf" } : null,
   });
 }
 
@@ -42,7 +45,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ token: stri
 // plus le contrat réellement accepté. Un PDF envoyé par le client n'est donc plus accepté.
 export async function POST(req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
-  const b = await req.json();
+  // Un corps illisible est une requête invalide (400), pas une panne serveur (500).
+  const b = await req.json().catch(() => null);
+  if (!b || typeof b !== "object") return NextResponse.json({ error: "corps JSON invalide" }, { status: 400 });
 
   // Le statut (déjà signé ?) prime sur la validation de format : un retry sur un contrat
   // déjà signé doit toujours renvoyer 409, même avec un payload par ailleurs invalide.
@@ -68,7 +73,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
   // PDF signé — la pièce archivée — sortait avec « CONTRAT N° — » sur la couverture et un
   // en-tête « Contrat n° » vide sur chaque page. Vérifié en extrayant le texte du PDF.
   data.numero = co.numero || data.numero || "";
-  data.signature_client = { nom: signatureNom, date: new Date().toLocaleDateString("fr-CA") };
+  // Jour de MONTRÉAL : Vercel tourne en UTC, donc un contrat signé après 20 h au Québec
+  // portait la date du lendemain sur la pièce archivée.
+  data.signature_client = { nom: signatureNom, date: aujourdhuiMontreal() };
   data.signature_client_image = b.signature_dataurl;
 
   let pdfSigne: string;

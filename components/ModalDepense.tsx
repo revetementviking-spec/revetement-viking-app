@@ -7,6 +7,8 @@ import BottomSheet from "@/components/BottomSheet";
 import { compresserImage } from "@/lib/img";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { nombreSaisi } from "@/lib/envoi";
+import { postOuFile } from "@/lib/fileOffline";
 
 const ScannerRecu = lazy(() => import("@/components/ScannerRecu"));
 import MicVocal from "@/components/MicVocal";
@@ -31,7 +33,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
   const { toast } = useToast();
 
   const traiterFichier = async (file: File) => {
-    if (file.size > 20 * 1024 * 1024) { toast("Fichier > 20 MB", "warning"); return; }
+    if (file.size > 20 * 1024 * 1024) { toast("Fichier > 20 Mo", "warning"); return; }
     // Une image est compressée à ~250 Ko avant l'envoi ; un PDF part TEL QUEL — au-delà de
     // 3 Mo, la plateforme le refuse (413) et la dépense n'est jamais enregistrée.
     if (file.type === "application/pdf") {
@@ -123,10 +125,11 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
     try { await enregistrerReel(); } finally { enCours.current = false; }
   };
   const enregistrerReel = async () => {
-    // Accepte la VIRGULE décimale (clavier québécois) : « 88,50 » devenait NaN → null
-    // → dépense refusée en silence. C'était la cause du « ça marche pas du 1er coup ».
-    const montantNum = Number(String(form.montant).replace(",", ".").trim());
-    if (!isFinite(montantNum) || montantNum <= 0) { toast("Montant requis (ex : 88.50)", "warning"); return; }
+    // nombreSaisi (lib/calculs.ts) : « 88,50 », « 1 250,50 $ » acceptés (virgule décimale,
+    // espaces de milliers, symbole). Avant, seul `.replace(",", ".")` : « 1 250,50 » → NaN
+    // → dépense refusée. Une saisie illisible est refusée AVEC message, jamais convertie.
+    const montantNum = nombreSaisi(form.montant);
+    if (!Number.isFinite(montantNum) || montantNum <= 0) { toast(`Montant illisible ou nul${form.montant ? ` : « ${form.montant} »` : ""} — écris par exemple 88,50`, "warning"); return; }
     // Normaliser le fournisseur en cherchant un match case-insensitive parmi les connus
     let fournisseurNormalise = form.fournisseur.trim();
     if (fournisseurNormalise) {
@@ -145,34 +148,45 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
         recu_data = await imagesVersPdfDataUrl(pagesRecu); recu_type = "application/pdf";
       }
       const aRecu = !!recu_data;
-      const r = await fetch("/api/depenses", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, fournisseur: fournisseurNormalise, projet_id: form.projet_id || null, montant: montantNum, recu_data, recu_type }),
+      // postOuFile (lib/fileOffline.ts) : clé d'idempotence dès le premier essai ; réseau
+      // coupé = mise en file locale, rejouée au retour du réseau avec la même clé.
+      const r = await postOuFile("/api/depenses", {
+        ...form, fournisseur: fournisseurNormalise, projet_id: form.projet_id || null, montant: montantNum, recu_data, recu_type,
+        projet_nom: projet?.nom,
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
+      const reinitialiser = () => {
+        setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux", detaxe: false });
+        setRecu(null); setPagesRecu([]);
+      };
+      if (r.ok && r.offline) {
+        toast(`📴 Hors ligne — dépense ${formatCAD(montantNum)} gardée sur l'appareil, elle partira au retour du réseau`, "warning");
+        reinitialiser();
+        onClose();
+      } else if (r.ok) {
         toast(`✓ Dépense ${formatCAD(montantNum)} ajoutée${aRecu ? (pagesRecu.length >= 2 ? ` (facture ${pagesRecu.length} pages → PDF)` : " (reçu joint)") : ""}`, "success");
         // Une facture déjà entrée ailleurs (à la main, ou photographiée deux fois) : on
         // avertit pendant que la pièce est encore en main. La dépense EST enregistrée —
         // deux voyages de gravier le même jour au même prix, ça arrive pour vrai.
-        if (Array.isArray(d.doublons) && d.doublons.length > 0) {
-          toast(`⚠ ${d.doublons[0].raison} — à vérifier dans Finances → Doublons`, "warning");
+        // Seulement en ligne : une saisie mise en file hors réseau n'a pas encore de réponse
+        // du serveur, donc pas de détection possible — elle se verra à la prochaine passe.
+        const doublons = (r.data as any)?.doublons;
+        if (Array.isArray(doublons) && doublons.length > 0) {
+          toast(`⚠ ${doublons[0].raison} — à vérifier dans Finances → Doublons`, "warning");
         }
-        setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux", detaxe: false });
-        setRecu(null); setPagesRecu([]);
+        reinitialiser();
         onSuccess?.();
         onClose();
       } else {
         // ÉCHEC VISIBLE : avant, un échec ne montrait RIEN (le bouton repassait à
         // « Enregistrer » sans message → « ça n'a pas marché et je comprenais pas »).
         // On garde le modal ouvert avec le formulaire intact pour réessayer sans re-saisir.
-        const msg = r.status === 401 ? "Session expirée — reconnecte-toi et réessaie."
-          : (d.message || d.error || `Échec de l'enregistrement (erreur ${r.status}). Réessaie.`);
+        const msg = /non authentifi|HTTP 401/i.test(r.erreur || "") ? "Session expirée — reconnecte-toi et réessaie."
+          : (r.data?.message || r.erreur || "Échec de l'enregistrement. Réessaie.");
         toast("❌ " + msg, "error");
       }
     } catch (e: any) {
-      // Erreur réseau : le formulaire reste intact, l'utilisateur peut réessayer.
-      toast("❌ Problème de connexion — vérifie ton réseau et réessaie.", "error");
+      // Assemblage du reçu raté : le formulaire reste intact, l'utilisateur peut réessayer.
+      toast("❌ Erreur : " + (e?.message || "réessaie."), "error");
     } finally { setLoading(false); }
   };
 
@@ -211,7 +225,8 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-600 mb-1">Montant $ *</label>
-              <input type="number" inputMode="decimal" step={0.01} value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} placeholder="0.00" className="w-full px-3 py-3 border rounded-lg text-base text-right font-bold" autoFocus />
+              {/* type="text" : un <input type="number"> refuse la virgule du clavier québécois (valeur vidée en silence). */}
+              <input type="text" inputMode="decimal" value={form.montant} onChange={(e) => setForm({ ...form, montant: e.target.value })} placeholder="0,00" className="w-full px-3 py-3 border rounded-lg text-base text-right font-bold" autoFocus />
             </div>
           </div>
 
@@ -285,7 +300,7 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
                   <div className="text-xs font-semibold truncate">{recu.nom}</div>
                   <div className="text-[10px] text-slate-500">PDF · {(recu.data.length * 0.75 / 1024).toFixed(0)} ko</div>
                 </div>
-                <button onClick={() => setRecu(null)} className="text-red-600 hover:bg-red-100 px-2 py-1 rounded text-sm">✕</button>
+                <button type="button" onClick={() => setRecu(null)} aria-label="Retirer le reçu" className="text-red-600 hover:bg-red-100 min-w-11 min-h-11 flex items-center justify-center rounded text-sm">✕</button>
               </div>
             ) : pagesRecu.length > 0 ? (
               <div className="space-y-2">
@@ -294,7 +309,10 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
                     <div key={i} className="relative aspect-square">
                       <img src={p} alt={`Page ${i + 1}`} className="w-full h-full object-cover rounded border" />
                       <span className="absolute top-0 left-0 bg-black/60 text-white text-[9px] px-1 rounded-br">P{i + 1}</span>
-                      <button onClick={() => retirerPage(i)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 text-[10px] flex items-center justify-center shadow">✕</button>
+                      {/* Cible tactile 44 px (la pastille visible reste petite) */}
+                      <button type="button" onClick={() => retirerPage(i)} aria-label={`Retirer la page ${i + 1}`} className="absolute -top-3 -right-3 w-11 h-11 flex items-center justify-center">
+                        <span aria-hidden="true" className="bg-red-500 text-white rounded-full w-5 h-5 text-[10px] flex items-center justify-center shadow">✕</span>
+                      </button>
                     </div>
                   ))}
                 </div>

@@ -6,7 +6,10 @@ import FAB from "@/components/FAB";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import { exporterCSV } from "@/lib/csv";
-import { envoyer, nombreSaisi } from "@/lib/envoi";
+import { envoyer, nombreSaisi, lireListe } from "@/lib/envoi";
+import { aujourdhuiMontreal } from "@/lib/date";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 type Vue = "semaine" | "liste";
 
@@ -39,7 +42,10 @@ function dateISOLocal(iso: string): Date {
 
 export default function HoraireePage() {
   const [vue, setVue] = useState<Vue>("semaine");
-  const [semaineDebut, setSemaineDebut] = useState<Date>(() => lundiDe(new Date()));
+  // Semaine initiale calculée sur le JOUR DE MONTRÉAL (aujourdhuiMontreal), pas sur
+  // `new Date()` : le serveur (UTC) rendait la semaine suivante à partir de 20 h le
+  // dimanche, et React signalait un écart d'hydratation avec le navigateur.
+  const [semaineDebut, setSemaineDebut] = useState<Date>(() => lundiDe(dateISOLocal(aujourdhuiMontreal())));
   const [heures, setHeures] = useState<any[]>([]);
   const [projets, setProjets] = useState<any[]>([]);
   const [employes, setEmployes] = useState<any[]>([]);
@@ -50,12 +56,14 @@ export default function HoraireePage() {
   const [triCol, setTriCol] = useState<"date" | "employe" | "projet" | "heures" | "cout">("date");
   const [triSens, setTriSens] = useState<"asc" | "desc">("desc");
   const [detailJour, setDetailJour] = useState<{ employe: string; date: string } | null>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const { toast } = useToast();
 
   // Plage de la semaine sélectionnée
   const debut = fmtISO(semaineDebut);
   const finD = new Date(semaineDebut); finD.setDate(finD.getDate() + 6);
   const fin = fmtISO(finD);
+  const aujourdhui = aujourdhuiMontreal();
 
   const charger = async () => {
     const params = new URLSearchParams();
@@ -66,9 +74,10 @@ export default function HoraireePage() {
     // Fetchs INDÉPENDANTS (pas de Promise.all) : les heures s'affichent dès qu'elles
     // arrivent, sans attendre la liste des projets/employés. Projets en mode "lite"
     // (juste id/nom, sans les coûts/marges lourds) car on n'en a besoin que pour les menus.
-    fetch(`/api/heures?${params.toString()}`).then((r) => r.json()).then((h) => setHeures(Array.isArray(h) ? h : [])).catch(() => {});
-    fetch("/api/projets?lite=1").then((r) => r.json()).then((p) => setProjets(Array.isArray(p) ? p : [])).catch(() => {});
-    fetch("/api/employes").then((r) => r.json()).then((e) => setEmployes(Array.isArray(e) ? e : [])).catch(() => {});
+    // Lecture avec filet : un échec ressemblait à « aucune heure cette semaine ».
+    lireListe(`/api/heures?${params.toString()}`).then((r) => { if (r.ok) { setErreur(null); setHeures(r.data); } else setErreur(r.erreur); });
+    lireListe("/api/projets?lite=1").then((r) => { if (r.ok) setProjets(r.data); });
+    lireListe("/api/employes").then((r) => { if (r.ok) setEmployes(r.data); });
   };
 
   useEffect(() => { charger(); }, [filtreEmp, debut, fin]);
@@ -76,7 +85,7 @@ export default function HoraireePage() {
   // Décalages semaine
   const reculer = () => { const d = new Date(semaineDebut); d.setDate(d.getDate() - 7); setSemaineDebut(d); };
   const avancer = () => { const d = new Date(semaineDebut); d.setDate(d.getDate() + 7); setSemaineDebut(d); };
-  const cetteSemaine = () => setSemaineDebut(lundiDe(new Date()));
+  const cetteSemaine = () => setSemaineDebut(lundiDe(dateISOLocal(aujourdhuiMontreal())));
 
   // === GRILLE HEBDO : rows = employés, cols = 7 jours ===
   const heuresFiltrees = useMemo(() => {
@@ -177,27 +186,29 @@ export default function HoraireePage() {
 
   const sauverEdit = async () => {
     if (!editing) return;
+    // Refus des NaN ici, avec un message : « 7,5 » passe (nombreSaisi), « abc » non.
+    const heuresN = nombreSaisi(editing.heures);
+    const tauxN = nombreSaisi(editing.taux_horaire);
+    if (!Number.isFinite(heuresN) || heuresN <= 0) { toast("Nombre d'heures illisible (ex. : 7,5)", "warning"); return; }
+    if (!Number.isFinite(tauxN)) { toast("Taux horaire illisible (ex. : 30,50)", "warning"); return; }
     const body = {
       id: editing.id, projet_id: editing.projet_id, date: editing.date,
-      heures: nombreSaisi(editing.heures), taux_horaire: nombreSaisi(editing.taux_horaire),
+      heures: heuresN, taux_horaire: tauxN,
       employe: editing.employe, description: editing.description,
       version: editing.version, // verrouillage optimiste (B7)
     };
-    const r = await fetch("/api/heures", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.status === 409) {
-      const d = await r.json().catch(() => ({}));
-      toast(d.message || "Conflit : ces heures ont été modifiées ailleurs. Liste rechargée.", "warning");
+    // envoyer() : réponse lue même si elle n'est pas du JSON (401/413 de la
+    // plateforme), et le 409 du verrou optimiste reconnu par son statut.
+    const r = await envoyer("/api/heures", { methode: "PATCH", corps: body });
+    if (!r.ok && r.statut === 409) {
+      toast(r.data?.message || "Conflit : ces heures ont été modifiées ailleurs. Liste rechargée.", "warning");
       setEditing(null);
       charger();
       return;
     }
     // Sans ce `else`, un refus (ex. « heures > 24 ») laissait la modale ouverte sans le
     // moindre message : on croyait que le bouton ne marchait pas.
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({} as any));
-      toast(`Modification refusée : ${d?.error || `erreur ${r.status}`}`, "error");
-      return;
-    }
+    if (!r.ok) { toast(`Modification refusée : ${r.erreur}`, "error"); return; }
     toast("Heures mises à jour", "success");
     setEditing(null);
     charger();
@@ -261,8 +272,10 @@ export default function HoraireePage() {
           )}
         </section>
 
+        {erreur && <ErreurChargement erreur={erreur} onReessayer={charger} />}
+
         {/* === VUE GRILLE HEBDO === */}
-        {vue === "semaine" && (
+        {vue === "semaine" && !erreur && (
           <section className="bg-white rounded-lg shadow overflow-x-auto">
             <table className="w-full text-sm min-w-max">
               <thead>
@@ -270,7 +283,7 @@ export default function HoraireePage() {
                   <th className="p-2 text-left sticky left-0 bg-slate-900 z-10 min-w-[140px]">Employé</th>
                   {JOURS_COURT.map((j, i) => {
                     const jourD = new Date(semaineDebut); jourD.setDate(jourD.getDate() + i);
-                    const estAujourd = fmtISO(jourD) === fmtISO(new Date());
+                    const estAujourd = fmtISO(jourD) === aujourdhui;
                     return (
                       <th key={j} className={`p-2 text-center min-w-[110px] ${estAujourd ? "bg-emerald-700" : ""}`}>
                         <div className="font-bold">{j}</div>
@@ -340,7 +353,7 @@ export default function HoraireePage() {
         )}
 
         {/* === VUE LISTE TRIABLE === */}
-        {vue === "liste" && (
+        {vue === "liste" && !erreur && (
           <section className="bg-white rounded-lg shadow overflow-x-auto">
             {heuresTriees.length === 0 ? (
               <div className="p-12 text-center text-slate-500 text-sm">Aucune heure cette semaine.</div>
@@ -376,12 +389,12 @@ export default function HoraireePage() {
                           {h.projet_nom ? <a href={`/projets/${h.projet_id}`} className="text-blue-600 hover:underline">{h.projet_nom}</a> : <span className="text-slate-400">—</span>}
                         </td>
                         <td className="p-2 text-right font-bold">{h.heures.toFixed(1)} h</td>
-                        <td className="p-2 text-right text-slate-600">{(h.taux_horaire || 0).toFixed(2)} $</td>
+                        <td className="p-2 text-right text-slate-600">{formatCAD(h.taux_horaire || 0)}</td>
                         <td className="p-2 text-right font-bold text-emerald-700">{formatCAD(h.heures * (h.taux_horaire || 0))}</td>
                         <td className="p-2 text-xs text-slate-600 truncate max-w-xs">{h.description || ""}</td>
                         <td className="p-2 text-right whitespace-nowrap">
-                          <button onClick={() => setEditing({ ...h })} className="text-xs text-emerald-700 hover:underline mr-2">✏️</button>
-                          <button onClick={() => supprimerUn(h.id)} className="text-xs text-red-600 hover:underline">🗑</button>
+                          <button onClick={() => setEditing({ ...h })} aria-label="Modifier cette entrée" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-emerald-700 hover:bg-emerald-50 rounded mr-1">✏️</button>
+                          <button onClick={() => supprimerUn(h.id)} aria-label="Supprimer cette entrée" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                         </td>
                       </tr>
                     );
@@ -404,14 +417,14 @@ export default function HoraireePage() {
 
       {/* === MODAL DÉTAIL JOUR (clic sur cellule) === */}
       {detailJour && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setDetailJour(null)}>
+        <Modale onClose={() => setDetailJour(null)} titre={`Heures de ${detailJour.employe} le ${detailJour.date}`} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-start mb-3">
               <div>
                 <h3 className="text-lg font-bold">{detailJour.employe}</h3>
                 <p className="text-sm text-slate-600">{dateISOLocal(detailJour.date).toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long" })}</p>
               </div>
-              <button onClick={() => setDetailJour(null)} className="text-2xl text-slate-400 hover:text-slate-700">×</button>
+              <button onClick={() => setDetailJour(null)} aria-label="Fermer" className="min-w-11 min-h-11 flex items-center justify-center text-2xl text-slate-400 hover:text-slate-700">×</button>
             </div>
             <div className="space-y-2">
               {heuresFiltrees.filter((h) => h.date === detailJour.date && (h.employe || "—") === detailJour.employe).map((h) => (
@@ -424,19 +437,19 @@ export default function HoraireePage() {
                     {h.description && <div className="text-xs text-slate-500 mt-1">{h.description}</div>}
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
-                    <button onClick={() => { setEditing({ ...h }); setDetailJour(null); }} className="text-xs text-emerald-700 hover:underline">✏️ Modifier</button>
-                    <button onClick={async () => { await supprimerUn(h.id); setDetailJour(null); }} className="text-xs text-red-600 hover:underline">🗑</button>
+                    <button onClick={() => { setEditing({ ...h }); setDetailJour(null); }} className="inline-flex items-center min-h-11 px-2 text-xs text-emerald-700 hover:underline">✏️ Modifier</button>
+                    <button onClick={async () => { await supprimerUn(h.id); setDetailJour(null); }} aria-label="Supprimer cette entrée" className="inline-flex items-center justify-center min-w-11 min-h-11 text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                   </div>
                 </div>
               ))}
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {/* === MODAL ÉDITION === */}
       {editing && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEditing(null)}>
+        <Modale onClose={() => setEditing(null)} titre="Modifier l'entrée d'heures" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">Modifier l'entrée d'heures</h3>
             <div>
@@ -462,11 +475,12 @@ export default function HoraireePage() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Heures</label>
-                <input type="number" step={0.5} value={editing.heures} onChange={(e) => setEditing({ ...editing, heures: e.target.value })} className="w-full px-3 py-2 border rounded text-sm text-right font-bold" />
+                {/* type="text" + inputMode : un champ number refuse « 7,5 » (virgule du clavier québécois). */}
+                <input type="text" inputMode="decimal" value={editing.heures} onChange={(e) => setEditing({ ...editing, heures: e.target.value })} placeholder="Ex. : 7,5" className="w-full px-3 py-2 border rounded text-sm text-right font-bold" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Taux $/h</label>
-                <input type="number" step={0.01} value={editing.taux_horaire} onChange={(e) => setEditing({ ...editing, taux_horaire: e.target.value })} className="w-full px-3 py-2 border rounded text-sm text-right" />
+                <input type="text" inputMode="decimal" value={editing.taux_horaire} onChange={(e) => setEditing({ ...editing, taux_horaire: e.target.value })} placeholder="Ex. : 30,50" className="w-full px-3 py-2 border rounded text-sm text-right" />
               </div>
             </div>
             <div>
@@ -475,14 +489,14 @@ export default function HoraireePage() {
             </div>
             <div className="bg-emerald-50 p-2 rounded text-sm flex justify-between">
               <span>Coût :</span>
-              <strong className="text-emerald-700">{formatCAD(+editing.heures * +editing.taux_horaire)}</strong>
+              <strong className="text-emerald-700">{formatCAD((nombreSaisi(editing.heures) || 0) * (nombreSaisi(editing.taux_horaire) || 0))}</strong>
             </div>
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={() => setEditing(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
               <button onClick={sauverEdit} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Sauver</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       <FAB onSuccess={charger} />

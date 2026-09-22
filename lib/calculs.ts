@@ -1,11 +1,13 @@
 import { aujourdhuiMontreal } from "./date";
 // Logique métier PURE (sans DB) — testable unitairement.
-// C'est le cœur business : paie (heures sup ×1.5, DAS), marges, périodes.
+// C'est le cœur business : paie (régime banque d'heures, DAS), marges, périodes.
 // Toute modification ici est couverte par lib/calculs.test.ts.
 
-export const TAUX_SUP = 1.5;        // heures supplémentaires ×1.5
-export const SEUIL_SUP_PERIODE = 80; // au-delà de 80h sur la quinzaine = supplémentaire
-export const DAS_DEFAUT = 0.15;     // déductions à la source 15%
+// Régime de paie de Viking (décision de Francis) : AUCUNE majoration ×1,5. Au-delà de
+// 80 h par quinzaine, le surplus part en banque d'heures, 1 h pour 1 h, et sert à
+// compléter une quinzaine sous 80 h plus tard. La paie est versée au BRUT.
+export const SEUIL_SUP_PERIODE = 80; // au-delà de 80h sur la quinzaine = banque d'heures
+export const DAS_DEFAUT = 0.15;     // déductions à la source 15% (défaut de la fiche employé)
 
 // Taxes Québec : TPS 5 % + TVQ 9,975 % = 14,975 %. Les montants de contrat sont
 // gérés TAXES INCLUSES (affichage/facturation), mais la RENTABILITÉ (marge, profit)
@@ -100,13 +102,101 @@ export function periodeBiHebdo(dateStr: string, ancreISO = ANCRE_PAIE): { debut:
   return { debut: fmt(debut), fin: fmt(fin) };
 }
 
-/** Heures supplémentaires = au-delà de 80h sur la QUINZAINE complète
- *  (et non 40h/semaine). debutISO conservé pour compat de signature. */
-export function calculerHeuresPaye(heures: { date: string; heures: number }[], _debutISO: string): { normales: number; sup: number } {
-  const total = heures.reduce((s, e) => s + (e.heures || 0), 0);
-  const normales = Math.min(SEUIL_SUP_PERIODE, total);
-  const sup = Math.max(0, total - SEUIL_SUP_PERIODE);
-  return { normales, sup };
+/** Une entrée d'heures telle que lue dans heures_projet, avec SON taux. */
+export interface EntreeHeureQuinzaine { date?: string; heures: number; taux: number }
+
+export interface GainParTaux { taux: number; heures: number; montant: number }
+
+export interface PaieQuinzaine {
+  /** Heures réellement travaillées dans la quinzaine. */
+  travaillees: number;
+  /** Taux moyen pondéré par les heures (= le taux unique dans le cas normal). */
+  taux: number;
+  /** Heures payées d'office (plafonnées au seuil). */
+  base: number;
+  /** Surplus au-delà du seuil : va en banque, 1 h pour 1 h. */
+  surplus: number;
+  /** Banque disponible AVANT cette quinzaine. */
+  banque_dispo: number;
+  /** Heures effectivement tirées de la banque pour combler la quinzaine. */
+  banque_appliquee: number;
+  /** Solde de banque APRÈS cette quinzaine. */
+  banque_solde: number;
+  /** Heures payées = base + banque appliquée (indemnité de férié comprise). */
+  payees: number;
+  /** Indemnité de jour férié créditée à la quinzaine (1/20 — lib/paie-feries.ts). */
+  heures_ferie: number;
+  brut: number;
+  das: number;
+  net: number;
+  /** Ventilation du brut par taux horaire (une seule entrée dans le cas normal).
+   *  La somme des montants = brut. */
+  gains_par_taux: GainParTaux[];
+}
+
+/**
+ * Paie d'UNE quinzaine selon le régime maison — fonction pure, sans base.
+ *
+ * - Pas de prime ×1,5 : les heures au-delà du seuil (80 h) sont ACCUMULÉES en banque.
+ * - `banqueAppliqueeDemandee` est un CHOIX de l'utilisateur (jamais automatique) : on
+ *   le plafonne au manque (seuil − travaillées) et à la banque disponible. Sur une
+ *   période déjà payée, on garde ce qui a été appliqué (borné à la dispo) : les montants
+ *   versés ne bougent plus.
+ * - Le taux est le taux MOYEN PONDÉRÉ par les heures : un employé peut avoir des taux
+ *   différents dans la même quinzaine (augmentation en cours de période, ou taux distinct
+ *   selon le chantier). 40 h à 50 $ + 40 h à 60 $ = 40×50 + 40×60, pas 80×60.
+ * - La DAS vient de la fiche de l'employé (`dasPct`), défaut 15 %.
+ * - `heuresFerie` : l'indemnité de jour férié (lib/paie-feries.ts) est créditée comme des
+ *   heures et COMPTE dans le seuil (LNT art. 53, décision de Francis 2026-09-21) : 80 h
+ *   punchées + 8 h de férié = 80 h payées et 8 h à la banque. Rien n'est perdu, c'est
+ *   reporté. `tauxRepli` sert quand la quinzaine ne porte QUE l'indemnité (congé des
+ *   Fêtes) : sans heure punchée, il n'y a aucun taux moyen à calculer.
+ */
+export function calculerPaieQuinzaine(
+  heures: EntreeHeureQuinzaine[],
+  opts: { banqueAvant?: number; banqueAppliqueeDemandee?: number; paye?: boolean; dasPct?: number; seuil?: number; heuresFerie?: number; tauxRepli?: number } = {},
+): PaieQuinzaine {
+  const SEUIL = opts.seuil ?? SEUIL_SUP_PERIODE;
+  const dasPct = Number.isFinite(Number(opts.dasPct)) && opts.dasPct != null ? Number(opts.dasPct) : DAS_DEFAUT;
+  const travaillees = heures.reduce((s, e) => s + (e.heures || 0), 0);
+  const montantHeures = heures.reduce((s, e) => s + (e.heures || 0) * (e.taux || 0), 0);
+  const heuresFerie = Math.max(0, opts.heuresFerie || 0);
+  const taux = travaillees > 0 ? montantHeures / travaillees : (opts.tauxRepli || 0);
+  // L'indemnité entre dans les heures créditées : c'est elle qui peut pousser le surplus
+  // en banque sur une quinzaine déjà pleine.
+  const creditees = travaillees + heuresFerie;
+  const base = Math.min(creditees, SEUIL);
+  const surplus = Math.max(0, creditees - SEUIL);
+  const dispoAvant = opts.banqueAvant || 0;
+  const demandee = opts.banqueAppliqueeDemandee || 0;
+
+  let appliquee = 0;
+  if (opts.paye) appliquee = Math.min(demandee, dispoAvant);
+  else if (creditees < SEUIL) appliquee = Math.min(demandee, SEUIL - creditees, dispoAvant);
+
+  const payees = base + appliquee;
+  const banque = dispoAvant + surplus - appliquee;
+  const brut = payees * taux;
+  const das = brut * dasPct;
+  const net = brut - das;
+
+  // Ventilation par taux : chaque taux reçoit sa part d'heures, à l'échelle des heures
+  // payées. L'indemnité de férié en est EXCLUE — elle n'a été travaillée à aucun taux, et
+  // le talon lui donne sa propre ligne. La somme des montants vaut donc le brut MOINS
+  // l'indemnité ; c'est exactement ce que `lignesGainsTalon` attend quand il y a un férié.
+  const travailPaye = Math.max(0, payees - heuresFerie);
+  const facteur = travaillees > 0 ? travailPaye / travaillees : 0;
+  const parTaux = new Map<number, number>();
+  for (const e of heures) {
+    const t = e.taux || 0;
+    parTaux.set(t, (parTaux.get(t) || 0) + (e.heures || 0));
+  }
+  const gains_par_taux: GainParTaux[] = Array.from(parTaux.entries())
+    .filter(([, h]) => h > 0)
+    .sort((a, b) => a[0] - b[0])
+    .map(([t, h]) => ({ taux: t, heures: h * facteur, montant: h * facteur * t }));
+
+  return { travaillees, taux, base, surplus, banque_dispo: dispoAvant, banque_appliquee: appliquee, banque_solde: banque, payees, heures_ferie: heuresFerie, brut, das, net, gains_par_taux };
 }
 
 /** Heures d'une période DÉJÀ VERSÉE qui ne sont dans aucune paye : de l'argent dû.
@@ -120,14 +210,6 @@ export function calculerHeuresPaye(heures: { date: string; heures: number }[], _
 export function heuresDuesPeriodePayee(travaillees: number, payees: number): number {
   const sousSeuil = Math.min(travaillees || 0, SEUIL_SUP_PERIODE);
   return Math.max(0, Math.round((sousSeuil - (payees || 0)) * 100) / 100);
-}
-
-/** Montant brut/DAS/net d'une paie. */
-export function calculerPaye(normales: number, sup: number, taux: number, dasPct = DAS_DEFAUT) {
-  const brut = normales * taux + sup * taux * TAUX_SUP;
-  const das = brut * dasPct;
-  const net = brut - das;
-  return { brut, das, net };
 }
 
 /** Index 0-6 du jour (Lun=0 … Dim=6) pour une date ISO, en local. */

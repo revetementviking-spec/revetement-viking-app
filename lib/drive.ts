@@ -110,10 +110,18 @@ function base64UrlEncode(input: Buffer | string): string {
   return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** OAuth User : URL de consent pour démarrer le flow */
-export function buildOAuthAuthUrl(): string {
+/** Jeton `state` OAuth : aléatoire, posé dans un cookie signé au départ du flux et exigé
+ *  au retour (voir /api/drive/auth/start et /callback). Sans lui, un lien de callback forgé
+ *  pouvait lier le compte Google d'un tiers à l'app (CSRF sur le flux OAuth). */
+export function genererEtatOAuth(): string {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+/** OAuth User : URL de consent pour démarrer le flow. `state` est obligatoire. */
+export function buildOAuthAuthUrl(state: string): string {
   const creds = getOAuthClientCreds();
   if (!creds) throw new Error("OAuth client non configuré");
+  if (!state) throw new Error("state OAuth manquant");
   const params = new URLSearchParams({
     client_id: creds.id,
     redirect_uri: creds.redirect,
@@ -121,6 +129,7 @@ export function buildOAuthAuthUrl(): string {
     scope: SCOPES,
     access_type: "offline",
     prompt: "consent", // force refresh_token à chaque fois
+    state,
     // Pré-sélectionne le bon compte Google lors de la connexion (configurable).
     login_hint: process.env.GOOGLE_DRIVE_COMPTE || "revetementviking@gmail.com",
   });

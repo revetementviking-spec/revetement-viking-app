@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { envoyer } from "@/lib/envoi";
 
 export default function SignatureContratPage() {
   const params = useParams();
@@ -77,17 +78,13 @@ export default function SignatureContratPage() {
       // (voir app/api/contrats-pipeline/[token]/route.ts) — le navigateur envoie seulement
       // la signature dessinée, jamais un PDF déjà composé.
       const signatureUrl = canvasRef.current!.toDataURL("image/png");
-      const r = await fetch(`/api/contrats-pipeline/${token}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ signature_dataurl: signatureUrl, signature_nom: nom.trim() }),
-      });
-      const d = await r.json().catch(() => ({} as any));
+      // envoyer() : ne lève jamais et lit la réponse même si elle n'est pas du JSON
+      // (413 si la signature dessinée est trop lourde).
+      const r = await envoyer(`/api/contrats-pipeline/${token}`, { corps: { signature_dataurl: signatureUrl, signature_nom: nom.trim() } });
       // 409 = le contrat était déjà signé (double envoi, retour arrière du navigateur).
       // C'est un succès du point de vue du client, pas une erreur à lui montrer.
-      if (d.ok || r.status === 409) setSigne(true);
-      else alert(d.message || d.error || `Échec de la signature (${r.status})`);
-    } catch (e: any) {
-      alert("Erreur : " + (e?.message || ""));
+      if (r.ok || r.statut === 409) setSigne(true);
+      else alert(`Échec de la signature : ${r.erreur}`);
     } finally { setBusy(false); }
   };
 

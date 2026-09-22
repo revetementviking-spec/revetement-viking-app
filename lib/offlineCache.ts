@@ -25,6 +25,14 @@ function ouvrir(): Promise<IDBDatabase> {
   return dbPromise;
 }
 
+/** Ferme la connexion (purge de déconnexion : `deleteDatabase` reste bloqué tant qu'une
+ *  connexion est ouverte). La prochaine lecture rouvrira. */
+export function fermerCacheOffline(): void {
+  const p = dbPromise;
+  dbPromise = null;
+  if (p) p.then((db) => { try { db.close(); } catch { /* déjà fermée */ } }).catch(() => {});
+}
+
 async function ecrire(store: string, cle: string, valeur: any): Promise<void> {
   try {
     const db = await ouvrir();

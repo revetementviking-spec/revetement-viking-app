@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { formatCAD } from "@/lib/calculateur";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import Pagination, { usePagination } from "@/components/Pagination";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, envoyer, lireListe, nombreSaisi } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 const STATUTS: Record<string, { label: string; couleur: string }> = {
   brouillon: { label: "Brouillon", couleur: "bg-slate-200 text-slate-800" },
@@ -17,16 +18,24 @@ const STATUTS: Record<string, { label: string; couleur: string }> = {
 };
 
 export default function SoumissionsPage() {
+  // Borne Suspense : useSearchParams la réclame.
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50"><Navigation titre="📋 Mes soumissions" /><div className="p-6 text-center text-slate-500">Chargement...</div></div>}>
+      <SoumissionsListe />
+    </Suspense>
+  );
+}
+
+function SoumissionsListe() {
   const router = useRouter();
-  const [statutFiltre, setStatutFiltre] = useState<string | null>(null);
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const p = new URLSearchParams(window.location.search);
-      setStatutFiltre(p.get("statut"));
-    }
-  }, []);
+  // Filtre lu de façon SYNCHRONE (useSearchParams) : lu dans un effet, le premier
+  // chargement partait sans filtre, puis un second avec — deux requêtes, et la liste
+  // complète clignotait avant la liste filtrée.
+  const sp = useSearchParams();
+  const statutFiltre = sp.get("statut");
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
   const { toast } = useToast();
 
   const copierLienClient = async (numero: string) => {
@@ -54,10 +63,15 @@ export default function SoumissionsPage() {
 
   const charger = async () => {
     setLoading(true);
-    const url = statutFiltre ? `/api/soumissions?statut=${statutFiltre}` : "/api/soumissions";
-    const r = await fetch(url);
-    setData(await r.json());
-    setLoading(false);
+    try {
+      const url = statutFiltre ? `/api/soumissions?statut=${encodeURIComponent(statutFiltre)}` : "/api/soumissions";
+      // Lecture avec filet : un 500 faisait planter le rendu sur `.slice` d'un objet
+      // d'erreur ; un réseau coupé laissait « Chargement... » pour toujours.
+      const r = await lireListe(url);
+      if (!r.ok) { setErreur(r.erreur); return; }
+      setErreur(null);
+      setData(r.data);
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { charger(); }, [statutFiltre]);
@@ -77,6 +91,7 @@ export default function SoumissionsPage() {
   const supprimer = async (numero: string) => {
     if (!confirm(`Supprimer ${numero} ?`)) return;
     if (!(await ecrire(`/api/soumissions?numero=${numero}`, "DELETE", undefined, "Suppression"))) return;
+    toast(`Soumission ${numero} supprimée`, "info");
     charger();
   };
 
@@ -91,9 +106,12 @@ export default function SoumissionsPage() {
   };
 
   const enregistrerHeuresReelles = async (numero: string) => {
-    const h = prompt("Heures réelles totales travaillées :");
+    const h = prompt("Heures réelles totales travaillées (ex. : 42,5) :");
     if (!h) return;
-    if (!(await ecrire("/api/soumissions", "PATCH", { numero, heuresReelles: +h }, "Enregistrement"))) return;
+    // nombreSaisi et non `+h` : « 42,5 » donnait NaN, envoyé tel quel au serveur.
+    const heures = nombreSaisi(h);
+    if (!Number.isFinite(heures) || heures < 0) { toast("Nombre d'heures illisible (ex. : 42,5)", "warning"); return; }
+    if (!(await ecrire("/api/soumissions", "PATCH", { numero, heuresReelles: heures }, "Enregistrement"))) return;
     charger();
   };
 
@@ -109,14 +127,17 @@ export default function SoumissionsPage() {
           ))}
         </div>
 
-        {loading ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : loading ? (
           <div className="bg-white rounded-lg shadow p-6 text-center text-slate-500">Chargement...</div>
         ) : data.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-6xl mb-4">📋</div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucune soumission {statutFiltre ? `avec ce statut` : "encore"}</h3>
             <p className="text-sm text-slate-500 mb-4">{statutFiltre ? "Essaie un autre filtre ou crée une nouvelle soumission." : "Commence par créer ta première soumission."}</p>
-            <a href="/" className="inline-block px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold">➕ Nouvelle soumission</a>
+            {/* `/` est le tableau de bord : le formulaire est à /soumissions/nouveau. */}
+            <a href="/soumissions/nouveau" className="inline-block px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-semibold">➕ Nouvelle soumission</a>
           </div>
         ) : (
           <>

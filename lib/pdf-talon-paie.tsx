@@ -35,6 +35,21 @@ interface TalonProps {
   feries_detail?: string | null;
   /** Solde de banque après la période — affiché quand des heures y ont été reportées. */
   banque_solde?: number;
+  /** Ventilation par taux horaire (fournie par /api/paies). Affichée ligne par ligne
+   *  seulement si la quinzaine contient PLUSIEURS taux et que la somme retombe sur le
+   *  brut versé — sinon une seule ligne, comme avant. */
+  gains_par_taux?: { taux: number; heures: number; montant: number }[];
+}
+
+/** Lignes de gains à imprimer : une par taux quand il y en a plusieurs et que leur somme
+ *  est bien le brut de la paie (au cent près) ; sinon la ligne unique historique. */
+export function lignesGainsTalon(t: Pick<TalonProps, "heures_normales" | "taux_horaire" | "montant_brut" | "gains_par_taux">): { heures: number; taux: number; montant: number }[] {
+  const g = (t.gains_par_taux || []).filter((x) => x && x.heures > 0);
+  if (g.length > 1) {
+    const somme = g.reduce((s, x) => s + x.montant, 0);
+    if (Math.abs(somme - t.montant_brut) < 0.005) return g.map((x) => ({ heures: x.heures, taux: x.taux, montant: x.montant }));
+  }
+  return [{ heures: t.heures_normales, taux: t.taux_horaire, montant: t.heures_normales * t.taux_horaire }];
 }
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
@@ -54,14 +69,25 @@ function feriesLisibles(json?: string | null): { date: string; nom: string; heur
 }
 
 export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
-  // L'indemnité de férié est DANS les heures payées : on la sort de la ligne de travail pour
+  // L'indemnité de férié est DANS les heures payées : on la sort des lignes de travail pour
   // que l'employé voie les deux gains séparément. Sans ça, le talon montre des heures qu'il
   // n'a pas travaillées, et un employé qui recompte ses punchs ne retrouve pas son total.
   const heuresFerie = talon.heures_ferie || 0;
   const heuresTravail = Math.max(0, talon.heures_normales - heuresFerie);
-  const brutTravail = heuresTravail * talon.taux_horaire;
   const brutFerie = heuresFerie * talon.taux_horaire;
   const feries = feriesLisibles(talon.feries_detail);
+  // La ventilation par taux et l'indemnité de férié cohabitent : on donne à
+  // `lignesGainsTalon` le TRAVAIL seul (heures et brut nets de l'indemnité), et la ligne de
+  // férié s'ajoute après. Les deux ensemble redonnent exactement `montant_brut` — et si la
+  // ventilation ne retombe pas sur ce brut-là, la fonction sert d'elle-même la ligne unique.
+  const gains = heuresFerie > 0
+    ? lignesGainsTalon({
+        heures_normales: heuresTravail,
+        taux_horaire: talon.taux_horaire,
+        montant_brut: talon.montant_brut - brutFerie,
+        gains_par_taux: talon.gains_par_taux,
+      })
+    : lignesGainsTalon(talon);
   return (
     <Document>
       <Page size="LETTER" style={s.page}>
@@ -86,10 +112,12 @@ export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
 
         {/* Gains */}
         <Text style={s.sectionTitre}>Gains</Text>
-        <View style={s.row}>
-          <Text>Heures payées — {heuresTravail.toFixed(2)} h × {cad(talon.taux_horaire)}</Text>
-          <Text style={s.val}>{cad(brutTravail)}</Text>
-        </View>
+        {gains.map((g, i) => (
+          <View style={s.row} key={i}>
+            <Text>Heures payées — {g.heures.toFixed(2)} h × {cad(g.taux)}</Text>
+            <Text style={s.val}>{cad(g.montant)}</Text>
+          </View>
+        ))}
         {heuresFerie > 0 && (
           <View style={s.row}>
             <Text>
