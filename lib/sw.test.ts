@@ -8,8 +8,11 @@ import vm from "node:vm";
 
 const ORIGINE = "https://app.test";
 
-type Rep = { status: number; type: string; corps: string; clone(): Rep };
-const rep = (corps: string, status = 200): Rep => ({ status, type: "basic", corps, clone() { return { ...this }; } });
+type Rep = { status: number; ok: boolean; redirected: boolean; type: string; corps: string; clone(): Rep };
+const rep = (corps: string, status = 200, extra: Partial<Rep> = {}): Rep => ({
+  status, ok: status >= 200 && status < 300, redirected: false, type: "basic", corps, ...extra,
+  clone() { return { ...this }; },
+});
 
 function faireSandbox() {
   const handlers: Record<string, Function[]> = {};
@@ -62,12 +65,19 @@ function faireSandbox() {
     await new Promise((res) => setImmediate(res));
     return r;
   }
+  /** Déclenche l'événement « install » comme le navigateur, et attend son waitUntil. */
+  async function installer(): Promise<void> {
+    let promesse: Promise<unknown> = Promise.resolve();
+    for (const h of handlers.install) h({ waitUntil: (p: Promise<unknown>) => { promesse = p; } });
+    await promesse;
+  }
   const precacher = async (nomCache: string, url: string, corps: string) => { await ouvrir(nomCache).put(ORIGINE + url, rep(corps)); };
   const contenu = async (nomCache: string) => [...(magasins.get(nomCache) || new Map()).keys()];
-  return { requete, reseau, precacher, contenu, magasins };
+  return { requete, installer, reseau, precacher, contenu, magasins };
 }
 
-const RUNTIME = "viking-v6-runtime";
+const RUNTIME = "viking-v7-runtime";
+const STATIC = "viking-v7-static";
 let sb: ReturnType<typeof faireSandbox>;
 beforeEach(() => { sb = faireSandbox(); });
 
@@ -102,15 +112,67 @@ describe("service worker — quoi mettre en cache, et dans quel ordre", () => {
     expect(await sb.contenu(RUNTIME)).toContain(ORIGINE + "/_next/static/chunks/neuf.js");
   });
 
-  it("une page (mode navigate) vient du réseau d'abord", async () => {
+  it("une page (mode navigate) vient du réseau d'abord, et une page complète et directe est gardée", async () => {
     await sb.precacher(RUNTIME, "/projets", "vieille page HTML");
     sb.reseau.reponses.set(ORIGINE + "/projets", rep("page HTML fraîche"));
     const r = await sb.requete("/projets", "navigate");
     expect(r?.corps).toBe("page HTML fraîche");
+    expect((await sb.magasins.get(RUNTIME)!.get(ORIGINE + "/projets"))?.corps).toBe("page HTML fraîche");
+  });
+
+  it("une navigation REDIRIGÉE (session expirée → /login) n'est PAS mise en cache", async () => {
+    // Avant : la page de connexion prenait la place de /projets dans le cache, et c'est
+    // elle qu'on resservait hors ligne.
+    sb.reseau.reponses.set(ORIGINE + "/projets", rep("page de connexion", 200, { redirected: true }));
+    const r = await sb.requete("/projets", "navigate");
+    expect(r?.corps).toBe("page de connexion");
+    expect(await sb.contenu(RUNTIME)).not.toContain(ORIGINE + "/projets");
+  });
+
+  it("une page en erreur (500) ou opaque n'est pas mise en cache", async () => {
+    sb.reseau.reponses.set(ORIGINE + "/projets", rep("erreur serveur", 500));
+    await sb.requete("/projets", "navigate");
+    sb.reseau.reponses.set(ORIGINE + "/clients", rep("opaque", 200, { type: "opaque" }));
+    await sb.requete("/clients", "navigate");
+    expect(await sb.contenu(RUNTIME)).toEqual([]);
+  });
+
+  it("hors ligne sans copie de la page : la page /hors-ligne dédiée, PAS l'accueil", async () => {
+    await sb.precacher(RUNTIME, "/", "tableau de bord périmé");
+    await sb.precacher(STATIC, "/hors-ligne", "page hors ligne");
+    sb.reseau.reponses.set(ORIGINE + "/projets/12", new Error("réseau coupé"));
+    const r = await sb.requete("/projets/12", "navigate");
+    expect(r?.corps).toBe("page hors ligne");
+  });
+
+  it("hors ligne avec une copie de la page : c'est elle qu'on sert", async () => {
+    await sb.precacher(RUNTIME, "/projets", "copie de /projets");
+    await sb.precacher(STATIC, "/hors-ligne", "page hors ligne");
+    sb.reseau.reponses.set(ORIGINE + "/projets", new Error("réseau coupé"));
+    const r = await sb.requete("/projets", "navigate");
+    expect(r?.corps).toBe("copie de /projets");
+  });
+
+  it("à l'installation, /hors-ligne est mise en cache — seulement si la réponse est complète et directe", async () => {
+    sb.reseau.reponses.set(ORIGINE + "/hors-ligne", rep("page hors ligne"));
+    await sb.installer();
+    expect(await sb.contenu(STATIC)).toContain(ORIGINE + "/hors-ligne");
+
+    // Session expirée au moment de l'installation : la page de connexion ne doit PAS
+    // devenir la page « hors ligne ».
+    const sb2 = faireSandbox();
+    sb2.reseau.reponses.set(ORIGINE + "/hors-ligne", rep("page de connexion", 200, { redirected: true }));
+    await sb2.installer();
+    expect(await sb2.contenu(STATIC)).not.toContain(ORIGINE + "/hors-ligne");
+
+    // Réseau coupé pendant l'installation : elle ne doit pas échouer pour autant.
+    const sb3 = faireSandbox();
+    sb3.reseau.reponses.set(ORIGINE + "/hors-ligne", new Error("réseau coupé"));
+    await expect(sb3.installer()).resolves.toBeUndefined();
   });
 
   it("les API de lecture viennent du réseau d'abord ; les autres API ne passent pas par le SW", async () => {
-    await sb.precacher("viking-v6-api", "/api/projets", "liste périmée");
+    await sb.precacher("viking-v7-api", "/api/projets", "liste périmée");
     sb.reseau.reponses.set(ORIGINE + "/api/projets", rep("liste fraîche"));
     expect((await sb.requete("/api/projets"))?.corps).toBe("liste fraîche");
     expect(await sb.requete("/api/paies")).toBeUndefined();

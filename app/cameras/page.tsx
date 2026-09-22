@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
-import { ecrire } from "@/lib/envoi";
+import { ecrire, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 export default function CamerasPage() {
   const [cams, setCams] = useState<any[]>([]);
@@ -11,22 +14,26 @@ export default function CamerasPage() {
   const [form, setForm] = useState({ nom: "", emplacement: "Shop", url_embed: "", type: "iframe" });
   const [editId, setEditId] = useState<number | null>(null);
   const [pleinEcran, setPleinEcran] = useState<any>(null);
+  const [erreur, setErreur] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const charger = () => fetch("/api/cameras", { cache: "no-store" }).then((r) => r.json()).then((d) => setCams(Array.isArray(d) ? d : []));
+  const charger = () => lireListe("/api/cameras").then((r) => { if (r.ok) { setErreur(null); setCams(r.data); } else setErreur(r.erreur); });
   useEffect(() => { charger(); }, []);
 
-  const sauvegarder = async () => {
+  const verrou = useVerrou();
+  const sauvegarder = () => verrou.executer(async () => {
     if (!form.nom.trim()) { toast("Nom requis", "warning"); return; }
     const body: any = { ...form };
     if (editId) body.id = editId;
-    const r = await fetch("/api/cameras", { method: editId ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (r.ok) { toast(editId ? "Modifiée" : "Caméra ajoutée", "success"); setCreerOuvert(false); setEditId(null); setForm({ nom: "", emplacement: "Shop", url_embed: "", type: "iframe" }); charger(); }
-  };
+    // Branche d'erreur : un refus laissait la fenêtre ouverte sans un mot.
+    if (!(await ecrire("/api/cameras", editId ? "PATCH" : "POST", body, "Enregistrement de la caméra"))) return;
+    toast(editId ? "Modifiée" : "Caméra ajoutée", "success"); setCreerOuvert(false); setEditId(null); setForm({ nom: "", emplacement: "Shop", url_embed: "", type: "iframe" }); charger();
+  });
 
   const supprimer = async (c: any) => {
     if (!confirm(`Supprimer la caméra "${c.nom}" ?`)) return;
     if (!(await ecrire(`/api/cameras?id=${c.id}`, "DELETE", undefined, "Suppression"))) return;
+    toast(`Caméra « ${c.nom} » supprimée`, "info");
     charger();
   };
 
@@ -39,7 +46,9 @@ export default function CamerasPage() {
           <button onClick={() => { setEditId(null); setForm({ nom: "", emplacement: "Shop", url_embed: "", type: "iframe" }); setCreerOuvert(true); }} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold">➕ Ajouter une caméra</button>
         </div>
 
-        {cams.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : cams.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-8 text-center">
             <div className="text-5xl mb-3">📹</div>
             <p className="text-slate-600 mb-2">Aucune caméra configurée.</p>
@@ -68,8 +77,8 @@ export default function CamerasPage() {
                 <div className="p-2 flex justify-between items-center">
                   <span className="font-bold text-sm">{cam.nom}</span>
                   <div className="flex gap-1">
-                    <button onClick={(e) => { e.stopPropagation(); setEditId(cam.id); setForm({ nom: cam.nom, emplacement: cam.emplacement || "", url_embed: cam.url_embed || "", type: cam.type || "iframe" }); setCreerOuvert(true); }} className="text-xs px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded">✏️</button>
-                    <button onClick={(e) => { e.stopPropagation(); supprimer(cam); }} className="text-xs px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded">🗑</button>
+                    <button onClick={(e) => { e.stopPropagation(); setEditId(cam.id); setForm({ nom: cam.nom, emplacement: cam.emplacement || "", url_embed: cam.url_embed || "", type: cam.type || "iframe" }); setCreerOuvert(true); }} aria-label={`Modifier la caméra ${cam.nom}`} className="min-w-11 min-h-11 flex items-center justify-center text-xs bg-slate-100 hover:bg-slate-200 rounded">✏️</button>
+                    <button onClick={(e) => { e.stopPropagation(); supprimer(cam); }} aria-label={`Supprimer la caméra ${cam.nom}`} className="min-w-11 min-h-11 flex items-center justify-center text-xs bg-red-50 hover:bg-red-100 text-red-700 rounded">🗑</button>
                   </div>
                 </div>
               </div>
@@ -90,7 +99,7 @@ export default function CamerasPage() {
 
       {/* Modal création / édition */}
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setCreerOuvert(false)}>
+        <Modale onClose={() => setCreerOuvert(false)} titre={editId ? "Modifier la caméra" : "Nouvelle caméra"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">{editId ? "✏️ Modifier" : "➕ Nouvelle caméra"}</h3>
             <In label="Nom *" v={form.nom} o={(v) => setForm({ ...form, nom: v })} />
@@ -105,23 +114,23 @@ export default function CamerasPage() {
             <In label="URL d'embed *" v={form.url_embed} o={(v) => setForm({ ...form, url_embed: v })} />
             <div className="flex gap-2 justify-end pt-2">
               <button onClick={() => setCreerOuvert(false)} className="px-4 py-2 bg-slate-200 rounded text-sm">Annuler</button>
-              <button onClick={sauvegarder} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">{editId ? "Sauver" : "Ajouter"}</button>
+              <button onClick={sauvegarder} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : editId ? "Sauver" : "Ajouter"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
 
       {/* Vue plein écran d'une caméra */}
       {pleinEcran && (
-        <div className="fixed inset-0 bg-black z-50 flex items-center justify-center" onClick={() => setPleinEcran(null)}>
-          <button onClick={() => setPleinEcran(null)} className="absolute top-4 right-4 text-white text-3xl z-10" aria-label="Fermer">✕</button>
+        <Modale onClose={() => setPleinEcran(null)} titre={`Caméra ${pleinEcran.nom}`} className="fixed inset-0 bg-black z-50 flex items-center justify-center">
+          <button onClick={() => setPleinEcran(null)} className="absolute top-4 right-4 min-w-11 min-h-11 text-white text-3xl z-10" aria-label="Fermer">✕</button>
           <div className="absolute top-4 left-4 text-white font-bold text-lg z-10">{pleinEcran.nom} — 📍 {pleinEcran.emplacement}</div>
           {pleinEcran.type === "img" ? (
             <img src={pleinEcran.url_embed} alt={pleinEcran.nom} className="max-w-full max-h-full" data-no-invert />
           ) : (
             <iframe src={pleinEcran.url_embed} className="w-full h-full" allow="autoplay; fullscreen" data-no-invert title={pleinEcran.nom} />
           )}
-        </div>
+        </Modale>
       )}
     </div>
   );

@@ -5,6 +5,8 @@ import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import { nombreSaisi } from "@/lib/calculs";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { envoyer, lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 /** Facturation d'un projet : la table `factures_projet` et son API existaient depuis
  *  longtemps, mais AUCUN écran ne les alimentait — d'où « Facturé / Encaissé / À recevoir »
@@ -18,12 +20,13 @@ export default function FacturesProjet({ projetId, onChange }: { projetId: numbe
   const [form, setForm] = useState({ numero: "", montant: "", date: aujourdhui, description: "" });
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = async () => {
-    try {
-      const r = await fetch(`/api/factures?projet_id=${projetId}`, { cache: "no-store" });
-      const d = await r.json();
-      setFactures(Array.isArray(d) ? d : []);
-    } catch { setFactures([]); }
+    // Lecture avec filet : un échec affichait « 0 $ facturé » comme si c'était vrai.
+    const r = await lireListe(`/api/factures?projet_id=${projetId}`);
+    if (!r.ok) { setErreur(r.erreur); return; }
+    setErreur(null);
+    setFactures(r.data);
   };
   useEffect(() => { charger(); }, [projetId]);
 
@@ -44,53 +47,35 @@ export default function FacturesProjet({ projetId, onChange }: { projetId: numbe
     if (!form.date) { toast("Date requise", "warning"); return; }
     setBusy(true);
     try {
-      const r = await fetch("/api/factures", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projet_id: projetId, numero: form.numero.trim() || null, montant, date: form.date, description: form.description.trim() || null }),
+      // envoyer() : réponse lue même si elle n'est pas du JSON (401/413 de la plateforme).
+      const r = await envoyer("/api/factures", {
+        corps: { projet_id: projetId, numero: form.numero.trim() || null, montant, date: form.date, description: form.description.trim() || null },
       });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({} as any));
-        toast(d?.error || "Échec de l'enregistrement", "error");
-        return;
-      }
+      if (!r.ok) { toast(`Facture NON enregistrée : ${r.erreur}`, "error"); return; }
       toast(`✓ Facture de ${formatCAD(montant)} ajoutée`, "success");
       setForm({ numero: "", montant: "", date: aujourdhui, description: "" });
       setOuvert(false);
       rafraichir();
-    } catch (e: any) {
-      toast(`Réseau indisponible — facture non enregistrée`, "error");
     } finally { setBusy(false); }
   };
 
   const basculerPaiement = async (f: any) => {
     const payee = !!f.payee;
     if (payee && !confirm(`Annuler le paiement de ${formatCAD(f.montant)} ?`)) return;
-    try {
-      const r = await fetch("/api/factures", {
-        method: "PATCH", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: f.id, action: payee ? "annuler_paiement" : "marquer_payee" }),
-      });
-      if (!r.ok) { toast("Échec — statut inchangé", "error"); return; }
-      toast(payee ? "Paiement annulé" : `✓ Encaissé : ${formatCAD(f.montant)}`, "success");
-      rafraichir();
-    } catch { toast("Réseau indisponible", "error"); }
+    const r = await envoyer("/api/factures", { methode: "PATCH", corps: { id: f.id, action: payee ? "annuler_paiement" : "marquer_payee" } });
+    if (!r.ok) { toast(`Échec — statut inchangé : ${r.erreur}`, "error"); return; }
+    toast(payee ? "Paiement annulé" : `✓ Encaissé : ${formatCAD(f.montant)}`, "success");
+    rafraichir();
   };
 
   const supprimer = async (f: any) => {
     if (!confirm(`Supprimer la facture ${f.numero || ""} de ${formatCAD(f.montant)} ?`)) return;
-    try {
-      const r = await fetch(`/api/factures?id=${f.id}`, { method: "DELETE" });
-      if (!r.ok) {
-        // Le serveur refuse désormais de supprimer une facture ENCAISSÉE et explique
-        // quoi faire (annuler le paiement d'abord). « Échec de la suppression » tout
-        // court laissait l'utilisateur devant un mur.
-        const d = await r.json().catch(() => ({} as any));
-        toast(d?.message || d?.error || "Échec de la suppression", "error");
-        return;
-      }
-      toast("Facture supprimée", "info");
-      rafraichir();
-    } catch { toast("Réseau indisponible", "error"); }
+    // Le serveur refuse de supprimer une facture ENCAISSÉE et explique quoi faire
+    // (annuler le paiement d'abord) : envoyer() remonte ce message (`error` ou `message`).
+    const r = await envoyer(`/api/factures?id=${f.id}`, { methode: "DELETE" });
+    if (!r.ok) { toast(`Suppression refusée : ${r.erreur}`, "error"); return; }
+    toast("Facture supprimée", "info");
+    rafraichir();
   };
 
   const totalFacture = factures.reduce((s, f) => s + (+f.montant || 0), 0);
@@ -105,6 +90,8 @@ export default function FacturesProjet({ projetId, onChange }: { projetId: numbe
           {ouvert ? "Annuler" : "＋ Nouvelle facture"}
         </button>
       </div>
+
+      {erreur && <ErreurChargement compact erreur={erreur} onReessayer={charger} />}
 
       <div className="grid grid-cols-3 gap-2 text-center">
         <div className="bg-blue-50 rounded p-2">

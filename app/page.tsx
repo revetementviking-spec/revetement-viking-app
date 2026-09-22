@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatCAD } from "@/lib/calculateur";
+import Modale from "@/components/Modale";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import ModalHeuresJour from "@/components/ModalHeuresJour";
@@ -33,14 +34,25 @@ const STATUT_LABELS: Record<string, { label: string; couleur: string }> = {
   facturee: { label: "Facturée", couleur: "bg-purple-200 text-purple-900" },
 };
 
+/** Année courante à Montréal — la même au rendu serveur (UTC) et chez le client. */
+const anneeCourante = () => Number(aujourdhuiMontreal().slice(0, 4));
+
 function Salutation({ nom }: { nom?: string }) {
-  const h = new Date().getHours();
-  const salut = h < 5 ? "🌙 Bonne nuit" : h < 12 ? "☀️ Bonjour" : h < 17 ? "👋 Bon après-midi" : h < 21 ? "🌆 Bonsoir" : "🌙 Bonne soirée";
-  const date = new Date().toLocaleDateString("fr-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  // Heure et date calculées APRÈS le montage : au rendu serveur (Vercel, UTC), « Bonsoir »
+  // et la date du lendemain partaient dans le HTML, puis le client recalculait en heure
+  // locale → erreur d'hydratation à chaque ouverture du soir. État initial neutre.
+  const [moment, setMoment] = useState<{ salut: string; date: string } | null>(null);
+  useEffect(() => {
+    const maintenant = new Date();
+    const h = Number(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "numeric", hour12: false }).format(maintenant));
+    const salut = h < 5 ? "🌙 Bonne nuit" : h < 12 ? "☀️ Bonjour" : h < 17 ? "👋 Bon après-midi" : h < 21 ? "🌆 Bonsoir" : "🌙 Bonne soirée";
+    const date = maintenant.toLocaleDateString("fr-CA", { timeZone: "America/Toronto", weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    setMoment({ salut, date });
+  }, []);
   return (
     <div className="flex items-baseline justify-between gap-3 flex-wrap">
-      <h1 className="text-2xl md:text-3xl font-bold text-slate-900">{salut}{nom ? `, ${nom}` : ""}</h1>
-      <p className="text-sm text-slate-500 capitalize">{date}</p>
+      <h1 className="text-2xl md:text-3xl font-bold text-slate-900">{moment ? moment.salut : "Bonjour"}{nom ? `, ${nom}` : ""}</h1>
+      <p className="text-sm text-slate-500 capitalize">{moment?.date ?? ""}</p>
     </div>
   );
 }
@@ -67,13 +79,14 @@ export default function Home() {
   const [caDetail, setCaDetail] = useState<{ nom: string; date: string; revenu_at: number }[] | null>(null);
   const [caBusy, setCaBusy] = useState(false);
   const { toast } = useToast();
+  const annee = anneeCourante();
 
-  const fermerDetail = () => { setDetailFin(null); setMoDetail(null); setCaDetail(null); };
+  const fermerDetail = useCallback(() => { setDetailFin(null); setMoDetail(null); setCaDetail(null); }, []);
   const chargerMO = async () => {
     if (moDetail) { setMoDetail(null); return; } // re-clic = replier
     setMoBusy(true);
     try {
-      const an = new Date().getFullYear();
+      const an = anneeCourante();
       const d = await fetch(`/api/heures-sommaire?depuis=${an}-01-01`).then((r) => r.json());
       setMoDetail(Array.isArray(d) ? d : []);
     } catch { setMoDetail([]); } finally { setMoBusy(false); }
@@ -82,7 +95,7 @@ export default function Home() {
     if (caDetail) { setCaDetail(null); return; }
     setCaBusy(true);
     try {
-      const an = new Date().getFullYear();
+      const an = anneeCourante();
       const tous = await fetch("/api/projets?statut=complete").then((r) => r.json());
       const liste = (Array.isArray(tous) ? tous : [])
         .map((p: any) => {
@@ -116,7 +129,7 @@ export default function Home() {
       if (u) fetchInstantane(`/api/mes-taches?user=${u}`, (arr: any) => setMesTaches(Array.isArray(arr) ? arr : []), { cle: `dash:taches:${u}` });
     }).catch(() => {});
     // Totaux de l'année : chiffre d'affaires + dépenses (tous projets, pas juste actifs)
-    fetchInstantane(`/api/finances?annee=${new Date().getFullYear()}`, setAnnuel, {
+    fetchInstantane(`/api/finances?annee=${anneeCourante()}`, setAnnuel, {
       cle: "dash:annuel",
       transform: (d: any) => (d.mois || []).reduce((s: any, m: any) => ({
         ca: s.ca + (m.revenu || 0), ca_at: s.ca_at + (m.revenu_avant_taxes || 0),
@@ -150,17 +163,17 @@ export default function Home() {
         {/* 📊 TOTAUX DE L'ANNÉE (tous projets) */}
         <section className="grid grid-cols-3 gap-2 md:gap-3">
           <button onClick={() => annuel && setDetailFin("ca")} className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-emerald-500 text-left hover:shadow-md transition relative">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Chiffre d'affaires {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes)</span></div>
+            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Chiffre d'affaires {annee} <span className="normal-case text-slate-400">(av. taxes)</span></div>
             <div className="text-lg md:text-2xl font-bold text-emerald-700 mt-1">{annuel ? formatCAD(annuel.ca_at ?? annuel.ca) : "…"}</div>
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
           <button onClick={() => annuel && setDetailFin("depenses")} className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-orange-500 text-left hover:shadow-md transition relative">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Dépenses {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes, incl. M.O.)</span></div>
+            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Dépenses {annee} <span className="normal-case text-slate-400">(av. taxes, incl. M.O.)</span></div>
             <div className="text-lg md:text-2xl font-bold text-orange-700 mt-1">{annuel ? formatCAD((annuel.dep_at ?? annuel.depenses) + annuel.mo) : "…"}</div>
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
           <button onClick={() => annuel && setDetailFin("marge")} className="bg-white rounded-lg shadow p-3 md:p-4 border-l-4 border-blue-500 text-left hover:shadow-md transition relative">
-            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Marge nette {new Date().getFullYear()} <span className="normal-case text-slate-400">(av. taxes)</span></div>
+            <div className="text-[10px] md:text-xs text-slate-500 uppercase font-semibold">Marge nette {annee} <span className="normal-case text-slate-400">(av. taxes)</span></div>
             <div className={`text-lg md:text-2xl font-bold mt-1 ${annuel && ((annuel.ca_at ?? annuel.ca) - (annuel.dep_at ?? annuel.depenses) - annuel.mo) < 0 ? "text-red-600" : "text-blue-700"}`}>{annuel ? formatCAD((annuel.ca_at ?? annuel.ca) - (annuel.dep_at ?? annuel.depenses) - annuel.mo) : "…"}</div>
             <span className="absolute top-1.5 right-2 text-slate-300 text-xs">ⓘ</span>
           </button>
@@ -488,18 +501,20 @@ export default function Home() {
 
       {/* Détail du calcul d'un chiffre (CA / Dépenses / Marge) */}
       {detailFin && annuel && (() => {
-        const an = new Date().getFullYear();
+        const an = annee;
         const caAt = annuel.ca_at ?? annuel.ca, caTi = annuel.ca;
         const depAt = annuel.dep_at ?? annuel.depenses, depTi = annuel.depenses;
         const mo = annuel.mo;
         const marge = caAt - depAt - mo;
         const titre = detailFin === "ca" ? `💰 Chiffre d'affaires ${an}` : detailFin === "depenses" ? `💸 Dépenses ${an}` : `📊 Marge nette ${an}`;
+        // Modale (components/Modale.tsx) : role="dialog", aria-modal, Échap, focus initial et
+        // retour du focus — avant, un simple div sans rien de tout ça.
         return (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={fermerDetail}>
+          <Modale onClose={fermerDetail} titre={titre} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
             <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-2.5 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
               <div className="flex justify-between items-start mb-1">
                 <h3 className="text-lg font-bold">{titre}</h3>
-                <button onClick={fermerDetail} className="text-2xl text-slate-400 hover:text-slate-700 leading-none">×</button>
+                <button type="button" onClick={fermerDetail} aria-label="Fermer" className="text-2xl text-slate-400 hover:text-slate-700 leading-none min-w-11 min-h-11 -mt-2 -mr-2 flex items-center justify-center">×</button>
               </div>
               {detailFin === "ca" && (<>
                 <p className="text-xs text-slate-500">Valeur des projets marqués <strong>complétés</strong> en {an}. Les projets en cours ne comptent pas encore.</p>
@@ -567,7 +582,7 @@ export default function Home() {
                 <p className="text-[11px] text-slate-600 bg-emerald-50 border border-emerald-200 rounded p-2 mt-1">✅ Maintenant le calcul est simple : <strong>CA − Dépenses = Marge nette</strong> (la M.O. est dans les dépenses).</p>
               </>)}
             </div>
-          </div>
+          </Modale>
         );
       })()}
 

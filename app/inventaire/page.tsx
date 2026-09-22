@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import { compresserImage } from "@/lib/img";
-import { ecrire, nombreSaisi } from "@/lib/envoi";
+import { ecrire, envoyer, nombreSaisi, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 const EMPLACEMENTS = ["Cabanon", "Sous le tempo", "Chez Vincent", "Chez Goulet", "Autre"];
 const CATEGORIES = ["Revêtement", "Moulures", "Quincaillerie", "Isolation", "Membrane", "Outils", "Consommables", "Autre"];
@@ -21,19 +24,28 @@ export default function InventairePage() {
   const [form, setForm] = useState({ nom: "", categorie: "", quantite: "0", unite: "u", emplacement: "Cabanon", notes: "", cout_unit: "", photo: null as null | { data: string; type: string } });
   const { toast } = useToast();
 
-  const charger = () => fetch("/api/inventaire", { cache: "no-store" }).then((r) => r.json()).then((d) => setItems(Array.isArray(d) ? d : []));
+  const [erreur, setErreur] = useState<string | null>(null);
+  // ?photos=1 : la liste porte les vignettes (sans ce paramètre, l'API n'envoie plus les blobs).
+  const charger = () => lireListe("/api/inventaire?photos=1").then((r) => { if (r.ok) { setErreur(null); setItems(r.data); } else setErreur(r.erreur); });
   useEffect(() => { charger(); }, []);
 
   const reset = () => { setForm({ nom: "", categorie: "", quantite: "0", unite: "u", emplacement: "Cabanon", notes: "", cout_unit: "", photo: null }); setEditId(null); setQuantiteConnue(null); };
 
-  const sauvegarder = async () => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux items.
+  const verrou = useVerrou();
+  const sauvegarder = () => verrou.executer(async () => {
     if (!form.nom.trim()) { toast("Nom requis", "warning"); return; }
+    // Virgule décimale : « 2,5 » (boîtes) ou « 12,50 » ($) donnaient NaN → 0 / null en
+    // silence. Un nombre illisible est maintenant REFUSÉ avec un message.
+    const quantite = form.quantite.trim() ? nombreSaisi(form.quantite) : 0;
+    if (!Number.isFinite(quantite)) { toast("Quantité illisible (ex. : 2,5)", "warning"); return; }
+    const coutUnit = form.cout_unit.trim() ? nombreSaisi(form.cout_unit) : null;
+    if (coutUnit !== null && !Number.isFinite(coutUnit)) { toast("Coût unitaire illisible (ex. : 12,50)", "warning"); return; }
     const body: any = {
       nom: form.nom, categorie: form.categorie || null,
-      // Virgule décimale : « 2,5 » (boîtes) ou « 12,50 » ($) donnaient NaN → 0 / null en silence.
-      quantite: nombreSaisi(form.quantite) || 0, unite: form.unite,
+      quantite, unite: form.unite,
       emplacement: form.emplacement, notes: form.notes || null,
-      cout_unit: form.cout_unit ? (Number.isFinite(nombreSaisi(form.cout_unit)) ? nombreSaisi(form.cout_unit) : null) : null,
+      cout_unit: coutUnit,
     };
     if (form.photo) { body.photo_data = form.photo.data; body.photo_type = form.photo.type; }
     if (editId) {
@@ -42,44 +54,45 @@ export default function InventairePage() {
       // l'enregistrement si quelqu'un l'a changée entre-temps, au lieu de l'écraser.
       body.quantite_connue = quantiteConnue;
     }
-    const r = await fetch("/api/inventaire", {
-      method: editId ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    // envoyer() : réponse lue même si elle n'est pas du JSON (413 photo trop lourde),
+    // et le 409 du verrou optimiste reconnu par son statut.
+    const r = await envoyer("/api/inventaire", { methode: editId ? "PATCH" : "POST", corps: body });
     if (r.ok) { toast(editId ? "Item modifié" : "Item ajouté", "success"); setCreerOuvert(false); reset(); charger(); return; }
-    const d = await r.json().catch(() => ({} as any));
-    if (r.status === 409 && d?.conflit) {
+    const d = r.data || {};
+    if (r.statut === 409 && d?.conflit) {
       toast(d.error, "warning");
       setForm((x) => ({ ...x, quantite: String(d.quantite_actuelle) }));
       setQuantiteConnue(d.quantite_actuelle);
       charger();
     } else {
-      toast(d?.error || "Échec de l'enregistrement", "error");
+      toast(`Échec de l'enregistrement : ${r.erreur}`, "error");
     }
-  };
+  });
 
   const ajusterQte = async (item: any, delta: number) => {
     const note = prompt(`${delta > 0 ? "Ajouter" : "Retirer"} ${Math.abs(delta)} ${item.unite} de "${item.nom}" — note (optionnel)`);
     if (note === null) return;
     // La réponse DOIT être lue : sinon un refus « Stock insuffisant » (400) affichait
     // quand même un toast vert et l'utilisateur croyait que sa saisie était perdue.
-    try {
-      const r = await fetch("/api/inventaire", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: item.id, delta, note: note || null }) });
-      if (r.ok) toast(`${delta > 0 ? "+" : ""}${delta} ${item.unite}`, "success");
-      else {
-        const d = await r.json().catch(() => ({} as any));
-        toast(d?.error || "Mouvement refusé", "warning");
-      }
-    } catch {
-      toast("Réseau indisponible — mouvement non enregistré", "error");
-    }
+    const r = await envoyer("/api/inventaire", { methode: "PATCH", corps: { id: item.id, delta, note: note || null } });
+    if (r.ok) toast(`${delta > 0 ? "+" : ""}${delta} ${item.unite}`, "success");
+    else toast(`Mouvement refusé : ${r.erreur}`, r.statut === 0 ? "error" : "warning");
     charger();
+  };
+
+  /** Lit un nombre tapé dans un `prompt` (« 2,5 » accepté) ; null si illisible ou ≤ 0. */
+  const quantiteDemandee = (question: string): number | null => {
+    const n = prompt(question, "1");
+    if (n === null) return null;
+    const v = nombreSaisi(n);
+    if (!Number.isFinite(v) || v <= 0) { toast("Quantité illisible (ex. : 2,5)", "warning"); return null; }
+    return v;
   };
 
   const supprimer = async (item: any) => {
     if (!confirm(`Supprimer "${item.nom}" de l'inventaire ?`)) return;
     if (!(await ecrire(`/api/inventaire?id=${item.id}`, "DELETE", undefined, "Suppression"))) return;
+    toast(`« ${item.nom} » retiré de l'inventaire`, "info");
     charger();
   };
 
@@ -128,7 +141,9 @@ export default function InventairePage() {
         </div>
 
         {/* Grille items */}
-        {filtres.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : filtres.length === 0 ? (
           <div className="bg-white rounded shadow p-12 text-center text-slate-400 italic">Aucun item.</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -151,13 +166,13 @@ export default function InventairePage() {
                 <div className="flex gap-1">
                   <button onClick={() => ajusterQte(i, -1)} className="flex-1 px-2 py-1 bg-red-100 hover:bg-red-200 text-red-700 rounded text-xs font-bold">−1</button>
                   <button onClick={() => {
-                    const n = prompt(`Retirer combien de ${i.nom} ?`, "1");
-                    if (n && +n > 0) ajusterQte(i, -Math.abs(+n));
+                    const n = quantiteDemandee(`Retirer combien de ${i.nom} ?`);
+                    if (n) ajusterQte(i, -n);
                   }} className="flex-1 px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 rounded text-xs">− N</button>
                   <button onClick={() => ajusterQte(i, +1)} className="flex-1 px-2 py-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-700 rounded text-xs font-bold">+1</button>
                   <button onClick={() => {
-                    const n = prompt(`Ajouter combien de ${i.nom} ?`, "1");
-                    if (n && +n > 0) ajusterQte(i, Math.abs(+n));
+                    const n = quantiteDemandee(`Ajouter combien de ${i.nom} ?`);
+                    if (n) ajusterQte(i, n);
                   }} className="flex-1 px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded text-xs">+ N</button>
                 </div>
                 <div className="flex gap-1 text-xs">
@@ -179,7 +194,7 @@ export default function InventairePage() {
 
       {/* Modal création / édition */}
       {creerOuvert && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => { setCreerOuvert(false); reset(); }}>
+        <Modale onClose={() => { setCreerOuvert(false); reset(); }} titre={editId ? "Modifier l'item" : "Nouvel item"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">{editId ? "✏️ Modifier" : "➕ Nouvel item"}</h3>
             <In label="Nom *" v={form.nom} o={(v) => setForm({ ...form, nom: v })} />
@@ -201,7 +216,8 @@ export default function InventairePage() {
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Quantité</label>
-                <input type="number" step="0.1" min="0" value={form.quantite} onChange={(e) => setForm({ ...form, quantite: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+                {/* type="text" + inputMode : un champ number refuse « 2,5 » (virgule du clavier québécois). */}
+                <input type="text" inputMode="decimal" value={form.quantite} onChange={(e) => setForm({ ...form, quantite: e.target.value })} placeholder="Ex. : 2,5" className="w-full px-3 py-2 border rounded text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Unité</label>
@@ -209,7 +225,7 @@ export default function InventairePage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Coût $/u</label>
-                <input type="number" step="0.01" value={form.cout_unit} onChange={(e) => setForm({ ...form, cout_unit: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+                <input type="text" inputMode="decimal" value={form.cout_unit} onChange={(e) => setForm({ ...form, cout_unit: e.target.value })} placeholder="Ex. : 12,50" className="w-full px-3 py-2 border rounded text-sm" />
               </div>
             </div>
             <div>
@@ -223,10 +239,10 @@ export default function InventairePage() {
             </div>
             <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => { setCreerOuvert(false); reset(); }} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={sauvegarder} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">{editId ? "Sauver" : "Créer"}</button>
+              <button onClick={sauvegarder} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : editId ? "Sauver" : "Créer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );

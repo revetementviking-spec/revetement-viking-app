@@ -1,5 +1,47 @@
 import { describe, it, expect } from "vitest";
-import { estProjetActif, accepteSaisieTardive, JOURS_GRACE_SAISIE, STATUTS_PROJET, rangProjet, trierProjetsPourSaisie } from "./statuts-projet";
+import { estProjetActif, accepteSaisieTardive, JOURS_GRACE_SAISIE, STATUTS_PROJET, rangProjet, trierProjetsPourSaisie, transitionPermise, estReouverture } from "./statuts-projet";
+
+describe("transitionPermise (table des changements de statut)", () => {
+  it("annulé ne revient qu'à « à venir » ou « actif »", () => {
+    expect(transitionPermise("annule", "a_venir")).toBe(true);
+    expect(transitionPermise("annule", "actif")).toBe(true);
+    for (const v of ["en_cours", "en_pause", "complete"]) expect(transitionPermise("annule", v)).toBe(false);
+  });
+
+  it("complété ne se rouvre qu'en « en_cours » ou « actif » — jamais annulé ni à venir", () => {
+    expect(transitionPermise("complete", "en_cours")).toBe(true);
+    expect(transitionPermise("complete", "actif")).toBe(true);
+    expect(transitionPermise("complete", "annule")).toBe(false);
+    expect(transitionPermise("complete", "a_venir")).toBe(false);
+    expect(transitionPermise("complete", "en_pause")).toBe(false);
+  });
+
+  it("l'ordre naturel passe : à venir → actif → en pause → en cours → complété", () => {
+    expect(transitionPermise("a_venir", "actif")).toBe(true);
+    expect(transitionPermise("actif", "en_pause")).toBe(true);
+    expect(transitionPermise("en_pause", "en_cours")).toBe(true);
+    expect(transitionPermise("en_cours", "complete")).toBe(true);
+  });
+
+  it("un chantier vivant peut être annulé, un « à venir » ne peut pas être complété d'un coup", () => {
+    for (const d of ["a_venir", "actif", "en_cours", "en_pause"]) expect(transitionPermise(d, "annule")).toBe(true);
+    expect(transitionPermise("a_venir", "complete")).toBe(false);
+  });
+
+  it("même statut = permis ; statut cible inconnu = refusé ; origine inconnue = permis", () => {
+    expect(transitionPermise("actif", "actif")).toBe(true);
+    expect(transitionPermise("actif", "zzz")).toBe(false);
+    expect(transitionPermise(null, "complete")).toBe(true);
+    expect(transitionPermise("bidon", "complete")).toBe(true);
+  });
+
+  it("estReouverture ne vise que complété → en activité", () => {
+    expect(estReouverture("complete", "en_cours")).toBe(true);
+    expect(estReouverture("complete", "actif")).toBe(true);
+    expect(estReouverture("en_pause", "actif")).toBe(false);
+    expect(estReouverture("complete", "a_venir")).toBe(false);
+  });
+});
 
 describe("estProjetActif", () => {
   it("couvre les DEUX statuts d'activité", () => {

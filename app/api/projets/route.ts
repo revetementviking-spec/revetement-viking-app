@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listerProjets, listerProjetsLite, listerProjetsAFacturer, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, clientParNom, charger } from "@/lib/db";
 import { envoyerPushUtilisateur } from "@/lib/push";
-import { STATUTS_PROJET } from "@/lib/statuts-projet";
+import { STATUTS_PROJET, transitionPermise, estReouverture } from "@/lib/statuts-projet";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { utilisateurActif } from "@/lib/authUser";
 import { journaliser } from "@/lib/audit";
 import { courrielValide } from "@/lib/vocabulaire";
 import { avertirProjetComplete, destinataireNotifications } from "@/lib/notif-projet";
 import { publicOrigin } from "@/lib/origin";
+import { validerEtNormaliserProjet } from "@/lib/validation-projet";
 
 // Statuts reconnus par l'app (filtres, CA, dashboard). Un statut hors liste rendait
 // le projet invisible des filtres ET du CA — silencieusement.
@@ -21,9 +22,12 @@ function ok(data: any, init?: ResponseInit) {
   // ajout d'heures/dépenses. Pas de cache navigateur ni CDN.
   return NextResponse.json(data, { ...init, headers: { "Cache-Control": "no-store, max-age=0", ...(init?.headers || {}) } });
 }
+// Message GÉNÉRIQUE au client : le détail (SQL, chemin, table) reste dans le journal serveur.
+// Exception : un numéro de projet déjà pris (index UNIQUE) est un refus délibéré → 409 lisible.
 function fail(e: any, status = 500) {
+  if (e?.code === "NUMERO_PROJET_PRIS") return NextResponse.json({ error: "numéro déjà pris", message: e.message }, { status: 409 });
   console.error("[/api/projets]", e);
-  return NextResponse.json({ error: e?.message || "Erreur serveur" }, { status });
+  return NextResponse.json({ error: "Erreur serveur" }, { status });
 }
 
 export async function GET(req: NextRequest) {
@@ -69,6 +73,11 @@ export async function POST(req: NextRequest) {
       return ok({ ok: true, id });
     }
     if (statutInvalide(body.statut)) return NextResponse.json({ error: `statut invalide : ${body.statut}` }, { status: 400 });
+    if (!String(body.nom || "").trim()) return NextResponse.json({ error: "nom requis" }, { status: 400 });
+    // Bornes + conversion des montants et dates AVANT l'écriture (lib/validation-projet.ts) :
+    // le corps brut passait tel quel, « 12 500,00 $ » finissait en TEXTE dans prix_contrat.
+    const invalide = validerEtNormaliserProjet(body);
+    if (invalide) return NextResponse.json({ error: invalide }, { status: 400 });
     // Client créé au passage, AVEC ses coordonnées si elles sont fournies. Avant, seul le
     // nom était transmis : la fiche naissait vide, sans téléphone ni courriel, et il
     // fallait retourner dans le CRM la compléter — donc la relance et l'envoi de contrat
@@ -104,13 +113,28 @@ export async function PATCH(req: NextRequest) {
     const body = await req.json();
     if (!body.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
     if (statutInvalide(body.statut)) return NextResponse.json({ error: `statut invalide : ${body.statut}` }, { status: 400 });
+    if (body.nom !== undefined && !String(body.nom || "").trim()) return NextResponse.json({ error: "nom requis" }, { status: 400 });
+    const invalide = validerEtNormaliserProjet(body);
+    if (invalide) return NextResponse.json({ error: invalide }, { status: 400 });
     const user = await utilisateurActif(req);
     const avant = await getProjet(+body.id);
-    const nouvelleCompletion = body.statut === "complete" && avant?.statut !== "complete";
+    if (!avant) return NextResponse.json({ error: "projet introuvable" }, { status: 404 });
+    // Table des transitions (lib/statuts-projet.ts) : un annulé ne redevient pas complété
+    // d'un clic, un complété ne s'annule pas, un « à venir » ne se complète pas d'un coup.
+    if (body.statut !== undefined && body.statut !== null && !transitionPermise(avant.statut, String(body.statut))) {
+      return NextResponse.json({ error: "transition refusée", message: `Un projet « ${avant.statut || "?"} » ne peut pas passer à « ${body.statut} ».` }, { status: 409 });
+    }
+    const nouvelleCompletion = body.statut === "complete" && avant.statut !== "complete";
     if (nouvelleCompletion) {
       // Pose la date de fin réelle (reconnaissance du CA). Règle : complété = facturé.
       if (body.date_fin_reelle === undefined) body.date_fin_reelle = aujourdhuiMontreal();
       body.facturee = 1;
+    }
+    // Réouverture d'un chantier complété : il redevient un chantier à facturer, sans
+    // date de fin — sinon il resterait compté dans le CA reconnu avec une fin fictive.
+    if (body.statut !== undefined && estReouverture(avant.statut, String(body.statut))) {
+      body.facturee = 0;
+      body.date_fin_reelle = null;
     }
     await modifierProjet(body.id, { ...body, modifie_par: user });
     journaliser("projet.statut_change", { ref_type: "projet", ref_id: body.id, utilisateur: user || undefined, description: `Modif ${Object.keys(body).filter(k => k !== "id").join(", ")}` });
@@ -119,7 +143,7 @@ export async function PATCH(req: NextRequest) {
       const valeur = (avant as any)?.prix_contrat || (avant as any)?.budget_estime || 0;
       envoyerPushUtilisateur("Francis", {
         title: "✅ Projet complété",
-        body: `« ${avant?.nom || "Projet"} » est complété et marqué facturé${valeur ? ` (${(+valeur).toLocaleString("fr-CA")} $)` : ""}.`,
+        body: `« ${avant.nom || "Projet"} » est complété et marqué facturé${valeur ? ` (${(+valeur).toLocaleString("fr-CA")} $)` : ""}.`,
         url: `/projets/${body.id}`,
         tag: "complete-" + body.id,
       }).catch(() => {});

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { exporterCSV } from "@/lib/csv";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 const ICONES: Record<string, string> = {
   "soumission.creee": "📄", "soumission.modifiee": "✏️", "soumission.statut_change": "🔄",
@@ -21,11 +23,13 @@ export default function PageJournal() {
   const [activites, setActivites] = useState<any[]>([]);
   const [filtreType, setFiltreType] = useState("");
   const [loading, setLoading] = useState(true);
+  const [erreur, setErreur] = useState<string | null>(null);
 
   const charger = () => {
     setLoading(true);
-    const url = filtreType ? `/api/journal?type=${filtreType}` : "/api/journal";
-    fetch(url).then((r) => r.json()).then(setActivites).finally(() => setLoading(false));
+    const url = filtreType ? `/api/journal?type=${encodeURIComponent(filtreType)}` : "/api/journal";
+    // Lecture avec filet : un 500 faisait planter le rendu sur `.map` d'un objet d'erreur.
+    lireListe(url).then((r) => { if (r.ok) { setErreur(null); setActivites(r.data); } else setErreur(r.erreur); }).finally(() => setLoading(false));
   };
 
   useEffect(charger, [filtreType]);
@@ -59,7 +63,9 @@ export default function PageJournal() {
 
         {loading && <div className="text-center text-slate-500 py-8">Chargement...</div>}
 
-        {!loading && activites.length === 0 && (
+        {!loading && erreur && <ErreurChargement erreur={erreur} onReessayer={charger} />}
+
+        {!loading && !erreur && activites.length === 0 && (
           <div className="bg-white rounded-lg shadow p-12 text-center text-slate-500">
             <div className="text-5xl mb-3">📭</div>
             Aucune activité {filtreType ? `de type "${filtreType}"` : ""} pour l'instant.
@@ -67,8 +73,9 @@ export default function PageJournal() {
         )}
 
         {!loading && activites.length > 0 && (
-          <section className="bg-white rounded-lg shadow overflow-hidden">
-            <table className="w-full text-sm">
+          /* overflow-x-auto : six colonnes sur un téléphone débordaient de l'écran. */
+          <section className="bg-white rounded-lg shadow overflow-x-auto">
+            <table className="w-full text-sm min-w-max">
               <thead className="bg-slate-100 text-xs uppercase text-slate-600">
                 <tr>
                   <th className="p-2 text-left">Quand</th>

@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import { formatCAD } from "@/lib/calculateur";
-import { ecrire, nombreSaisi } from "@/lib/envoi";
+import { ecrire, nombreSaisi, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 const TYPES = [
   { v: "demolition", l: "Démolition" },
@@ -49,7 +52,8 @@ export default function CataloguePage() {
   const [edit, setEdit] = useState<Mat | null>(null);
   const { toast } = useToast();
 
-  const charger = () => fetch("/api/catalogue", { cache: "no-store" }).then((r) => r.json()).then((d) => setItems(Array.isArray(d) ? d : []));
+  const [erreur, setErreur] = useState<string | null>(null);
+  const charger = () => lireListe("/api/catalogue").then((r) => { if (r.ok) { setErreur(null); setItems(r.data); } else setErreur(r.erreur); });
   useEffect(() => { charger(); }, []);
 
   // Calcul auto du prix de vente quand coutant/majoration changent
@@ -64,27 +68,31 @@ export default function CataloguePage() {
     }
   }, [edit?.prix_coutant, edit?.majoration_pct]);
 
-  const sauvegarder = async () => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux matériaux.
+  const verrou = useVerrou();
+  const sauvegarder = () => verrou.executer(async () => {
     if (!edit?.nom?.trim() || !edit?.unite) { toast("Nom et unité requis", "warning"); return; }
-    const body = {
-      ...edit,
-      format_paquet: edit.format_paquet ? nombreSaisi(edit.format_paquet) : null,
-      prix_coutant: edit.prix_coutant ? nombreSaisi(edit.prix_coutant) : null,
-      majoration_pct: edit.majoration_pct ? nombreSaisi(edit.majoration_pct) : 20,
-      prix_vente: edit.prix_vente ? nombreSaisi(edit.prix_vente) : null,
+    // Un nombre illisible est refusé ici avec un message, au lieu de partir en NaN → null.
+    const lire = (v: string, nom: string): number | null | undefined => {
+      if (!v) return null;
+      const n = nombreSaisi(v);
+      if (!Number.isFinite(n)) { toast(`${nom} illisible (ex. : 12,50)`, "warning"); return undefined; }
+      return n;
     };
-    const r = await fetch("/api/catalogue", {
-      method: edit.id ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (r.ok) { toast(edit.id ? "Modifié" : "Matériau ajouté", "success"); setEdit(null); charger(); }
-    else toast("Erreur", "error");
-  };
+    const format_paquet = lire(edit.format_paquet, "Format paquet"); if (format_paquet === undefined) return;
+    const prix_coutant = lire(edit.prix_coutant, "Prix coûtant"); if (prix_coutant === undefined) return;
+    const majoration = lire(edit.majoration_pct, "Majoration"); if (majoration === undefined) return;
+    const prix_vente = lire(edit.prix_vente, "Prix de vente"); if (prix_vente === undefined) return;
+    const body = { ...edit, format_paquet, prix_coutant, majoration_pct: majoration ?? 20, prix_vente };
+    // La raison du refus s'affiche (ecrire), pas un « Erreur » muet.
+    if (!(await ecrire("/api/catalogue", edit.id ? "PATCH" : "POST", body, "Enregistrement du matériau"))) return;
+    toast(edit.id ? "Modifié" : "Matériau ajouté", "success"); setEdit(null); charger();
+  });
 
   const supprimer = async (id: number) => {
     if (!confirm("Désactiver ce matériau ? (les soumissions passées ne sont pas affectées)")) return;
     if (!(await ecrire(`/api/catalogue?id=${id}`, "DELETE", undefined, "Suppression"))) return;
+    toast("Matériau désactivé", "info");
     charger();
   };
 
@@ -120,6 +128,8 @@ export default function CataloguePage() {
             {TYPES.map((t) => <option key={t.v} value={t.v}>{t.l} {stats[t.v] ? `(${stats[t.v]})` : ""}</option>)}
           </select>
         </div>
+
+        {erreur && <ErreurChargement erreur={erreur} onReessayer={charger} />}
 
         {/* Tableau */}
         <div className="bg-white rounded-lg shadow overflow-x-auto">
@@ -158,7 +168,7 @@ export default function CataloguePage() {
                   <td className="p-2 text-right font-bold text-emerald-700">{m.prix_vente != null ? formatCAD(m.prix_vente) : "—"}</td>
                   <td className="p-2 text-xs">{m.format_paquet ? `📦 ${m.format_paquet} ${m.unite}/${m.format_paquet_label || "paquet"}` : "—"}</td>
                   <td className="p-2 text-right">
-                    <button onClick={(e) => { e.stopPropagation(); if (m.id) supprimer(m.id); }} className="text-xs text-red-500 hover:bg-red-50 px-2 py-1 rounded">🗑</button>
+                    <button onClick={(e) => { e.stopPropagation(); if (m.id) supprimer(m.id); }} aria-label={`Désactiver ${m.nom}`} className="min-w-11 min-h-11 inline-flex items-center justify-center text-xs text-red-500 hover:bg-red-50 rounded">🗑</button>
                   </td>
                 </tr>
               ))}
@@ -169,7 +179,7 @@ export default function CataloguePage() {
 
       {/* Modal édition */}
       {edit && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEdit(null)}>
+        <Modale onClose={() => setEdit(null)} titre={edit.id ? "Modifier le matériau" : "Nouveau matériau"} className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-2xl w-full p-5 space-y-3 max-h-[92vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">{edit.id ? "✏️ Modifier" : "➕ Nouveau matériau"}</h3>
 
@@ -200,7 +210,8 @@ export default function CataloguePage() {
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">📦 Format paquet</label>
-                <input type="number" step="0.1" value={edit.format_paquet} onChange={(e) => setEdit({ ...edit, format_paquet: e.target.value })} placeholder="Ex: 44 (Canexel)" className="w-full px-3 py-2 border rounded text-sm" />
+                {/* type="text" + inputMode : un champ number refuse la virgule décimale du clavier québécois. */}
+                <input type="text" inputMode="decimal" value={edit.format_paquet} onChange={(e) => setEdit({ ...edit, format_paquet: e.target.value })} placeholder="Ex: 44 (Canexel)" className="w-full px-3 py-2 border rounded text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Label paquet</label>
@@ -216,20 +227,20 @@ export default function CataloguePage() {
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Prix coûtant $/{edit.unite}</label>
-                <input type="number" step="0.01" value={edit.prix_coutant} onChange={(e) => setEdit({ ...edit, prix_coutant: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+                <input type="text" inputMode="decimal" value={edit.prix_coutant} onChange={(e) => setEdit({ ...edit, prix_coutant: e.target.value })} placeholder="Ex. : 12,50" className="w-full px-3 py-2 border rounded text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Majoration %</label>
-                <input type="number" step="1" value={edit.majoration_pct} onChange={(e) => setEdit({ ...edit, majoration_pct: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
+                <input type="text" inputMode="decimal" value={edit.majoration_pct} onChange={(e) => setEdit({ ...edit, majoration_pct: e.target.value })} className="w-full px-3 py-2 border rounded text-sm" />
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1">Prix vente $/{edit.unite}</label>
-                <input type="number" step="0.01" value={edit.prix_vente} onChange={(e) => setEdit({ ...edit, prix_vente: e.target.value })} className="w-full px-3 py-2 border rounded text-sm font-bold text-emerald-700" />
+                <input type="text" inputMode="decimal" value={edit.prix_vente} onChange={(e) => setEdit({ ...edit, prix_vente: e.target.value })} className="w-full px-3 py-2 border rounded text-sm font-bold text-emerald-700" />
               </div>
             </div>
-            {edit.format_paquet && edit.prix_vente && (
+            {edit.format_paquet && edit.prix_vente && Number.isFinite(nombreSaisi(edit.prix_vente)) && Number.isFinite(nombreSaisi(edit.format_paquet)) && (
               <div className="bg-emerald-50 border border-emerald-200 rounded p-2 text-xs text-emerald-900">
-                💰 Prix par paquet : <strong>{formatCAD(+edit.prix_vente * +edit.format_paquet)}</strong> ({edit.format_paquet} {edit.unite} × {formatCAD(+edit.prix_vente)}/{edit.unite})
+                💰 Prix par paquet : <strong>{formatCAD(nombreSaisi(edit.prix_vente) * nombreSaisi(edit.format_paquet))}</strong> ({edit.format_paquet} {edit.unite} × {formatCAD(nombreSaisi(edit.prix_vente))}/{edit.unite})
               </div>
             )}
 
@@ -240,10 +251,10 @@ export default function CataloguePage() {
 
             <div className="flex gap-2 justify-end pt-2 sticky bottom-0 bg-white">
               <button onClick={() => setEdit(null)} className="px-4 py-2 bg-slate-200 hover:bg-slate-300 rounded text-sm">Annuler</button>
-              <button onClick={sauvegarder} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">{edit.id ? "💾 Sauver" : "➕ Créer"}</button>
+              <button onClick={sauvegarder} disabled={verrou.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrou.occupe ? "…" : edit.id ? "💾 Sauver" : "➕ Créer"}</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );

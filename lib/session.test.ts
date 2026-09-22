@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { creerCookie, utilisateurDuCookie, authConfiguree, DUREE_SESSION_MS } from "./session";
+import { creerCookie, utilisateurDuCookie, authConfiguree, DUREE_SESSION_MS, signerValeur, verifierValeur, comparaisonConstante } from "./session";
 
 const OLD_ENV = { ...process.env };
 
@@ -73,6 +73,79 @@ describe("session — rotation via SESSION_SECRET", () => {
     process.env.FRANCIS_PASSWORD = "secret-francis";
     process.env.SESSION_SECRET = "rotation";
     expect(await utilisateurDuCookie("Francis|nimportequoi")).toBeNull();
+  });
+});
+
+// HMAC-SHA256(pwd, "xpress-auth-v1") : ce que l'ancien code produisait pour un cookie v1.
+async function signatureV1(pwd: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey("raw", enc.encode(pwd), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode("xpress-auth-v1"));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+describe("session — formats hérités refusés (même SANS SESSION_SECRET)", () => {
+  it("« ok:<mot de passe> » en clair n'ouvre plus rien, en prod comme en dev", async () => {
+    process.env.APP_PASSWORD = "mdp-app";
+    expect(await utilisateurDuCookie("ok:mdp-app")).toBeNull();
+    (process.env as any).NODE_ENV = "production";
+    expect(await utilisateurDuCookie("ok:mdp-app")).toBeNull();
+  });
+
+  it("v1 « user|HMAC » correctement signé (sans expiration) est refusé", async () => {
+    process.env.APP_PASSWORD = "mdp-app";
+    process.env.FRANCIS_PASSWORD = "mdp-francis";
+    const sigFrancis = await signatureV1("mdp-francis");
+    const sigApp = await signatureV1("mdp-app");
+    for (const env of ["test", "production"]) {
+      (process.env as any).NODE_ENV = env;
+      expect(await utilisateurDuCookie(`Francis|${sigFrancis}`)).toBeNull();
+      expect(await utilisateurDuCookie(`Gabriel|${sigApp}`)).toBeNull();
+      expect(await utilisateurDuCookie(sigApp)).toBeNull(); // v1 « APP_PASSWORD seul → Gabriel »
+    }
+  });
+
+  it("dev sans mot de passe : seul « user| » exact passe, pas « user|n'importe quoi »", async () => {
+    expect(await utilisateurDuCookie("Francis|")).toBe("Francis");
+    expect(await utilisateurDuCookie("Francis|abc")).toBeNull();
+    expect(await utilisateurDuCookie("Inconnu|")).toBeNull();
+    process.env.FRANCIS_PASSWORD = "x"; // dès qu'un mot de passe existe pour lui, plus de tolérance
+    expect(await utilisateurDuCookie("Francis|")).toBeNull();
+  });
+});
+
+describe("session — valeurs signées (cookies techniques)", () => {
+  it("roundtrip par portée ; une autre portée ou une altération est refusée", async () => {
+    process.env.APP_PASSWORD = "mdp";
+    const s = (await signerValeur("oauth", "abc123"))!;
+    expect(s).toMatch(/^abc123\|[0-9a-f]{64}$/);
+    expect(await verifierValeur("oauth", s)).toBe("abc123");
+    expect(await verifierValeur("maintenance", s)).toBeNull();
+    expect(await verifierValeur("oauth", s.slice(0, -1) + "0")).toBeNull();
+    expect(await verifierValeur("oauth", "abc123")).toBeNull();
+    expect(await verifierValeur("oauth", undefined)).toBeNull();
+  });
+
+  it("changer SESSION_SECRET invalide les valeurs signées", async () => {
+    process.env.APP_PASSWORD = "mdp";
+    const s = (await signerValeur("oauth", "abc"))!;
+    process.env.SESSION_SECRET = "rotation";
+    expect(await verifierValeur("oauth", s)).toBeNull();
+  });
+
+  it("sans aucun secret : null en production, valeur nue tolérée en dev", async () => {
+    (process.env as any).NODE_ENV = "production";
+    expect(await signerValeur("oauth", "abc")).toBeNull();
+    expect(await verifierValeur("oauth", "abc")).toBeNull();
+    (process.env as any).NODE_ENV = "test";
+    expect(await signerValeur("oauth", "abc")).toBe("abc");
+    expect(await verifierValeur("oauth", "abc")).toBe("abc");
+  });
+
+  it("comparaisonConstante", () => {
+    expect(comparaisonConstante("abc", "abc")).toBe(true);
+    expect(comparaisonConstante("abc", "abd")).toBe(false);
+    expect(comparaisonConstante("abc", "ab")).toBe(false);
   });
 });
 

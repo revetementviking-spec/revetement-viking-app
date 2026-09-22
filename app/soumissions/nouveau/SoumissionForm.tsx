@@ -6,8 +6,10 @@ import { TAUX_HORAIRE_VENTE, FRAIS_FORFAITAIRES, PARAMS_DEFAUT } from "@/data/ma
 import { calculerSoumission, formatCAD, type LigneSoumission, type FraisActif } from "@/lib/calculateur";
 import { PRESETS, type PresetMateriau } from "@/data/presets-soumission";
 import { mapperHoverVersLignes, type HoverMesures } from "@/lib/hover-mapping";
-import { sauvegarderBrouillon, chargerBrouillon, effacerBrouillon } from "@/lib/autosave";
+import { sauvegarderBrouillon, chargerBrouillon, effacerBrouillon, brouillonNonVide, libelleContexte, type BrouillonAuto } from "@/lib/autosave";
 import { compresserImageBlob } from "@/lib/img";
+import { lireJson, nombreSaisi } from "@/lib/envoi";
+import { ENTREPRISE } from "@/lib/entreprise";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import Navigation from "@/components/Navigation";
@@ -91,7 +93,16 @@ export default function SoumissionForm() {
   useEffect(() => {
     fetch("/api/clients").then((r) => (r.ok ? r.json() : [])).then((l) => Array.isArray(l) && setClientsCrm(l)).catch(() => {});
   }, []);
+  // Nom de l'usager connecté (Francis / Gabriel) pour signer le courriel de la soumission.
+  const [monNom, setMonNom] = useState("");
+  useEffect(() => {
+    lireJson<{ user?: string }>("/api/auth/me").then((r) => { if (r.ok && r.data?.user) setMonNom(String(r.data.user)); });
+  }, []);
   const initialLoadDone = useRef(false);
+  // Contexte chargé : `undefined` = jamais, `null` = nouvelle, sinon le numéro modifié.
+  // Sert à recharger quand ?modifier= CHANGE (avant, le verrou `initialLoadDone` ignorait
+  // tout changement d'URL : ouvrir une 2e soumission depuis la palette gardait la 1re).
+  const chargePour = useRef<string | null | undefined>(undefined);
 
   const fournisseurs = useMemo(() => Array.from(new Set(MATERIAUX.map((m) => m.fournisseur))), []);
 
@@ -102,36 +113,70 @@ export default function SoumissionForm() {
   }), [filtreFournisseur, recherche]);
 
   // === CHARGEMENT INITIAL : édition ou brouillon ===
+  // Un brouillon PAR CONTEXTE (lib/autosave.ts) : `vk-draft:<numero>` en modification,
+  // `vk-draft:nouvelle` en création. Avant, une clé unique : « nouvelle soumission »
+  // proposait de restaurer le brouillon d'une soumission existante (numéro compris) et
+  // « Sauvegarder » écrasait alors cette soumission-là.
   useEffect(() => {
-    if (initialLoadDone.current) return;
+    if (chargePour.current === modifierNumero) return;
+    const premier = chargePour.current === undefined;
+    chargePour.current = modifierNumero;
     initialLoadDone.current = true;
 
+    const appliquer = (p: Partial<BrouillonAuto>, numero: string) => {
+      setClient(p.client || { nom: "", adresse: "", telephone: "", courriel: "", projet: "" });
+      setLignes(p.lignes || []);
+      setFraisActifs(p.fraisActifs || []);
+      setFraisGestion(p.fraisGestion ?? PARAMS_DEFAUT.fraisGestion);
+      setAppliquerTaxes(p.appliquerTaxes ?? true);
+      setHoverExtraction(p.hoverExtraction || null);
+      setNumeroSoumission(numero);
+    };
+    const memeContenu = (a: Partial<BrouillonAuto>, b: Partial<BrouillonAuto>) => {
+      const cle = (x: Partial<BrouillonAuto>) => JSON.stringify([x.client, x.lignes, x.fraisActifs, x.fraisGestion, x.appliquerTaxes]);
+      return cle(a) === cle(b);
+    };
+    // L'URL a changé (autre numéro, ou retour à « nouvelle ») : on repart d'un formulaire
+    // vide au lieu de garder les lignes de la soumission précédente.
+    if (!premier) {
+      appliquer({}, "");
+      setFraisActifs(FRAIS_FORFAITAIRES.filter((f) => f.obligatoire).map((f) => ({ id: f.id, heures: f.heuresEstimees })));
+      setDraftRestaure(false);
+    }
+
     if (modifierNumero) {
-      fetch(`/api/soumissions?numero=${modifierNumero}`).then((r) => r.json()).then((d) => {
-        if (d.payload) {
-          setClient(d.payload.client || client);
-          setLignes(d.payload.lignes || []);
-          setFraisActifs(d.payload.fraisActifs || []);
-          setFraisGestion(d.payload.fraisGestion ?? PARAMS_DEFAUT.fraisGestion);
-          setAppliquerTaxes(d.payload.appliquerTaxes ?? true);
-          setHoverExtraction(d.payload.hoverExtraction || null);
-          setNumeroSoumission(d.numero);
+      const numero = modifierNumero;
+      lireJson<any>(`/api/soumissions?numero=${encodeURIComponent(numero)}`).then((r) => {
+        if (chargePour.current !== numero) return; // l'URL a encore changé entre-temps
+        if (!r.ok || !r.data?.payload) {
+          toast(`Soumission ${numero} introuvable${!r.ok ? ` : ${r.erreur}` : ""}`, "error");
+          return;
+        }
+        const d = r.data;
+        appliquer(d.payload, d.numero);
+        // Brouillon de CETTE soumission, seulement s'il diffère de ce qui est enregistré
+        // (l'autosave en écrit un dès le chargement : sans cette comparaison, la question
+        // reviendrait à chaque ouverture).
+        const draft = chargerBrouillon(numero);
+        if (draft && brouillonNonVide(draft) && !memeContenu(draft, d.payload)) {
+          if (confirm(`Un brouillon non sauvegardé existe pour ${libelleContexte(numero)}. Le restaurer ?`)) {
+            appliquer(draft, numero);
+            setDraftRestaure(true);
+          } else {
+            effacerBrouillon(numero);
+          }
         }
       });
     } else {
-      const draft = chargerBrouillon();
-      if (draft && (draft.lignes?.length > 0 || draft.client?.nom)) {
-        if (confirm("Un brouillon non sauvegardé existe. Le restaurer ?")) {
-          setClient(draft.client || client);
-          setLignes(draft.lignes || []);
-          setFraisActifs(draft.fraisActifs || []);
-          setFraisGestion(draft.fraisGestion ?? PARAMS_DEFAUT.fraisGestion);
-          setAppliquerTaxes(draft.appliquerTaxes ?? true);
-          setHoverExtraction(draft.hoverExtraction || null);
-          setNumeroSoumission(draft.numero || "");
+      // Parcours « nouvelle » : chargerBrouillon(null) ne renvoie JAMAIS un brouillon
+      // qui porte un numéro.
+      const draft = chargerBrouillon(null);
+      if (draft && brouillonNonVide(draft)) {
+        if (confirm(`Un brouillon non sauvegardé existe (${libelleContexte(null)}). Le restaurer ?`)) {
+          appliquer(draft, "");
           setDraftRestaure(true);
         } else {
-          effacerBrouillon();
+          effacerBrouillon(null);
         }
       }
     }
@@ -165,8 +210,9 @@ export default function SoumissionForm() {
     if (lignes.length === 0 && !client.nom) return;
     setAutosaveStatus("saving");
     const t = setTimeout(() => {
+      // Clé = le numéro qu'on modifie (ou celui reçu à la 1re sauvegarde), sinon « nouvelle ».
       sauvegarderBrouillon({
-        numero: numeroSoumission,
+        numero: numeroSoumission || modifierNumero || "",
         client, lignes, fraisActifs, fraisGestion, appliquerTaxes,
         hoverExtraction,
       });
@@ -174,7 +220,7 @@ export default function SoumissionForm() {
       setTimeout(() => setAutosaveStatus(""), 1500);
     }, 1500);
     return () => clearTimeout(t);
-  }, [client, lignes, fraisActifs, fraisGestion, appliquerTaxes, hoverExtraction, numeroSoumission]);
+  }, [client, lignes, fraisActifs, fraisGestion, appliquerTaxes, hoverExtraction, numeroSoumission, modifierNumero]);
 
   // === RACCOURCIS CLAVIER (Ctrl/Cmd+S : sauvegarder) ===
   const sauverRef = useRef<() => void>(() => {});
@@ -498,8 +544,11 @@ export default function SoumissionForm() {
         return;
       }
       {
+        // Le brouillon du contexte qu'on vient d'enregistrer n'a plus de raison d'être
+        // (« nouvelle » à la 1re sauvegarde, puis le numéro reçu).
+        effacerBrouillon(numeroSoumission || modifierNumero);
+        effacerBrouillon(d.numero);
         setNumeroSoumission(d.numero);
-        effacerBrouillon();
         // === FEEDBACK LOOP IA ===
         // Si l'auto-estimateur a généré une version initiale et que l'humain l'a modifiée → log
         if (autoRapport && autoRapport._snapshot_initial) {
@@ -580,10 +629,10 @@ Le PDF vient d'être téléchargé sur votre ordinateur. Joignez-le manuellement
 N'hésitez pas à me contacter pour toute question.
 
 Cordialement,
-Francis
-Revêtement Viking Inc.
-RBQ 5811-4299-01
-info@entreprisesxpress.ca`;
+${monNom || "Gabriel"}
+${ENTREPRISE.nom}
+RBQ ${ENTREPRISE.rbq}
+${ENTREPRISE.courriel}`;
     window.location.href = `mailto:${client.courriel}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
   };
 
@@ -983,7 +1032,7 @@ info@entreprisesxpress.ca`;
                     <span className="flex-1">{f.libelle}</span>
                     {actif && (
                       <>
-                        <input type="number" value={actif.heures} onChange={(e) => setFraisActifs((prev) => prev.map((x) => x.id === f.id ? { ...x, heures: +e.target.value } : x))} className="w-20 px-2 py-1 border rounded text-right" step={0.5} />
+                        <ChampNombre value={actif.heures} onChange={(v) => setFraisActifs((prev) => prev.map((x) => x.id === f.id ? { ...x, heures: v } : x))} className="w-20 px-2 py-1 border rounded text-right" aria-label={`Heures — ${f.libelle}`} />
                         <span className="text-slate-500">h</span>
                       </>
                     )}
@@ -1007,7 +1056,7 @@ info@entreprisesxpress.ca`;
               <hr />
               <div className="flex items-center justify-between">
                 <label className="text-slate-700">Gestion %</label>
-                <input type="number" value={fraisGestion * 100} onChange={(e) => setFraisGestion(+e.target.value / 100)} className="w-20 px-2 py-1 border rounded text-right" step={1} />
+                <ChampNombre value={fraisGestion * 100} onChange={(v) => setFraisGestion(v / 100)} className="w-20 px-2 py-1 border rounded text-right" aria-label="Frais de gestion, en pourcentage" />
               </div>
               <Row label="Frais gestion" value={formatCAD(calcul.fraisGestionMontant)} />
               <hr />
@@ -1047,8 +1096,38 @@ function Input({ label, value, onChange }: { label: string; value: string; onCha
 function TxtInput({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return <div className="flex flex-col"><label className="text-slate-600 mb-1">{label}</label><input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder="ex: Blanc Pur" className="px-2 py-1 border rounded text-xs" /></div>;
 }
-function NumInput({ label, value, onChange, step = 1 }: { label: string; value: number; onChange: (v: number) => void; step?: number }) {
-  return <div className="flex flex-col"><label className="text-slate-600 mb-1">{label}</label><input type="number" value={value} step={step} onChange={(e) => onChange(+e.target.value)} className="px-2 py-1 border rounded text-right" /></div>;
+function NumInput({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void; step?: number }) {
+  return <div className="flex flex-col"><label className="text-slate-600 mb-1">{label}</label><ChampNombre value={value} onChange={onChange} className="px-2 py-1 border rounded text-right" aria-label={label} /></div>;
+}
+
+/** Champ numérique qui garde la CHAÎNE saisie et ne pousse un nombre au modèle que
+ *  quand elle est lisible. Avant : `+e.target.value` sur un <input type="number"> —
+ *  vider le champ écrivait 0 dans la soumission, et la virgule du clavier québécois
+ *  vidait la valeur en silence. Accepte « 7,5 », « 1 250,50 » (nombreSaisi). Un texte
+ *  illisible au moment de quitter le champ est remplacé par la dernière valeur connue. */
+function ChampNombre({ value, onChange, className, "aria-label": ariaLabel }: { value: number; onChange: (v: number) => void; className?: string; "aria-label"?: string }) {
+  const [txt, setTxt] = useState(() => (Number.isFinite(value) ? String(value) : ""));
+  // Le modèle a changé de l'extérieur (preset, IA, ajustement vocal) : on réaligne le
+  // texte, sauf s'il représente déjà la même valeur (« 7,5 » pour 7.5).
+  useEffect(() => {
+    setTxt((t) => (nombreSaisi(t) === value ? t : (Number.isFinite(value) ? String(value) : "")));
+  }, [value]);
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={txt}
+      aria-label={ariaLabel}
+      onChange={(e) => {
+        const v = e.target.value;
+        setTxt(v);
+        const n = nombreSaisi(v);
+        if (Number.isFinite(n)) onChange(n);
+      }}
+      onBlur={() => { if (!Number.isFinite(nombreSaisi(txt))) setTxt(Number.isFinite(value) ? String(value) : ""); }}
+      className={className}
+    />
+  );
 }
 function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
   return <div className={`flex justify-between ${bold ? "font-semibold" : ""}`}><span className="text-slate-700">{label}</span><span>{value}</span></div>;

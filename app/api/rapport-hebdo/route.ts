@@ -1,20 +1,26 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, getParametre, setParametre } from "@/lib/db";
 import { sendEmail, emailEstConfigure } from "@/lib/email";
+import { verifierCron } from "@/lib/cron-auth";
+import { aujourdhuiMontreal, jourMontreal, semaineISO } from "@/lib/date";
 
 export const dynamic = "force-dynamic";
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
 
-/** Cron hebdo (dimanche soir) : envoie un récap de la semaine à Francis + Gabriel. */
+/** Cron hebdo (vercel.json : `0 21 * * 0` = dimanche 21 h UTC, soit 17 h à Montréal
+ *  l'été (UTC−4) et 16 h l'hiver (UTC−5)) : envoie un récap de la semaine à Francis + Gabriel. */
 export async function GET(req: NextRequest) {
-  const cronSecret = process.env.CRON_SECRET;
   // Sécurité fail-closed : sans CRON_SECRET, la route serait déclenchable publiquement
   // (envoi d'emails abusif). On la désactive plutôt que de la laisser ouverte.
-  if (!cronSecret) return NextResponse.json({ error: "CRON_SECRET non configuré — route désactivée" }, { status: 503 });
-  const auth = req.headers.get("authorization") || "";
-  if (auth !== `Bearer ${cronSecret}`) return NextResponse.json({ error: "non autorisé" }, { status: 401 });
+  const refus = verifierCron(req);
+  if (refus) return refus;
   if (!emailEstConfigure()) return NextResponse.json({ ok: false, raison: "email_non_configure" });
+
+  // Garde d'idempotence par SEMAINE ISO, posée seulement après un envoi réussi : un
+  // réessai de Vercel ou un appel manuel le même dimanche ne renvoie pas deux récaps.
+  const cleGuard = `rapport_hebdo_${semaineISO(aujourdhuiMontreal())}`;
+  if (await getParametre(cleGuard)) return NextResponse.json({ ok: true, envoyes: 0, deja_envoye: true });
 
   // NOTE — pas de repli à zéro sur les requêtes ci-dessous. Avant, chaque `execute` avait
   // un `.catch(() => ({ rows: [{ n: 0 }] }))` : une base injoignable le dimanche soir
@@ -22,8 +28,9 @@ export async function GET(req: NextRequest) {
   // 0,00 $ · 0 soumission · 0 h », indiscernable d'une vraie semaine morte. Un cron qui
   // échoue est visible ; un faux rapport ne l'est pas. On laisse donc remonter l'erreur.
   const c: any = db();
-  const il_y_a_7j = new Date(); il_y_a_7j.setDate(il_y_a_7j.getDate() - 7);
-  const debut = il_y_a_7j.toISOString().slice(0, 10);
+  // Jour de MONTRÉAL : le cron tourne le dimanche 21 h UTC ; en UTC, « il y a 7 jours »
+  // désignait déjà le lundi, et le dimanche précédent sortait du récap.
+  const debut = jourMontreal(new Date(Date.now() - 7 * 86400000).toISOString());
 
   // Heures par employé
   const rHeures = await c.execute({
@@ -98,5 +105,6 @@ Bonne semaine !
   if (envoyes === 0) {
     return NextResponse.json({ ok: false, erreur: destinataires.length === 0 ? "aucun destinataire configuré (FRANCIS_EMAIL / GABRIEL_EMAIL)" : "envoi refusé par le fournisseur de courriel", destinataires: destinataires.length }, { status: 500 });
   }
+  await setParametre(cleGuard, String(envoyes));
   return NextResponse.json({ ok: true, envoyes });
 }

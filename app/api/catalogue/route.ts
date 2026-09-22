@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db, initDb } from "@/lib/db";
 import { nombreSaisi } from "@/lib/calculs";
+import { journaliser } from "@/lib/audit";
+import { utilisateurActif } from "@/lib/authUser";
 
 const c: any = () => db();
 
@@ -99,6 +101,14 @@ export async function DELETE(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("id");
   if (!id) return NextResponse.json({ error: "id requis" }, { status: 400 });
   // Soft delete : on désactive plutôt que supprimer (pour préserver l'historique des soumissions)
+  const cur = await c().execute({ sql: "SELECT id, nom, type, fournisseur, unite, prix_coutant, prix_vente, actif FROM catalogue_materiaux WHERE id = ?", args: [+id] });
+  const avant = (cur.rows[0] as any) || null;
   await c().execute({ sql: "UPDATE catalogue_materiaux SET actif = 0, date_modif = ? WHERE id = ?", args: [new Date().toISOString(), +id] });
+  const user = await utilisateurActif(req);
+  journaliser("catalogue.desactive", {
+    ref_type: "catalogue", ref_id: id, utilisateur: user || undefined,
+    description: avant ? `${avant.nom} · ${avant.fournisseur || "?"} · ${avant.prix_vente ?? "—"} $/${avant.unite || "u"}` : `Article #${id}`,
+    avant,
+  });
   return NextResponse.json({ ok: true });
 }

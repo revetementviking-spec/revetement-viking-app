@@ -47,7 +47,25 @@ export type ActiviteType =
   | "facture.paiement_annule"
   | "facture.supprimee"
   | "contrat.supprime"
+  // Contrats en ligne (pipeline_contrats) : création et suppression d'un brouillon.
+  | "contrat_pipeline.cree"
+  | "contrat_pipeline.supprime"
   | "paye.marquee_payee"
+  | "paye.banque_appliquee"
+  | "paye.periode_supprimee"
+  // Fiche employé : changement de taux, de DAS ou de statut actif (avant/après).
+  | "employe.modifie"
+  | "photo.supprimee"
+  | "inventaire.supprime"
+  | "assurance.supprimee"
+  | "catalogue.desactive"
+  // Issue de chaque envoi de courriel (lib/email.ts) : destinataire masqué, sujet, id ou erreur.
+  | "courriel.envoye"
+  | "courriel.echec"
+  // Recherche de prix web forcée (`force:true`) : sert de compteur au plafond 20/h par IP (lib/rateLimit.ts).
+  | "prix_web.force"
+  // Empreinte anti-rejeu d'une requête acceptée (lib/rateLimit.ts) ; purgée après 24 h.
+  | "requete.empreinte"
   | "backup.execute"
   | "backup.restaure"
   | "drive.connecte"
@@ -67,28 +85,11 @@ export interface ActiviteOpts {
   req?: Request;                 // alternative : on extrait l'utilisateur du cookie
 }
 
-// Compteur en mémoire pour déclencher la purge périodique sans I/O à chaque appel
-let _depuisDernierePurge = 0;
-const PURGE_CHAQUE = 500; // tous les 500 inserts, on tente une purge
-
-async function purgerSiNecessaire(): Promise<void> {
-  if (_depuisDernierePurge++ < PURGE_CHAQUE) return;
-  _depuisDernierePurge = 0;
-  try {
-    const c = db();
-    // 1. Supprime les entrées de plus de 90 jours
-    const seuil = new Date(Date.now() - 90 * 86400_000).toISOString();
-    await c.execute({ sql: `DELETE FROM journal_activite WHERE date < ?`, args: [seuil] });
-    // 2. Si > 10 000 lignes, garde uniquement les 10 000 plus récentes
-    const r = await c.execute("SELECT COUNT(*) as n FROM journal_activite");
-    const n = Number((r.rows[0] as any).n || 0);
-    if (n > 10000) {
-      await c.execute(`DELETE FROM journal_activite WHERE id NOT IN (SELECT id FROM journal_activite ORDER BY id DESC LIMIT 10000)`);
-    }
-  } catch (e) {
-    console.warn("[audit purge]", (e as Error).message);
-  }
-}
+// Purge : PAS de compteur en mémoire ici. « Tous les 500 inserts » ne se produisait jamais
+// sur serverless (chaque instance repart de zéro) : le journal grossissait sans fin.
+// La purge (90 jours / 10 000 lignes, empreintes 24 h, idempotence 7 jours) est faite en
+// un seul lot par le cron quotidien : purgerJournaux() dans lib/db.ts, appelée par
+// app/api/rappels-quotidiens/route.ts.
 
 /** Log une activité — fire-and-forget, ne throw jamais. */
 export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): Promise<void> {
@@ -114,8 +115,6 @@ export async function journaliser(type: ActiviteType, opts: ActiviteOpts = {}): 
         utilisateur,
       ],
     });
-    // Purge périodique non bloquante
-    purgerSiNecessaire().catch(() => {});
   } catch (e) {
     console.warn("[audit] échec journalisation:", (e as Error).message);
   }

@@ -5,7 +5,8 @@ import FAB from "@/components/FAB";
 import { formatCAD } from "@/lib/calculateur";
 import { useToast } from "@/components/Toasts";
 import { aujourdhuiMontreal } from "@/lib/date";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, envoyer, lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 // Parse « AAAA-MM-JJ » comme minuit LOCAL (pas UTC). new Date("2026-05-18") = minuit
 // UTC → affiché « 17 mai » à Montréal (UTC−4). Ici on garde le bon jour.
@@ -23,13 +24,18 @@ export default function PaieVue() {
   const [filtreStatut, setFiltreStatut] = useState<"" | "paye" | "a_payer">("a_payer");
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = async () => {
+    // Lectures avec filet : un 500 rejetait la promesse et laissait la liste vide,
+    // comme s'il n'y avait « aucune période ».
     const [p, e] = await Promise.all([
-      fetch(filtreEmp ? `/api/paies?employe=${encodeURIComponent(filtreEmp)}` : "/api/paies").then((r) => r.json()),
-      fetch("/api/employes").then((r) => r.json()),
+      lireListe(filtreEmp ? `/api/paies?employe=${encodeURIComponent(filtreEmp)}` : "/api/paies"),
+      lireListe("/api/employes"),
     ]);
-    setPeriodes(Array.isArray(p) ? p : []);
-    setEmployes(Array.isArray(e) ? e : []);
+    if (!p.ok) { setErreur(p.erreur); return; }
+    setErreur(null);
+    setPeriodes(p.data);
+    if (e.ok) setEmployes(e.data);
   };
 
   useEffect(() => { charger(); }, [filtreEmp]);
@@ -69,6 +75,8 @@ export default function PaieVue() {
         taux_horaire: p.taux_horaire || 0, das_pct: p.das_pct || 0.15,
         montant_brut: p.montant_brut || 0, das_montant: p.das_montant || 0,
         montant_net: p.montant_net || 0, date_paiement: p.date_paiement,
+        // Quinzaine à plusieurs taux : le talon ventile les gains ligne par ligne.
+        gains_par_taux: p.gains_par_taux,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -227,7 +235,9 @@ export default function PaieVue() {
         </div>
 
         {/* Liste périodes */}
-        {filtrees.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : filtrees.length === 0 ? (
           <div className="bg-white rounded-lg shadow p-12 text-center">
             <div className="text-6xl mb-4">💵</div>
             <h3 className="text-lg font-bold text-slate-700 mb-2">Aucune période</h3>
@@ -293,7 +303,7 @@ export default function PaieVue() {
                   </div>
                   <div className="bg-slate-50 p-2 rounded">
                     <div className="text-[10px] text-slate-500 uppercase">Taux $/h</div>
-                    <div className="font-bold">{(p.taux_horaire || 0).toFixed(2)} $</div>
+                    <div className="font-bold">{formatCAD(p.taux_horaire || 0)}</div>
                   </div>
                   <div className="bg-emerald-50 p-2 rounded" title="Montant réellement versé à l'employé">
                     <div className="text-[10px] text-emerald-700 uppercase">Versé (brut)</div>

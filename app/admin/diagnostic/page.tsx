@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import ZoneDepot from "@/components/ZoneDepot";
+import { envoyer } from "@/lib/envoi";
 
 // Enveloppe minimale exigée par /api/restore pour juger un fichier valide : chaque envoi
 // partiel la fournit vide, seule la table du morceau porte des données.
@@ -93,13 +94,12 @@ function ValiderBackup() {
         for (let i = 0; i < paquets.length; i++) {
           setProgression(paquets.length > 1 ? `${champ} (${i + 1}/${paquets.length})…` : `${champ}…`);
           const morceau: any = { ...ENVELOPPE_VIDE, confirmer: true, [champ]: paquets[i] };
-          try {
-            const r = await fetch("/api/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(morceau) });
-            const d = await r.json().catch(() => ({} as any));
-            if (!r.ok) { erreur = d?.error || `erreur ${r.status}`; break; }
-            const res = d.resultat?.[champ];
-            if (res) { inseres += res.inseres || 0; ignores += res.ignores || 0; total += res.total || 0; }
-          } catch (e: any) { erreur = e?.message || "réseau"; break; }
+          // envoyer() : ne lève jamais (réseau coupé = message lisible), lit la réponse
+          // même si elle n'est pas du JSON (413 sur un paquet trop gros).
+          const r = await envoyer<any>("/api/restore", { corps: morceau });
+          if (!r.ok) { erreur = r.erreur || "erreur"; break; }
+          const res = r.data?.resultat?.[champ];
+          if (res) { inseres += res.inseres || 0; ignores += res.ignores || 0; total += res.total || 0; }
         }
         cumul[champ] = { inseres, ignores, total, ...(erreur ? { erreur } : {}) };
         if (erreur) echecs.push(`${champ} : ${erreur}`);

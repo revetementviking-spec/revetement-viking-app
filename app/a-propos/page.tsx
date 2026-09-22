@@ -16,7 +16,8 @@ export default function AProposPage() {
 
         <section className="bg-white rounded-lg shadow p-5 space-y-2">
           <h2 className="font-bold">Contact</h2>
-          <p className="text-sm">📧 <a href="mailto:info@entreprisesxpress.ca" className="text-emerald-700 hover:underline">info@entreprisesxpress.ca</a></p>
+          {/* Courriel de l'entreprise (lib/pdf-contrat.tsx, ENTREPRISE.courriel), pas celui d'Entreprises Xpress. */}
+          <p className="text-sm">📧 <a href="mailto:revetementviking@gmail.com" className="text-emerald-700 hover:underline">revetementviking@gmail.com</a></p>
           <p className="text-sm">🌐 app.revetementviking.com</p>
         </section>
 

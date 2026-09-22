@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { infoCalendrierQC } from "@/lib/calendrier-quebec";
+import { aujourdhuiMontreal } from "@/lib/date";
+import { dateISOLocale } from "@/lib/calculs";
+import { lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 /** Échéancier des projets — vues Semaine / Mois / Année.
  *  Un projet est « actif » de date_debut à sa fin (date_fin_prevue, sinon
@@ -51,13 +55,17 @@ type Vue = "semaine" | "mois" | "annee";
 export default function CalendrierProjets() {
   const [projets, setProjets] = useState<any[]>([]);
   const [vue, setVue] = useState<Vue>("mois");
-  const [curseur, setCurseur] = useState<Date>(() => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); });
+  const [erreur, setErreur] = useState<string | null>(null);
+  // Jour de Montréal (aujourdhuiMontreal), pas `new Date()` : le serveur tourne en UTC
+  // et rendait le mois/jour suivant à partir de 20 h — écart d'hydratation au chargement.
+  const [curseur, setCurseur] = useState<Date>(() => dateISOLocale(aujourdhuiMontreal()));
 
-  useEffect(() => {
-    fetch("/api/projets").then((r) => r.json()).then((d) => setProjets(Array.isArray(d) ? d : []));
-  }, []);
+  // Réponse allégée : elle porte date_debut, duree_jours et date_fin_prevue, tout ce que
+  // la vue calcule ; la liste complète (cinq totaux par chantier) est inutile ici.
+  const charger = () => lireListe("/api/projets?lite=1").then((r) => { if (r.ok) { setErreur(null); setProjets(r.data); } else setErreur(r.erreur); });
+  useEffect(() => { charger(); }, []);
 
-  const aujourdhui = ymd(new Date());
+  const aujourdhui = aujourdhuiMontreal();
 
   // Fériés QC + vacances de la construction pour les années visibles (la vue peut
   // déborder sur l'année voisine, et le congé des Fêtes chevauche déc./janv.).
@@ -80,7 +88,7 @@ export default function CalendrierProjets() {
     else c.setFullYear(c.getFullYear() + sens);
     setCurseur(c);
   };
-  const aujourdhuiReset = () => { const n = new Date(); setCurseur(new Date(n.getFullYear(), n.getMonth(), n.getDate())); };
+  const aujourdhuiReset = () => setCurseur(dateISOLocale(aujourdhuiMontreal()));
 
   // Libellé de la période courante.
   const titrePeriode = useMemo(() => {
@@ -122,6 +130,7 @@ export default function CalendrierProjets() {
           </div>
         </div>
 
+        {erreur && <ErreurChargement erreur={erreur} onReessayer={charger} />}
         {vue === "semaine" && <VueSemaine curseur={curseur} projetsActifsLe={projetsActifsLe} aujourdhui={aujourdhui} infoQC={infoQC} />}
         {vue === "mois" && <VueMois curseur={curseur} projetsActifsLe={projetsActifsLe} aujourdhui={aujourdhui} infoQC={infoQC} />}
         {vue === "annee" && <VueAnnee annee={curseur.getFullYear()} projets={projets} />}
@@ -219,10 +228,14 @@ function VueMois({ curseur, projetsActifsLe, aujourdhui, infoQC }: { curseur: Da
 
 // === VUE ANNÉE : Gantt léger (une ligne par projet) ===
 function VueAnnee({ annee, projets }: { annee: number; projets: any[] }) {
+  // Minuit LOCAL (dateISOLocale) et non `new Date("AAAA-MM-JJ")` (minuit UTC) : les
+  // bornes de l'année sont locales, donc un projet du 1er janvier tombait la veille et
+  // sortait du Gantt ; toutes les barres étaient décalées de quelques heures.
+  const msLocal = (iso: any): number => dateISOLocale(String(iso).slice(0, 10)).getTime();
   const finMs = (p: any): number => {
-    if (p.date_fin_prevue) return new Date(p.date_fin_prevue).getTime();
+    if (p.date_fin_prevue) return msLocal(p.date_fin_prevue);
     if (!p.date_debut) return 0;
-    const base = new Date(p.date_debut).getTime();
+    const base = msLocal(p.date_debut);
     const jours = p.duree_jours && p.duree_jours > 0 ? p.duree_jours : 30;
     return base + jours * 86400000;
   };
@@ -230,7 +243,7 @@ function VueAnnee({ annee, projets }: { annee: number; projets: any[] }) {
     const dAn = new Date(annee, 0, 1).getTime();
     const fAn = new Date(annee, 11, 31).getTime();
     return projets.filter((p) => {
-      const d1 = p.date_debut ? new Date(p.date_debut).getTime() : 0;
+      const d1 = p.date_debut ? msLocal(p.date_debut) : 0;
       const d2 = finMs(p);
       if (!d1) return false;
       return d2 >= dAn && d1 <= fAn;
@@ -241,7 +254,7 @@ function VueAnnee({ annee, projets }: { annee: number; projets: any[] }) {
     const dAn = new Date(annee, 0, 1).getTime();
     const fAn = new Date(annee, 11, 31, 23, 59).getTime();
     const totalAn = fAn - dAn;
-    const d1 = Math.max(dAn, new Date(p.date_debut).getTime());
+    const d1 = Math.max(dAn, msLocal(p.date_debut));
     const d2 = Math.min(fAn, finMs(p));
     const left = ((d1 - dAn) / totalAn) * 100;
     const width = Math.max(1, ((d2 - d1) / totalAn) * 100);

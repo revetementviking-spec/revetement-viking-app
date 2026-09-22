@@ -1,8 +1,10 @@
 import { ipClient } from "@/lib/ip";
 // Sentry-light : stocke les erreurs client envoyées par error.tsx dans une table dédiée
+// (écriture partagée avec les jobs serveur : lib/erreurs-client.ts).
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { rateLimitDepasse } from "@/lib/rateLimit";
+import { enregistrerErreurClient } from "@/lib/erreurs-client";
 
 export const dynamic = "force-dynamic";
 
@@ -18,31 +20,8 @@ export async function POST(req: NextRequest) {
     if (JSON.stringify(b).length > 8000) {
       return NextResponse.json({ ok: false, error: "payload too large" }, { status: 413 });
     }
-    const c = db();
-    await c.execute({
-      sql: `CREATE TABLE IF NOT EXISTS erreurs_client (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL,
-        message TEXT,
-        stack TEXT,
-        digest TEXT,
-        path TEXT,
-        user_agent TEXT
-      )`,
-      args: [],
-    });
-    await c.execute({
-      sql: `INSERT INTO erreurs_client (date, message, stack, digest, path, user_agent) VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [
-        new Date().toISOString(),
-        (b.message || "").slice(0, 1000),
-        (b.stack || "").slice(0, 4000),
-        b.digest || null,
-        b.path || null,
-        b.userAgent || null,
-      ],
-    });
-    return NextResponse.json({ ok: true });
+    const ok = await enregistrerErreurClient({ message: b.message, stack: b.stack, digest: b.digest, path: b.path, userAgent: b.userAgent });
+    return NextResponse.json({ ok });
   } catch {
     return NextResponse.json({ ok: false });
   }

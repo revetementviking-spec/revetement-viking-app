@@ -57,13 +57,16 @@ function SyncContent() {
   const resyncDrive = async () => {
     setResyncBusy(true);
     try {
-      const r = await fetch("/api/drive/resync", { method: "POST" }).then((x) => x.json());
-      if (r.ok) {
+      // envoyer() : `x.json()` sur un 401/500 non-JSON levait et le bouton restait
+      // « en cours » sans un mot ; `r.ok` est vérifié au niveau HTTP ET du corps.
+      const res = await envoyer<any>("/api/drive/resync");
+      if (res.ok) {
+        const r = res.data || {};
         const msg = `✓ ${r.synced} resynchronisée(s)${r.ignores ? `, ${r.ignores} nettoyée(s)` : ""}${r.restants ? ` · ${r.restants} encore en échec` : ""}`;
         toast(msg, r.restants ? "warning" : "success");
         if (r.restants && r.dernierErreur) toast("Détail : " + r.dernierErreur, "info");
       } else {
-        toast(r.message || "Échec de la resynchro", "error");
+        toast(res.erreur || "Échec de la resynchro", "error");
       }
       charger();
     } finally { setResyncBusy(false); }
@@ -251,7 +254,7 @@ function BackupBouton() {
               <li key={b.id} className="flex justify-between items-center bg-slate-50 rounded px-2 py-1">
                 <span className="font-mono">{b.nom}</span>
                 <span className="flex gap-2 items-center text-slate-500">
-                  <span>{b.taille_ko ? `${b.taille_ko} KB` : ""}</span>
+                  <span>{b.taille_ko ? `${b.taille_ko} Ko` : ""}</span>
                   <span>{b.date ? new Date(b.date).toLocaleString("fr-CA", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</span>
                   {b.lien && <a href={b.lien} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">↗ Drive</a>}
                 </span>

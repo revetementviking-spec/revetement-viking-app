@@ -29,6 +29,21 @@ interface TalonProps {
   das_montant: number;
   montant_net: number;
   date_paiement?: string;
+  /** Ventilation par taux horaire (fournie par /api/paies). Affichée ligne par ligne
+   *  seulement si la quinzaine contient PLUSIEURS taux et que la somme retombe sur le
+   *  brut versé — sinon une seule ligne, comme avant. */
+  gains_par_taux?: { taux: number; heures: number; montant: number }[];
+}
+
+/** Lignes de gains à imprimer : une par taux quand il y en a plusieurs et que leur somme
+ *  est bien le brut de la paie (au cent près) ; sinon la ligne unique historique. */
+export function lignesGainsTalon(t: Pick<TalonProps, "heures_normales" | "taux_horaire" | "montant_brut" | "gains_par_taux">): { heures: number; taux: number; montant: number }[] {
+  const g = (t.gains_par_taux || []).filter((x) => x && x.heures > 0);
+  if (g.length > 1) {
+    const somme = g.reduce((s, x) => s + x.montant, 0);
+    if (Math.abs(somme - t.montant_brut) < 0.005) return g.map((x) => ({ heures: x.heures, taux: x.taux, montant: x.montant }));
+  }
+  return [{ heures: t.heures_normales, taux: t.taux_horaire, montant: t.heures_normales * t.taux_horaire }];
 }
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
@@ -38,7 +53,7 @@ const dateLisible = (iso: string) => {
 };
 
 export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
-  const brutNormal = talon.heures_normales * talon.taux_horaire;
+  const gains = lignesGainsTalon(talon);
   return (
     <Document>
       <Page size="LETTER" style={s.page}>
@@ -63,10 +78,12 @@ export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
 
         {/* Gains */}
         <Text style={s.sectionTitre}>Gains</Text>
-        <View style={s.row}>
-          <Text>Heures payées — {talon.heures_normales.toFixed(2)} h × {cad(talon.taux_horaire)}</Text>
-          <Text style={s.val}>{cad(brutNormal)}</Text>
-        </View>
+        {gains.map((g, i) => (
+          <View style={s.row} key={i}>
+            <Text>Heures payées — {g.heures.toFixed(2)} h × {cad(g.taux)}</Text>
+            <Text style={s.val}>{cad(g.montant)}</Text>
+          </View>
+        ))}
         <View style={s.row}>
           <Text style={s.val}>Salaire brut</Text>
           <Text style={s.val}>{cad(talon.montant_brut)}</Text>

@@ -60,6 +60,11 @@ export interface SoumissionCalculee {
   total: number;
 }
 
+/** Arrondi au cent, sans le biais binaire de Math.round(x * 100) sur les .xx5. */
+export function auCent(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 export function calculerSoumission(p: ParametresSoumission): SoumissionCalculee {
   const lignesCalc: LigneCalculee[] = [];
   let totalCoutMat = 0;
@@ -106,13 +111,16 @@ export function calculerSoumission(p: ParametresSoumission): SoumissionCalculee 
   const totalHeures = totalHeuresInstall + totalHeuresForfait;
   const totalCoutMO = totalHeures * TAUX_HORAIRE_VENTE;
 
-  const sousTotalMatMO = totalVenteMat + totalCoutMO;
-  const fraisGestionMontant = sousTotalMatMO * p.fraisGestion;
-  const sousTotalAvantTaxes = sousTotalMatMO + fraisGestionMontant;
+  // Sous-totaux, TPS et TVQ arrondis AU CENT, et le total = somme des arrondis : c'est
+  // ce que le client recalcule sur le PDF. Avant, les taxes gardaient leurs décimales et
+  // le total affiché pouvait différer d'un cent de « sous-total + TPS + TVQ » imprimés.
+  const sousTotalMatMO = auCent(totalVenteMat + totalCoutMO);
+  const fraisGestionMontant = auCent(sousTotalMatMO * p.fraisGestion);
+  const sousTotalAvantTaxes = auCent(sousTotalMatMO + fraisGestionMontant);
 
-  const tps = p.appliquerTaxes ? sousTotalAvantTaxes * PARAMS_DEFAUT.tps : 0;
-  const tvq = p.appliquerTaxes ? sousTotalAvantTaxes * PARAMS_DEFAUT.tvq : 0;
-  const total = sousTotalAvantTaxes + tps + tvq;
+  const tps = p.appliquerTaxes ? auCent(sousTotalAvantTaxes * PARAMS_DEFAUT.tps) : 0;
+  const tvq = p.appliquerTaxes ? auCent(sousTotalAvantTaxes * PARAMS_DEFAUT.tvq) : 0;
+  const total = auCent(sousTotalAvantTaxes + tps + tvq);
 
   return {
     lignes: lignesCalc,

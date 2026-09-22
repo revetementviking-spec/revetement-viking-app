@@ -9,6 +9,7 @@ import ZoneDepot from "@/components/ZoneDepot";
 import { useToast } from "@/components/Toasts";
 import { envoyer } from "@/lib/envoi";
 import { jourMontreal } from "@/lib/date";
+import Modale from "@/components/Modale";
 import { LIMITE_FICHIER_OCTETS, LIMITE_FICHIER_TEXTE } from "@/lib/limites-fichiers";
 
 // 4 Mo : au-delà, la requête encodée en base64 dépasse la limite de la plateforme.
@@ -196,8 +197,8 @@ export default function DocumentsProjet({ projetId, onChange }: { projetId: numb
                   </button>
                   <div className="flex gap-1 flex-shrink-0">
                     <a href={`/api/projet-fichiers/${f.id}`} target="_blank" rel="noreferrer" className="px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 rounded min-h-[44px] flex items-center" title="Ouvrir dans un onglet">↗</a>
-                    <button onClick={() => setEdition({ id: f.id, nom: f.nom || "", categorie: f.categorie || "", description: f.description || "" })} className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded min-h-[44px]">✏️</button>
-                    <button onClick={() => supprimer(f)} className="px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded min-h-[44px]">🗑</button>
+                    <button onClick={() => setEdition({ id: f.id, nom: f.nom || "", categorie: f.categorie || "", description: f.description || "" })} aria-label={`Modifier ${f.nom}`} className="px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 rounded min-h-[44px] min-w-[44px]">✏️</button>
+                    <button onClick={() => supprimer(f)} aria-label={`Supprimer ${f.nom}`} className="px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 rounded min-h-[44px] min-w-[44px]">🗑</button>
                   </div>
                 </div>
               );
@@ -209,11 +210,11 @@ export default function DocumentsProjet({ projetId, onChange }: { projetId: numb
 
       {/* Aperçu plein écran — même geste que pour le contrat signé et la facture */}
       {apercu && (
-        <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
+        <Modale onClose={() => setApercu(null)} titre={`Aperçu — ${apercu.nom}`} fermerAuClicFond={false} className="fixed inset-0 z-[80] bg-black/95 flex flex-col">
           <div className="flex items-center justify-between p-3 text-white safe-top gap-2">
             <button onClick={() => setApercu(null)} className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 font-semibold text-sm">← Retour</button>
             <span className="text-sm opacity-80 truncate">{apercu.nom}</span>
-            <a href={`/api/projet-fichiers/${apercu.id}`} target="_blank" rel="noreferrer" className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm">⬇</a>
+            <a href={`/api/projet-fichiers/${apercu.id}`} target="_blank" rel="noreferrer" aria-label="Télécharger le document" className="px-3 py-2 min-w-11 min-h-11 inline-flex items-center justify-center rounded-lg bg-white/10 hover:bg-white/20 text-sm">⬇</a>
           </div>
           <div className="flex-1 bg-white">
             {/^image\//.test(apercu.type) ? (
@@ -222,7 +223,7 @@ export default function DocumentsProjet({ projetId, onChange }: { projetId: numb
               <iframe src={`/api/projet-fichiers/${apercu.id}`} title={apercu.nom} className="w-full h-full border-0" />
             )}
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );

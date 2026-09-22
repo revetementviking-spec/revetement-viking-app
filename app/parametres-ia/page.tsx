@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import ZoneDepot from "@/components/ZoneDepot";
-import { ecrire } from "@/lib/envoi";
+import { ecrire, lireListe } from "@/lib/envoi";
 import { fichierTropLourd } from "@/lib/limites-fichiers";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
 
 export default function ParametresIaPage() {
   const [params, setParams] = useState<any[]>([]);
@@ -13,18 +15,23 @@ export default function ParametresIaPage() {
   const [docs, setDocs] = useState<any[]>([]);
   const [uploadStatus, setUploadStatus] = useState("");
   const [onglet, setOnglet] = useState<"params" | "docs">("params");
+  const [erreurParams, setErreurParams] = useState<string | null>(null);
+  const [erreurDocs, setErreurDocs] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const chargerParams = () => fetch("/api/parametres-ia", { cache: "no-store" }).then((r) => r.json()).then(setParams);
-  const chargerDocs = () => fetch("/api/documents-ia", { cache: "no-store" }).then((r) => r.json()).then(setDocs);
+  // Lectures avec filet : un 500 laissait les deux onglets vides, sans un mot.
+  const chargerParams = () => lireListe("/api/parametres-ia").then((r) => { if (r.ok) { setErreurParams(null); setParams(r.data); } else setErreurParams(r.erreur); });
+  const chargerDocs = () => lireListe("/api/documents-ia").then((r) => { if (r.ok) { setErreurDocs(null); setDocs(r.data); } else setErreurDocs(r.erreur); });
   useEffect(() => { chargerParams(); chargerDocs(); }, []);
 
-  const sauvegarder = async () => {
+  const verrouSauve = useVerrou();
+  const sauvegarder = () => verrouSauve.executer(async () => {
     const items = Object.entries(modifies).map(([cle, valeur]) => ({ cle, valeur }));
     if (items.length === 0) { toast("Aucun changement", "info"); return; }
-    const r = await fetch("/api/parametres-ia", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parametres: items }) });
-    if (r.ok) { toast(`${items.length} paramètre(s) sauvé(s)`, "success"); setModifies({}); chargerParams(); }
-  };
+    // Branche d'erreur : un refus laissait les champs « modifiés » sans un mot.
+    if (!(await ecrire("/api/parametres-ia", "PATCH", { parametres: items }, "Sauvegarde des paramètres"))) return;
+    toast(`${items.length} paramètre(s) sauvé(s)`, "success"); setModifies({}); chargerParams();
+  });
 
   const restaurerDefaut = async (cle: string) => {
     if (!confirm("Restaurer la valeur par défaut Viking pour ce paramètre ?")) return;
@@ -41,7 +48,7 @@ export default function ParametresIaPage() {
     const reader = new FileReader();
     reader.onload = async () => {
       const data = reader.result as string;
-      setUploadStatus(`📤 Envoi de ${file.name} (${Math.round(file.size / 1024)} KB)...`);
+      setUploadStatus(`📤 Envoi de ${file.name} (${Math.round(file.size / 1024)} Ko)...`);
       if (await ecrire("/api/documents-ia", "POST", { nom: file.name, type_mime: file.type, taille: file.size, data_b64: data }, "Ajout du document")) {
         toast(`✓ ${file.name} ajouté`, "success"); chargerDocs();
       }
@@ -77,7 +84,7 @@ export default function ParametresIaPage() {
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="🤖 Paramètres IA" soustitre="Règles métier + documents de référence pour les soumissions automatiques" actions={
         onglet === "params" && Object.keys(modifies).length > 0 ? (
-          <button onClick={sauvegarder} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">💾 Sauver ({Object.keys(modifies).length})</button>
+          <button onClick={sauvegarder} disabled={verrouSauve.occupe} className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-sm font-bold">{verrouSauve.occupe ? "…" : `💾 Sauver (${Object.keys(modifies).length})`}</button>
         ) : undefined
       } />
 
@@ -95,6 +102,7 @@ export default function ParametresIaPage() {
 
         {onglet === "params" && (
           <>
+            {erreurParams && <ErreurChargement erreur={erreurParams} onReessayer={chargerParams} />}
             {Object.entries(groupes).map(([titre, cles]) => (
               <section key={titre} className="bg-white rounded-lg shadow p-4 space-y-3">
                 <h2 className="font-bold text-slate-900">{titre}</h2>
@@ -158,13 +166,16 @@ export default function ParametresIaPage() {
             </div>
             </ZoneDepot>
 
-            <div className="bg-white rounded-lg shadow overflow-hidden">
-              {docs.length === 0 ? (
+            {/* overflow-x-auto : six colonnes sur un téléphone débordaient de l'écran. */}
+            <div className="bg-white rounded-lg shadow overflow-x-auto">
+              {erreurDocs ? (
+                <ErreurChargement erreur={erreurDocs} onReessayer={chargerDocs} />
+              ) : docs.length === 0 ? (
                 <div className="p-8 text-center text-slate-400 italic">
                   Aucun document. Téléverse ton premier PDF/Excel ci-dessus.
                 </div>
               ) : (
-                <table className="w-full text-sm">
+                <table className="w-full text-sm min-w-max">
                   <thead className="bg-slate-100">
                     <tr className="text-left">
                       <th className="p-2">Nom</th>
@@ -182,7 +193,7 @@ export default function ParametresIaPage() {
                           <a href={`/api/documents-ia/${d.id}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{d.nom}</a>
                         </td>
                         <td className="p-2 text-xs text-slate-500">{d.type_mime?.split("/")[1] || "—"}</td>
-                        <td className="p-2 text-xs">{d.taille ? `${Math.round(d.taille / 1024)} KB` : "—"}</td>
+                        <td className="p-2 text-xs">{d.taille ? `${Math.round(d.taille / 1024)} Ko` : "—"}</td>
                         <td className="p-2 text-xs text-slate-500">
                           {d.par || "?"} · {new Date(d.date_creation).toLocaleDateString("fr-CA", { day: "numeric", month: "short" })}
                         </td>
@@ -192,7 +203,7 @@ export default function ParametresIaPage() {
                           </button>
                         </td>
                         <td className="p-2 text-right">
-                          <button onClick={() => supprimerDoc(d.id, d.nom)} className="text-xs text-red-600 hover:bg-red-50 px-2 py-1 rounded">🗑</button>
+                          <button onClick={() => supprimerDoc(d.id, d.nom)} aria-label={`Supprimer ${d.nom}`} className="min-w-11 min-h-11 inline-flex items-center justify-center text-xs text-red-600 hover:bg-red-50 rounded">🗑</button>
                         </td>
                       </tr>
                     ))}

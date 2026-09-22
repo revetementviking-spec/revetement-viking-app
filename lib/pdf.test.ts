@@ -116,6 +116,30 @@ describe("PDF du talon de paie (rendu réel)", () => {
     expect(c).not.toContain("306000");    // le NET ne doit PAS apparaître : on verse le brut
     expect(t).not.toMatch(/DAS|déduction|retenue/i);
   });
+
+  it("deux taux dans la quinzaine : une ligne de gains PAR TAUX, dont la somme est le brut", async () => {
+    const { TalonPaiePDF, lignesGainsTalon } = await import("./pdf-talon-paie");
+    // 40 h @ 50 $ + 40 h @ 60 $ : taux moyen 55 $, brut 4 400 $ (voir calculerPaieQuinzaine).
+    const talon = { employe: "Maxime", debut: "2026-08-17", fin: "2026-08-30", heures_normales: 80, heures_sup: 0,
+      taux_horaire: 55, das_pct: 0.15, montant_brut: 4400, das_montant: 660, montant_net: 3740, date_paiement: "2026-09-04",
+      gains_par_taux: [{ taux: 50, heures: 40, montant: 2000 }, { taux: 60, heures: 40, montant: 2400 }] };
+    expect(lignesGainsTalon(talon)).toHaveLength(2);
+    const buf = await renderToBuffer(React.createElement(TalonPaiePDF, { talon }) as any);
+    const c = chiffres(texteDuPdf(buf));
+    expect(c).toContain("200000");   // 2 000,00 $ à 50 $
+    expect(c).toContain("240000");   // 2 400,00 $ à 60 $
+    expect(c).toContain("440000");   // brut
+  });
+
+  it("un seul taux, ou une ventilation qui ne retombe pas sur le brut versé : une seule ligne comme avant", async () => {
+    const { lignesGainsTalon } = await import("./pdf-talon-paie");
+    const base = { heures_normales: 80, taux_horaire: 45, montant_brut: 3600 };
+    expect(lignesGainsTalon({ ...base, gains_par_taux: [{ taux: 45, heures: 80, montant: 3600 }] })).toEqual([{ heures: 80, taux: 45, montant: 3600 }]);
+    expect(lignesGainsTalon(base)).toHaveLength(1);
+    // Période payée puis heures ajoutées après coup : la ventilation recalculée (4 500 $)
+    // ne correspond plus au brut versé (3 600 $) → on n'imprime pas des gains faux.
+    expect(lignesGainsTalon({ ...base, gains_par_taux: [{ taux: 45, heures: 60, montant: 2700 }, { taux: 60, heures: 30, montant: 1800 }] })).toHaveLength(1);
+  });
 });
 
 describe("PDF de soumission (rendu réel)", () => {
@@ -144,5 +168,29 @@ describe("PDF de soumission (rendu réel)", () => {
     expect(calcul.total).toBe(0);
     const buf = await renderToBuffer(React.createElement(SoumissionPDF, { client, numeroSoumission: "XP-VIDE", date: "2026-09-04", calcul }) as any);
     expect(buf.subarray(0, 5).toString()).toBe("%PDF-");
+  });
+
+  it("porte les coordonnées de VIKING (jamais celles d'une autre entreprise) et ses numéros de taxes", async () => {
+    const { ENTREPRISE } = await import("./entreprise");
+    const calcul = calculerSoumission({ lignes: [], fraisActifs: [{ id: "mob", heures: 4 }], fraisGestion: 0.15, appliquerTaxes: true });
+    const buf = await renderToBuffer(React.createElement(SoumissionPDF, { client, numeroSoumission: "XP-20260921-001", date: "2026-09-21", calcul }) as any);
+    const t = texteDuPdf(buf);
+    expect(t.toLowerCase()).not.toContain("entreprisesxpress");
+    expect(t).toContain(ENTREPRISE.courriel);
+    expect(t).toContain(ENTREPRISE.tps);
+    expect(t).toContain(ENTREPRISE.tvq);
+  });
+});
+
+describe("PDF du bon de commande (rendu réel)", () => {
+  it("porte le courriel de Viking, pas celui d'une autre entreprise", async () => {
+    const { CommandeMateriauxPDF } = await import("./pdf-commande");
+    const { ENTREPRISE } = await import("./entreprise");
+    const lignes = MATERIAUX.slice(0, 3).map((m) => ({ materiauCode: m.code, quantite: 100, surplus: 0.1, margePct: 0.4 }));
+    const calcul = calculerSoumission({ lignes, fraisActifs: [], fraisGestion: 0.15, appliquerTaxes: true });
+    const buf = await renderToBuffer(React.createElement(CommandeMateriauxPDF, { numeroSoumission: "XP-20260921-001", date: "2026-09-21", client: { nom: "Test", adresse: "1, rue Test", projet: "Test" }, calcul }) as any);
+    const t = texteDuPdf(buf);
+    expect(t.toLowerCase()).not.toContain("entreprisesxpress");
+    expect(t).toContain(ENTREPRISE.courriel);
   });
 });

@@ -8,7 +8,9 @@ import { useToast } from "@/components/Toasts";
 import FAB from "@/components/FAB";
 import AdresseAutocomplete from "@/components/AdresseAutocomplete";
 import { aujourdhuiMontreal } from "@/lib/date";
-import { ecrire } from "@/lib/envoi";
+import { ecrire, envoyer, lireJson, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
 
 const TYPES_INTERACTION = [
   { v: "appel", l: "📞 Appel" },
@@ -39,19 +41,26 @@ export default function ClientDetail() {
   const [iForm, setIForm] = useState({ type: "appel", date: today, sujet: "", note: "", fait_par: "" });
   const [tForm, setTForm] = useState({ titre: "", description: "", date_due: "", priorite: 3, assigne_a: "" });
 
+  const [erreur, setErreur] = useState<string | null>(null);
+
   const charger = async () => {
+    setErreur(null);
+    // Lectures avec filet : un 500 faisait planter le rendu sur `c.find` ; un client
+    // supprimé entre-temps laissait « Chargement... » pour toujours.
     const [c, i, t, p] = await Promise.all([
-      fetch("/api/clients").then((r) => r.json()),
-      fetch(`/api/interactions?client_id=${id}`).then((r) => r.json()),
-      fetch(`/api/taches?client_id=${id}`).then((r) => r.json()),
-      fetch("/api/projets").then((r) => r.json()),
+      lireJson<any>(`/api/clients?id=${id}`),
+      lireListe(`/api/interactions?client_id=${id}`),
+      lireListe(`/api/taches?client_id=${id}`),
+      lireListe("/api/projets"),
     ]);
-    const cl = c.find((x: any) => x.id === id);
+    if (!c.ok) { setErreur(c.erreur); return; }
+    const cl = c.data && c.data.id ? c.data : null;
+    if (!cl) { setErreur("fiche client introuvable"); return; }
     setClient(cl);
-    if (cl) setEditForm(cl);
-    setInteractions(i);
-    setTaches(t);
-    setProjets(p.filter((x: any) => x.client_id === id));
+    setEditForm(cl);
+    if (i.ok) setInteractions(i.data);
+    if (t.ok) setTaches(t.data);
+    if (p.ok) setProjets(p.data.filter((x: any) => x.client_id === id));
   };
 
   useEffect(() => { charger(); }, [id]);
@@ -71,21 +80,25 @@ export default function ClientDetail() {
     charger();
   };
 
-  const ajouterInteraction = async () => {
+  // Verrous par ref (lib/verrou.ts) : deux clics du même instant créaient deux
+  // interactions (ou deux tâches) identiques.
+  const verrouInteraction = useVerrou();
+  const ajouterInteraction = () => verrouInteraction.executer(async () => {
     if (!iForm.sujet && !iForm.note) { toast("Sujet ou note requis", "warning"); return; }
     if (!(await ecrire("/api/interactions", "POST", { ...iForm, client_id: id }, "Enregistrement"))) return;
     toast("Interaction ajoutée", "success");
     setIForm({ type: "appel", date: today, sujet: "", note: "", fait_par: iForm.fait_par });
     charger();
-  };
+  });
 
-  const ajouterTache = async () => {
+  const verrouTache = useVerrou();
+  const ajouterTache = () => verrouTache.executer(async () => {
     if (!tForm.titre.trim()) { toast("Titre requis", "warning"); return; }
     if (!(await ecrire("/api/taches", "POST", { ...tForm, client_id: id }, "Enregistrement"))) return;
     toast("Tâche ajoutée", "success");
     setTForm({ titre: "", description: "", date_due: "", priorite: 3, assigne_a: "" });
     charger();
-  };
+  });
 
   const toggleTache = async (t: any) => {
     const nouveau = t.statut === "complete" ? "a_faire" : "complete";
@@ -102,7 +115,9 @@ export default function ClientDetail() {
   if (!client) return (
     <div className="min-h-screen bg-slate-50">
       <Navigation titre="Client" />
-      <div className="p-12 text-center text-slate-500">Chargement...</div>
+      {erreur
+        ? <div className="p-6"><ErreurChargement erreur={erreur} onReessayer={charger} /></div>
+        : <div className="p-12 text-center text-slate-500">Chargement...</div>}
     </div>
   );
 
@@ -112,9 +127,9 @@ export default function ClientDetail() {
         <button
           onClick={async () => {
             if (!confirm(`Supprimer définitivement la fiche client « ${client.nom} » ?\n\n⚠️ Action irréversible. Les projets liés ne seront PAS supprimés.`)) return;
-            const r = await fetch(`/api/clients?id=${client.id}`, { method: "DELETE" });
-            if (r.ok) { toast("Fiche client supprimée", "success"); router.push("/clients"); }
-            else { const d = await r.json().catch(() => ({} as any)); toast(d?.error || "Erreur suppression", "error"); }
+            const r = await envoyer(`/api/clients?id=${client.id}`, { methode: "DELETE" });
+            if (!r.ok) { toast(`Suppression refusée : ${r.erreur}`, "error"); return; }
+            toast("Fiche client supprimée", "success"); router.push("/clients");
           }}
           className="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded text-sm font-bold"
           title="Supprimer la fiche client"
@@ -211,7 +226,7 @@ export default function ClientDetail() {
                     <div className={`text-sm ${t.statut === "complete" ? "line-through text-slate-500" : "font-semibold"}`}>{t.titre}</div>
                     {t.date_due && <div className={`text-xs ${t.date_due < today && t.statut !== "complete" ? "text-red-700 font-bold" : "text-slate-500"}`}>📅 {t.date_due}{t.statut === "complete" && t.date_completion ? ` · fait ${t.date_completion}` : ""}</div>}
                   </div>
-                  <button onClick={async () => { if (confirm("Supprimer cette tâche ?")) { if (!(await ecrire(`/api/taches?id=${t.id}`, "DELETE", undefined, "Suppression"))) return; charger(); } }} className="text-xs text-red-500 hover:bg-red-50 px-1 rounded opacity-50 hover:opacity-100" title="Supprimer">✕</button>
+                  <button onClick={async () => { if (confirm("Supprimer cette tâche ?")) { if (!(await ecrire(`/api/taches?id=${t.id}`, "DELETE", undefined, "Suppression"))) return; charger(); } }} className="min-w-11 min-h-11 flex items-center justify-center text-xs text-red-500 hover:bg-red-50 rounded opacity-50 hover:opacity-100" title="Supprimer" aria-label="Supprimer cette tâche">✕</button>
                 </div>
               ))}
             </div>
@@ -219,7 +234,7 @@ export default function ClientDetail() {
               <input type="text" placeholder="Nouvelle tâche..." value={tForm.titre} onChange={(e) => setTForm({ ...tForm, titre: e.target.value })} className="w-full px-2 py-2 border rounded text-sm" />
               <div className="flex gap-1">
                 <input type="date" value={tForm.date_due} onChange={(e) => setTForm({ ...tForm, date_due: e.target.value })} className="flex-1 px-2 py-1.5 border rounded text-xs" />
-                <button onClick={ajouterTache} className="px-3 py-1.5 bg-emerald-600 text-white rounded text-xs font-bold">Ajouter</button>
+                <button onClick={ajouterTache} disabled={verrouTache.occupe} className="px-3 py-1.5 bg-emerald-600 disabled:opacity-50 text-white rounded text-xs font-bold">{verrouTache.occupe ? "…" : "Ajouter"}</button>
               </div>
             </div>
           </section>
@@ -240,7 +255,7 @@ export default function ClientDetail() {
             </div>
             <input type="text" placeholder="Sujet..." value={iForm.sujet} onChange={(e) => setIForm({ ...iForm, sujet: e.target.value })} className="w-full px-3 py-2 border rounded text-sm mb-2" />
             <textarea placeholder="Note / détails..." rows={3} value={iForm.note} onChange={(e) => setIForm({ ...iForm, note: e.target.value })} className="w-full px-3 py-2 border rounded text-sm mb-2" />
-            <button onClick={ajouterInteraction} className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded font-bold text-sm">Enregistrer interaction</button>
+            <button onClick={ajouterInteraction} disabled={verrouInteraction.occupe} className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded font-bold text-sm">{verrouInteraction.occupe ? "…" : "Enregistrer interaction"}</button>
           </section>
 
           <section className="bg-white rounded-lg shadow p-4">
@@ -257,7 +272,7 @@ export default function ClientDetail() {
                           {i.sujet && <div className="font-semibold text-sm">{i.sujet}</div>}
                           {i.note && <div className="text-sm text-slate-700 whitespace-pre-wrap">{i.note}</div>}
                         </div>
-                        <button onClick={() => supprimerInter(i.id)} className="text-xs text-red-600 hover:underline">✕</button>
+                        <button onClick={() => supprimerInter(i.id)} aria-label="Supprimer cette interaction" className="min-w-11 min-h-11 flex items-center justify-center text-xs text-red-600 hover:bg-red-50 rounded">✕</button>
                       </div>
                     </div>
                   );

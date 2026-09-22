@@ -2,7 +2,7 @@
 // Route séparée du GET du contrat : le fichier fait souvent plusieurs Mo et n'a aucune
 // raison d'être renvoyé en base64 à chaque affichage de la page.
 import { NextRequest, NextResponse } from "next/server";
-import { getContratPipelineParToken } from "@/lib/db";
+import { getContratPipelineBlobs } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +15,8 @@ const TYPES_AFFICHABLES = new Set([
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
   // Le jeton EST l'autorisation : même barrière que pour le contrat lui-même.
-  const c = await getContratPipelineParToken(token);
+  // Lecture des blobs seulement (cette route sert le fichier, pas les métadonnées).
+  const c = await getContratPipelineBlobs(token);
   if (!c || !c.annexe_data) return NextResponse.json({ error: "aucune annexe" }, { status: 404 });
 
   const dataUrl: string = c.annexe_data;

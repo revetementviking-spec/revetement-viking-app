@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerPhotosErreursDrive, marquerDriveSync, getProjet } from "@/lib/db";
+import { listerPhotosErreursDrive, marquerDriveSync, nomsProjets } from "@/lib/db";
 import { driveEstActif, trouverOuCreerSousDossier, uploaderFichier } from "@/lib/drive";
 
 export const dynamic = "force-dynamic";
@@ -10,6 +10,14 @@ export async function POST(_req: NextRequest) {
     return NextResponse.json({ ok: false, error: "drive_inactif", message: "Connecte Google Drive d'abord." }, { status: 503 });
   }
   const photos = await listerPhotosErreursDrive();
+  // Noms de projets préchargés en UNE requête (avant : un getProjet() — PROJ_SQL et ses
+  // sept sous-requêtes — par photo), et un seul appel Drive par dossier de projet.
+  const noms = await nomsProjets(photos.map((p) => Number(p.projet_id)));
+  const dossiers = new Map<string, Promise<string>>();
+  const dossierPour = (sousDossier: string) => {
+    if (!dossiers.has(sousDossier)) dossiers.set(sousDossier, trouverOuCreerSousDossier(sousDossier));
+    return dossiers.get(sousDossier)!;
+  };
   let synced = 0, restants = 0, ignores = 0;
   let dernierErreur = "";
   for (const p of photos) {
@@ -20,12 +28,12 @@ export async function POST(_req: NextRequest) {
       continue;
     }
     try {
-      const projet = await getProjet(p.projet_id);
-      const sousDossier = `${projet?.nom || "Projet " + p.projet_id} - Photos`;
-      const dossierId = await trouverOuCreerSousDossier(sousDossier);
+      const nomProjet = noms.get(Number(p.projet_id)) || "";
+      const sousDossier = `${nomProjet || "Projet " + p.projet_id} - Photos`;
+      const dossierId = await dossierPour(sousDossier);
       const ext = p.photo_type?.includes("png") ? "png" : p.photo_type?.includes("pdf") ? "pdf" : p.photo_type?.startsWith("video/") ? "mp4" : "jpg";
       const nom = `${p.date}_${(p.description || "photo")}_${p.id}.${ext}`.replace(/[/\\]/g, "-");
-      const up = await uploaderFichier({ nom, dataUrl: p.photo_data, dossierId, description: `Projet ${projet?.nom || ""} · ${p.date}` });
+      const up = await uploaderFichier({ nom, dataUrl: p.photo_data, dossierId, description: `Projet ${nomProjet} · ${p.date}` });
       await marquerDriveSync(p.id, up.id, null);
       synced++;
     } catch (e: any) {

@@ -24,6 +24,21 @@ export const MAX_BLOCS = 3;
 
 export const NOUVEAUTES: Nouveaute[] = [
   {
+    version: "2026-09-21",
+    titre: "Grand ménage : saisie fiable sur le chantier, paie, contrats, sécurité",
+    points: [
+      "Heures, dépenses et extras saisis sans réseau (toit, sous-sol) sont gardés sur l'appareil et partent d'eux-mêmes au retour de la connexion, jamais en double. Les photos, elles, sont à reprendre une fois connecté : le bandeau le dit.",
+      "Une saisie refusée n'est plus perdue en silence : chaque écran affiche l'erreur (« Dépense 125,00 $ du 2026-09-20 à ressaisir ») et un double clic ne crée plus deux lignes.",
+      "Le serveur refuse maintenant ce qui n'a pas de sens : heures dans le futur ou au-delà de 24 h par jour, heures ou dépenses sur un chantier annulé ou terminé depuis plus de 14 jours, modification d'une heure déjà payée, plus de 20 essais de mot de passe par heure.",
+      "Contrats : chaque contrat a son propre numéro (C-2026-001, 002…). Deux contrats signés par le même client la même année ne partagent plus le même chantier.",
+      "Paie : la DAS estimée suit le pourcentage de la fiche de l'employé ; un talon avec deux taux dans la quinzaine montre une ligne par taux.",
+      "Soumissions et bons de commande portent le courriel de Revêtement Viking (plus celui d'Entreprises Xpress) et les numéros de TPS/TVQ ; les taxes sont arrondies au cent, le total est la somme exacte des lignes.",
+      "Dates : les dépenses, dates de début et le calendrier n'affichent plus la veille en soirée ; le contrat signé porte la date de Montréal, pas celle de Londres.",
+      "Nouvelle version prête = bannière « Recharger » en bas de l'écran. Mode sombre dans le menu du profil. Se déconnecter efface tout ce que l'app gardait sur l'appareil.",
+      "Champs de nombres : la virgule du clavier québécois est acceptée partout (« 1 250,50 ») ; vider un champ n'écrit plus 0.",
+    ],
+  },
+  {
     version: "2026-09-17",
     titre: "Écran d'ouverture Viking",
     points: [

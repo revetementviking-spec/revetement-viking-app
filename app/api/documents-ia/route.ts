@@ -14,14 +14,23 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(r.rows);
 }
 
+// Contrôle de type AU DÉPÔT : l'écran envoie toujours un data URL (FileReader). Liste
+// blanche = ce que l'écran /parametres-ia propose (PDF, image, CSV, Excel — les listes de
+// prix que l'IA consulte) ; tout ce qui pourrait s'exécuter dans un navigateur (HTML, SVG,
+// script) est refusé. Le type stocké est celui du data URL, pas le `type_mime` déclaré à
+// part par le client.
+const TYPE_DOCUMENT_OK = /^data:(application\/pdf|image\/(jpeg|png|webp|heic|gif)|text\/(csv|plain)|application\/vnd\.ms-excel|application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet);base64,/i;
+
 export async function POST(req: NextRequest) {
   await initDb();
   const b = await req.json();
   if (!b.nom || !b.data_b64) return NextResponse.json({ error: "nom + data_b64 requis" }, { status: 400 });
+  const m = typeof b.data_b64 === "string" ? b.data_b64.match(TYPE_DOCUMENT_OK) : null;
+  if (!m) return NextResponse.json({ error: "document refusé : seuls un PDF, une image (JPEG, PNG, WebP, HEIC), un CSV ou un classeur Excel sont acceptés" }, { status: 400 });
   const par = (await utilisateurActif(req)) || "?";
   const r = await c().execute({
     sql: "INSERT INTO documents_ia (nom, type_mime, taille, data_b64, contenu_texte, tags, actif, par, date_creation) VALUES (?,?,?,?,?,?,?,?,?)",
-    args: [b.nom, b.type_mime || "application/octet-stream", b.taille || 0, b.data_b64, b.contenu_texte || null, b.tags || null, 1, par, new Date().toISOString()],
+    args: [String(b.nom).slice(0, 200), m[1].toLowerCase(), b.taille || 0, b.data_b64, b.contenu_texte || null, b.tags || null, 1, par, new Date().toISOString()],
   });
   return NextResponse.json({ ok: true, id: Number(r.lastInsertRowid) });
 }

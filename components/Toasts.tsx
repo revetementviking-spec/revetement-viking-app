@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react";
 import { enregistrerToast } from "@/lib/toast-bus";
 
 type ToastType = "success" | "error" | "info" | "warning";
@@ -24,14 +24,26 @@ const Ctx = createContext<ToastCtx | null>(null);
 
 export function ToastsProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // Minuteries en cours : nettoyées à la fermeture manuelle et au démontage (avant, un
+  // setTimeout orphelin appelait setState sur un fournisseur démonté).
+  const minuteries = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
 
-  const retire = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  const retire = useCallback((id: number) => {
+    const t = minuteries.current.get(id);
+    if (t) { clearTimeout(t); minuteries.current.delete(id); }
+    setToasts((prev) => prev.filter((x) => x.id !== id));
+  }, []);
 
   const toast = useCallback((msg: string, type: ToastType = "info", options?: ToastOptions) => {
     const id = Date.now() + Math.random();
     const duree = options?.duration ?? (options?.action ? 8000 : type === "error" ? 6000 : 3500);
     setToasts((prev) => [...prev, { id, msg, type, action: options?.action }]);
-    setTimeout(() => retire(id), duree);
+    minuteries.current.set(id, setTimeout(() => retire(id), duree));
+  }, [retire]);
+
+  useEffect(() => {
+    const m = minuteries.current;
+    return () => { for (const t of m.values()) clearTimeout(t); m.clear(); };
   }, []);
 
   // Rend `toast` joignable hors React (lib/toast-bus.ts) : les helpers d'écriture
@@ -41,8 +53,11 @@ export function ToastsProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{ toast }}>
       {children}
+      {/* Mobile : ancrés en BAS, au-dessus du bouton flottant et de la barre de navigation
+          (le pouce est là, et l'en-tête collant les cachait à moitié) ; desktop : en haut à droite. */}
       <div
-        className="fixed top-20 right-4 z-50 space-y-2 max-w-sm pointer-events-none"
+        className="fixed left-4 right-4 md:left-auto md:right-4 md:top-20 md:bottom-auto z-50 space-y-2 md:max-w-sm pointer-events-none"
+        style={{ bottom: "calc(env(safe-area-inset-bottom) + 10rem)" }}
         role="status"
         aria-live="polite"
         aria-atomic="false"
@@ -73,7 +88,7 @@ export function ToastsProvider({ children }: { children: ReactNode }) {
               <button
                 onClick={() => retire(t.id)}
                 aria-label="Fermer"
-                className="text-current/60 hover:text-current text-lg leading-none ml-1"
+                className="text-current/60 hover:text-current text-lg leading-none ml-1 min-w-11 min-h-11 -my-2 -mr-2 flex items-center justify-center"
               >
                 ×
               </button>

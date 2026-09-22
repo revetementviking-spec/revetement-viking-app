@@ -8,9 +8,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { db, ajouterClient, ajouterInteraction, initDb } from "@/lib/db";
 import { envoyerPushUtilisateur } from "@/lib/push";
 import { journaliser } from "@/lib/audit";
-import { rateLimitDepasse, timingSafeEqual } from "@/lib/rateLimit";
+import { rateLimitDepasse, timingSafeEqual, empreinteDejaVue, memoriserEmpreinte } from "@/lib/rateLimit";
 import { parserTexteFormulaire } from "@/lib/lead-web";
+import { empreinteRequete } from "@/lib/empreinte-requete";
 import { aujourdhuiMontreal } from "@/lib/date";
+
+// Anti-rejeu : un même formulaire renvoyé (relance du scénario, double clic, rejeu d'une
+// requête capturée) dans les 24 h ne crée ni interaction ni push — il répond simplement
+// `doublon: true`. Le contrat pour l'émetteur ne change pas (même en-tête, même 200).
+const FENETRE_REJEU_H = 24;
+const PORTEE_EMPREINTE = "lead-web";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +59,11 @@ export async function POST(req: NextRequest) {
   }
 
   await initDb();
+  const empreinte = empreinteRequete({ nom, courriel, telephone, adresse, sujet, message, source });
+  if (await empreinteDejaVue(PORTEE_EMPREINTE, empreinte, FENETRE_REJEU_H)) {
+    return NextResponse.json({ ok: true, doublon: true });
+  }
+
   // Anti-doublon : courriel (insensible à la casse), sinon téléphone (chiffres seuls), sinon nom exact.
   const un = async (sql: string, args: any[]) => ((await db().execute({ sql, args })).rows[0] as any) || null;
   let existant: { id: number; nom: string } | null = null;
@@ -60,7 +72,14 @@ export async function POST(req: NextRequest) {
     const cands = await db().execute({ sql: "SELECT id, nom, telephone FROM clients WHERE telephone IS NOT NULL AND telephone != ''", args: [] });
     existant = (cands.rows as any[]).find((c) => chiffres(c.telephone).slice(-10) === chiffres(telephone).slice(-10)) || null;
   }
-  if (!existant && nom) existant = await un("SELECT id, nom FROM clients WHERE LOWER(nom) = LOWER(?)", [nom]);
+  // Par le NOM seulement si ni le lead ni la fiche n'ont de courriel/téléphone : deux
+  // homonymes avec des coordonnées différentes sont deux personnes.
+  if (!existant && nom && !courriel && !telephone) {
+    existant = await un(
+      "SELECT id, nom FROM clients WHERE LOWER(nom) = LOWER(?) AND (courriel IS NULL OR courriel = '') AND (telephone IS NULL OR telephone = '')",
+      [nom],
+    );
+  }
 
   let client_id: number;
   let cree = false;
@@ -87,6 +106,7 @@ export async function POST(req: NextRequest) {
     ref_type: "client", ref_id: client_id, ip,
     description: cree ? `Lead site web : ${nom || courriel || telephone}` : `Formulaire web (client existant) : ${existant!.nom}`,
   });
+  await memoriserEmpreinte(PORTEE_EMPREINTE, empreinte, ip);
 
   envoyerPushUtilisateur("Francis", {
     title: cree ? "🌐 Nouveau lead du site web" : "🌐 Formulaire web — client existant",

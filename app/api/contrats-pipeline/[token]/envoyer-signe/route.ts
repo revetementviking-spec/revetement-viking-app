@@ -112,7 +112,15 @@ Revêtement Viking Inc. · 1634 Rue Joliette, Montréal H1W 3E9<br>
     attachments: piecesJointes,
   });
 
-  if (!envoi.ok) return NextResponse.json({ ok: false, error: envoi.error || envoi.raison });
+  if (!envoi.ok) {
+    // Un dossier signé qui ne part pas doit laisser une trace : Francis a cliqué, le
+    // client n'a rien reçu, et sans cette ligne rien ne le disait six mois plus tard.
+    journaliser("contrat.signe", {
+      req, ref_type: "contrat", ref_id: r.data.numero,
+      description: `ÉCHEC d'envoi du dossier signé à ${destinataire} : ${envoi.error || envoi.raison || "?"}`,
+    }).catch(() => {});
+    return NextResponse.json({ ok: false, error: envoi.error || envoi.raison });
+  }
 
   await marquerDossierSigneEnvoye(token, destinataire);
   journaliser("contrat.signe", {

@@ -23,11 +23,14 @@ export default function IndicateurHorsLigne() {
   if (enLigne) return null;
 
   return (
+    // Le message dit EXACTEMENT ce qui est couvert par la file hors-ligne (lib/fileOffline.ts) :
+    // heures, dépenses, extras. Les photos et le reste ne sont PAS gardés.
     <div
       role="alert"
-      className="fixed top-0 left-0 right-0 z-[90] bg-amber-500 text-white text-center text-sm font-semibold py-1.5 shadow-md"
+      className="fixed top-0 left-0 right-0 z-[90] bg-amber-500 text-white text-center text-sm font-semibold py-1.5 px-3 shadow-md"
+      style={{ paddingTop: "calc(env(safe-area-inset-top) + 0.375rem)" }}
     >
-      📡 Hors ligne — tes modifications seront sauvegardées dès le retour de la connexion
+      📡 Hors ligne — les heures, dépenses et extras saisis partiront au retour du réseau ; les photos, non.
     </div>
   );
 }

@@ -11,6 +11,12 @@ import { PRESETS } from "@/data/presets-soumission";
 import { jobsSimilaires } from "@/lib/db";
 import { REGLES_METIER_VIKING, MODELES, fewShotExemples, trouverProjetsSimilaires, resumeFeedbackHistorique, reglesMetierDynamiques, documentsReferenceActifs } from "@/lib/viking-ai";
 import { journaliserCoutReponse } from "@/lib/ia-couts";
+import { validerSortieEstimateur } from "@/lib/estimateur-validation";
+import { encadrerDonnees, CONSIGNE_DONNEES } from "@/lib/jarvis";
+
+export const dynamic = "force-dynamic";
+// Un appel principal + jusqu'à 3 recherches web : au-delà des 60 s par défaut.
+export const maxDuration = 300;
 
 const SYSTEME = `Tu es l'expert estimateur en revêtement extérieur d'Revêtement Viking Inc. (RBQ 5811-4299-01, taux 90$/h facturé client).
 
@@ -90,7 +96,8 @@ export async function POST(req: NextRequest) {
     const { extraction, preferenceMateriau } = await req.json();
     if (!extraction) return NextResponse.json({ error: "extraction Hover requise" }, { status: 400 });
 
-    const client = new Anthropic({ apiKey });
+    // Délai borné par appel (sous maxDuration) et un seul réessai.
+    const client = new Anthropic({ apiKey, timeout: 55_000, maxRetries: 1 });
 
     // Charge en parallèle : règles métier dynamiques (DB), few-shot, projets similaires, corrections, documents de référence
     const [regles, exemples, feedbackHist, docs] = await Promise.all([
@@ -100,27 +107,32 @@ export async function POST(req: NextRequest) {
       documentsReferenceActifs().catch(() => ""),
     ]);
 
+    // Tout ce qui vient de la base ou d'un document (règles dynamiques, exemples,
+    // corrections, documents de référence, jobs passées, extraction Hover) est de la
+    // DONNÉE encadrée par <donnees>, jamais une instruction — voir CONSIGNE_DONNEES.
     const systemPrompt = `${SYSTEME.replace("{{CATALOGUE}}", catalogueResume()).replace("{{PRESETS}}", presetsResume())}
 
-${regles}
+${CONSIGNE_DONNEES}
 
-${docs || ""}
+${encadrerDonnees(regles, "regles_metier")}
 
-${exemples ? `=== EXEMPLES DE SOUMISSIONS ACCEPTÉES — INSPIRE-TOI DE LEUR STRUCTURE ===\n${exemples}\n` : ""}
-${feedbackHist || ""}
+${docs ? encadrerDonnees(docs, "documents_reference") : ""}
+
+${exemples ? `=== EXEMPLES DE SOUMISSIONS ACCEPTÉES — INSPIRE-TOI DE LEUR STRUCTURE ===\n${encadrerDonnees(exemples, "exemples")}\n` : ""}
+${feedbackHist ? encadrerDonnees(feedbackHist, "corrections_passees") : ""}
 `.trim();
 
     // === ENRICHISSEMENT par bibliothèque de référence ===
     const surface = extraction?.mesures_globales?.parement_net_pi2 || extraction?.mesures_globales?.parement_total_pi2 || 0;
     const jobsRef = surface > 0 ? await jobsSimilaires(surface, preferenceMateriau, 3) : [];
     const refTexte = jobsRef.length > 0
-      ? `\n\nJOBS SIMILAIRES PASSÉES DE FRÉDÉRIC (utilise comme calibration de prix et d'heures réelles) :\n${jobsRef.map((j) => `- ${j.adresse || "Sans adresse"} | ${j.type_materiau} | ${j.parement_pi2} pi² | Total: ${j.total_soumission}$ (${(j.total_soumission! / j.parement_pi2!).toFixed(2)}$/pi²) | H réelles: ${j.heures_reelles || "?"}h | Complexité: ${j.complexite} | Notes: ${j.notes_chantier || "—"}`).join("\n")}\n\nCalibre ton estimation en t'alignant sur les ratios $/pi² et heures/pi² de ces jobs similaires.`
+      ? `\n\nJOBS SIMILAIRES PASSÉES DE FRÉDÉRIC (utilise comme calibration de prix et d'heures réelles) :\n${encadrerDonnees(jobsRef.map((j) => `- ${j.adresse || "Sans adresse"} | ${j.type_materiau} | ${j.parement_pi2} pi² | Total: ${j.total_soumission}$ (${(j.total_soumission! / j.parement_pi2!).toFixed(2)}$/pi²) | H réelles: ${j.heures_reelles || "?"}h | Complexité: ${j.complexite} | Notes: ${j.notes_chantier || "—"}`).join("\n"), "jobs_similaires")}\n\nCalibre ton estimation en t'alignant sur les ratios $/pi² et heures/pi² de ces jobs similaires.`
       : "\n\n(Aucune job similaire dans la bibliothèque — utilise les barèmes standards)";
 
     const userMessage = `EXTRACTION DU PLAN/HOVER :
-${JSON.stringify(extraction, null, 2)}
+${encadrerDonnees(JSON.stringify(extraction, null, 2), "extraction")}
 
-PRÉFÉRENCE MATÉRIAU : ${preferenceMateriau || "Aucune — choisis le plus pertinent selon le contexte"}
+PRÉFÉRENCE MATÉRIAU : ${encadrerDonnees(String(preferenceMateriau || "Aucune — choisis le plus pertinent selon le contexte"), "preference")}
 ${refTexte}
 
 Construis la soumission complète maintenant. Sélectionne les matériaux exacts du catalogue, calcule les quantités depuis les mesures, estime les heures, et CALIBRE par rapport aux jobs similaires si disponibles.`;
@@ -146,6 +158,11 @@ Construis la soumission complète maintenant. Sélectionne les matériaux exacts
     } catch {
       return NextResponse.json({ error: "Réponse IA non parsable", raw: text }, { status: 500 });
     }
+    // Garde-fou côté serveur (lib/estimateur-validation.ts) : marge et surplus bornés,
+    // quantité finie, code du catalogue — une ligne hors bornes est rejetée et
+    // l'avertissement remonte à l'écran plutôt que d'entrer dans le prix du client.
+    const valide = validerSortieEstimateur(data);
+    data.lignes_generees = valide.lignes_generees;
 
     // Étape 2 : recherche web automatique pour les items flagués "verifier_web" ou "items_a_verifier_prix_web"
     const aVerifier: { code: string; raison: string }[] = [];
@@ -184,7 +201,7 @@ Retourne UNIQUEMENT un JSON: {"code":"${mat.code}","prix_web_moyen":0,"source":"
       } catch {}
     }
 
-    return NextResponse.json({ ok: true, ...data, verifications_web: verifications, jobs_reference_utilisees: jobsRef.length });
+    return NextResponse.json({ ok: true, ...data, avertissements: valide.avertissements, verifications_web: verifications, jobs_reference_utilisees: jobsRef.length });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e?.message || "Erreur serveur" }, { status: 500 });

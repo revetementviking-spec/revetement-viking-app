@@ -3,9 +3,27 @@
 import { useState, useEffect, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { activerMoniteurOffline, nbActionsEnAttente } from "@/lib/fileOffline";
+import { activerMoniteurOffline, memoriserUtilisateur } from "@/lib/fileOffline";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { ecrire } from "@/lib/envoi";
+import { chargerNotifsPartage, chargerProfilPartage } from "@/lib/session-client";
+import { purgerLocal } from "@/lib/purge-locale";
+import { signaler } from "@/lib/toast-bus";
+import BoutonTheme from "@/components/BoutonTheme";
+
+/** Précharge le cache hors-ligne (5 API) UNE fois par session, et seulement en Wi-Fi.
+ *  Avant : à CHAQUE navigation, sur n'importe quel réseau — pour un cache que
+ *  `fetchAvecOffline` ne lit nulle part encore. Sans information de connexion
+ *  (iOS, desktop), on ne télécharge rien. */
+function prechargerHorsLigneUneFois() {
+  try {
+    if (sessionStorage.getItem("vk-precharge-fait")) return;
+    const connexion = (navigator as any).connection;
+    if (!connexion || connexion.type !== "wifi") return;
+    sessionStorage.setItem("vk-precharge-fait", "1");
+    import("@/lib/offlineCache").then((m) => m.prechargerCache()).catch(() => {});
+  } catch { /* sessionStorage indisponible */ }
+}
 
 interface NavLink {
   href: string;
@@ -54,66 +72,75 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
   const [rechercheQ, setRechercheQ] = useState("");
   const [rechercheRes, setRechercheRes] = useState<any[]>([]);
   const [rechercheOuvert, setRechercheOuvert] = useState(false);
-  const [dark, setDark] = useState(false);
   const peutRetour = pathname !== "/";
 
-  // Recherche debounced
+  // Recherche debounced. AbortController : une réponse lente pour « tr » ne doit pas
+  // écraser celle de « tremblay » arrivée avant ; `r.ok` : un 401 renvoie un objet, pas
+  // une liste, et `.map` plantait la barre.
   useEffect(() => {
     if (!rechercheQ.trim()) { setRechercheRes([]); return; }
+    const ctrl = new AbortController();
     const t = setTimeout(() => {
-      fetch(`/api/recherche?q=${encodeURIComponent(rechercheQ)}`).then((r) => r.json()).then(setRechercheRes);
+      fetch(`/api/recherche?q=${encodeURIComponent(rechercheQ)}`, { signal: ctrl.signal })
+        .then((r) => (r.ok ? r.json() : []))
+        .then((d) => setRechercheRes(Array.isArray(d) ? d : []))
+        .catch(() => { /* annulée ou réseau : on garde la liste courante */ });
     }, 250);
-    return () => clearTimeout(t);
+    return () => { clearTimeout(t); ctrl.abort(); };
   }, [rechercheQ]);
 
-  // Profil utilisateur (avatar + nom)
+  // Profil utilisateur (avatar + nom) — une requête par chargement de page complet,
+  // pas par navigation (lib/session-client.ts).
   useEffect(() => {
-    fetch("/api/auth/profil").then((r) => r.ok ? r.json() : null).then((p) => p && setProfil(p)).catch(() => {});
-    // Précharge le cache offline en arrière-plan (clients/projets/soumissions/employés)
-    import("@/lib/offlineCache").then((m) => m.prechargerCache());
+    let actif = true;
+    chargerProfilPartage().then((p) => {
+      if (!actif || !p) return;
+      setProfil(p);
+      // La file hors-ligne mémorise qui a saisi : elle refuse de rejouer pour un autre.
+      memoriserUtilisateur(p.username || null);
+    });
+    prechargerHorsLigneUneFois();
     // Le moniteur rend maintenant une fonction d'arrêt : Navigation n'est PAS dans le
     // layout, elle se remonte à chaque navigation, et sans ce nettoyage on empilait un
     // écouteur « online » et une minuterie par page visitée.
     const arreterMoniteur = activerMoniteurOffline((info) => {
-      const bulle = (txt: string, couleur: string) => {
-        const t = document.createElement("div");
-        t.className = `fixed bottom-20 right-4 ${couleur} text-white px-4 py-2 rounded shadow-lg text-sm z-50`;
-        t.textContent = txt;
-        document.body.appendChild(t);
-        setTimeout(() => t.remove(), 6000);
-      };
-      if (info.envoyees > 0) bulle(`✓ ${info.envoyees} saisie(s) hors-ligne synchronisée(s)`, "bg-emerald-600");
-      // Une saisie refusée par le serveur était rejouée en boucle sans jamais le dire.
-      if (info.abandonnees > 0) bulle(`⚠ ${info.abandonnees} saisie(s) hors-ligne refusée(s) — à ressaisir`, "bg-red-600");
+      if (info.envoyees > 0) signaler(`${info.envoyees} saisie(s) hors-ligne synchronisée(s)`, "success");
+      // Une saisie refusée par le serveur était rejouée en boucle sans jamais le dire —
+      // et le message ne disait pas LAQUELLE. Le contenu reste consultable
+      // (listerAbandons) pour la ressaisir sans la retaper de tête.
+      for (const a of info.abandons) signaler(`${a.resume} à ressaisir — ${a.raison}`, "error");
     });
-    return () => arreterMoniteur();
+    return () => { actif = false; arreterMoniteur(); };
   }, []);
 
   const deconnexion = async () => {
     if (!confirm("Te déconnecter ?")) return;
     if (!(await ecrire("/api/login", "DELETE", undefined, "Suppression"))) return;
+    // Rien de l'usager ne doit rester sur l'appareil (cache, brouillons, file hors-ligne).
+    await purgerLocal();
     router.replace("/login");
   };
 
   // Polling notifications (30s) — pause quand l'onglet est en arrière-plan
   // (économie batterie mobile + requêtes Turso)
   useEffect(() => {
-    const charger = () => {
+    let actif = true;
+    const charger = (force: boolean) => {
       if (document.visibilityState !== "visible") return;
       // On n'écrase l'état QUE si la réponse a la bonne forme. Une session expirée renvoie
       // `{ error: "non authentifié" }` : setNotifs l'écrivait tel quel, puis un clic sur la
       // cloche lisait `notifs.mentions_items.length` sur undefined → TypeError → TOUTE
       // l'app plantait et la saisie en cours était perdue.
-      fetch("/api/notifications")
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (d && Array.isArray(d.mentions_items) && Array.isArray(d.relances_items)) setNotifs(d); })
+      chargerNotifsPartage(force)
+        .then((d) => { if (actif && d && Array.isArray(d.mentions_items) && Array.isArray(d.relances_items)) setNotifs(d); })
         .catch(() => {});
     };
-    charger();
-    const id = setInterval(charger, 30000);
-    const onVis = () => { if (document.visibilityState === "visible") charger(); };
+    // Montage d'une nouvelle page : la réponse de moins de 30 s suffit (pas de requête).
+    charger(false);
+    const id = setInterval(() => charger(true), 30000);
+    const onVis = () => { if (document.visibilityState === "visible") charger(true); };
     document.addEventListener("visibilitychange", onVis);
-    return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
+    return () => { actif = false; clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
   }, []);
 
   // Ctrl/Cmd+K → focus recherche globale
@@ -129,18 +156,10 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Dark mode persistance
-  useEffect(() => {
-    const saved = typeof window !== "undefined" && localStorage.getItem("vk-theme") === "dark";
-    setDark(saved);
-    if (saved) document.documentElement.classList.add("vk-dark");
-  }, []);
-  const toggleDark = () => {
-    const nv = !dark;
-    setDark(nv);
-    document.documentElement.classList.toggle("vk-dark", nv);
-    localStorage.setItem("vk-theme", nv ? "dark" : "light");
-  };
+  // Thème : un seul mécanisme (html.vk-dark + localStorage vk-theme), appliqué avant
+  // l'hydratation par le script inline de app/layout.tsx ; le bouton est BoutonTheme,
+  // rendu dans le menu profil. (Avant : un toggleDark ici jamais rendu, et un BoutonTheme
+  // qui posait `data-theme`, que la feuille de style ne regardait pas.)
 
   const lienResultat = (r: any) =>
     r.type === "client" ? `/clients/${r.id}` :
@@ -151,7 +170,8 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
 
   return (
     <>
-      <header className="bg-slate-900 text-white shadow sticky top-0 z-30">
+      {/* safe-area : avec viewport-fit=cover (layout.tsx), l'encoche iOS passe SOUS l'en-tête sinon */}
+      <header className="bg-slate-900 text-white shadow sticky top-0 z-30" style={{ paddingTop: "env(safe-area-inset-top)" }}>
         <div className="max-w-7xl mx-auto px-4 py-1.5 flex items-center gap-2">
           {/* Bouton retour */}
           {peutRetour && (
@@ -388,6 +408,7 @@ export default function Navigation({ titre, soustitre, actions, badge }: Props) 
                   {profil?.username && profil?.nom_affichage && <div className="text-[10px] text-slate-500">@{profil.username}</div>}
                 </div>
                 <Link href="/parametres" onClick={() => setProfilOuvert(false)} className="block px-3 py-2 hover:bg-slate-100 text-sm">⚙️ Mon profil &amp; paramètres</Link>
+                <BoutonTheme variante="menu" />
                 <button onClick={() => { setProfilOuvert(false); deconnexion(); }} className="block w-full text-left px-3 py-2 hover:bg-red-50 text-sm text-red-700 border-t">🚪 Se déconnecter</button>
               </div>
             )}

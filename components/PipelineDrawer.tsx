@@ -159,7 +159,16 @@ export default function PipelineDrawer({ client, projets, onClose, onUpdate }: P
     router.push(`/contrats/nouveau?client_id=${client.id}`);
   };
 
+  // Verrou synchrone (lib/verrou.ts) : deux clics sur « + contrat » dans le même
+  // instant ouvraient deux séries de prompts et créaient deux contrats (deux numéros,
+  // deux liens de signature). Seule modification de ce fichier par l'agent Écrans A.
+  const contratEnCours = useRef(false);
   const genererContrat = async () => {
+    if (contratEnCours.current) return;
+    contratEnCours.current = true;
+    try { await genererContratReel(); } finally { contratEnCours.current = false; }
+  };
+  const genererContratReel = async () => {
     const prixStr = prompt(`Prix total du contrat pour « ${form.nom} » (incluant taxes ou non, comme tu veux) :`, "");
     if (prixStr === null) return;
     const prix = parseFloat(prixStr.replace(",", ".")) || 0;

@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { dateISOLocale } from "@/lib/calculs";
+
+// Affichage d'une date civile « AAAA-MM-JJ » : new Date("2026-06-15") est minuit UTC,
+// donc « 14 juin » à Montréal — le client voyait ses travaux démarrer la veille.
+const dateLisible = (iso: any) => dateISOLocale(String(iso).slice(0, 10)).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" });
 
 /** Page publique d'un projet pour le client.
  * URL : /projet/[id]?t=TOKEN
@@ -67,13 +72,13 @@ export default function ProjetPublic() {
             {data.date_debut && (
               <div className="bg-emerald-50 rounded-lg p-4">
                 <div className="text-xs uppercase tracking-wider text-emerald-700 mb-1">📅 Démarrage</div>
-                <div className="font-semibold text-emerald-900">{new Date(data.date_debut).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>
+                <div className="font-semibold text-emerald-900">{dateLisible(data.date_debut)}</div>
               </div>
             )}
             {data.date_fin_prevue && (
               <div className="bg-amber-50 rounded-lg p-4">
                 <div className="text-xs uppercase tracking-wider text-amber-700 mb-1">🎯 Fin prévue</div>
-                <div className="font-semibold text-amber-900">{new Date(data.date_fin_prevue).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" })}</div>
+                <div className="font-semibold text-amber-900">{dateLisible(data.date_fin_prevue)}</div>
               </div>
             )}
           </div>

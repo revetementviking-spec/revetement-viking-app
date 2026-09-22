@@ -6,7 +6,9 @@ import { STATUTS_CLIENT, CLES_ETAPES_PIPELINE, estStatutClient, estEtapePipeline
 
 import { ipClient } from "@/lib/ip";
 const ipDe = (req: NextRequest) => ipClient(req);
-function fail(e: any, status = 500) { console.error("[/api/clients]", e); return NextResponse.json({ error: e?.message || "erreur" }, { status }); }
+// Le détail (`e.message` : chemin SQL, nom de table, contrainte) reste dans le journal
+// serveur ; le client reçoit un message générique.
+function fail(e: any, status = 500) { console.error("[/api/clients]", e); return NextResponse.json({ error: "Erreur serveur — voir le journal." }, { status }); }
 
 /** Push Asana en arrière-plan (jamais bloquant pour le client).
  *  `after()` et non une promesse flottante : sur la plateforme, la fonction peut être

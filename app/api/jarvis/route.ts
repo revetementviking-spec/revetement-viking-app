@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { MODELES } from "@/lib/viking-ai";
-import { OUTILS_JARVIS, OUTILS_ACTION, executerOutilJarvis } from "@/lib/jarvis";
+import { OUTILS_JARVIS, OUTILS_ACTION, executerOutilJarvis, encadrerDonnees, CONSIGNE_DONNEES } from "@/lib/jarvis";
 import { utilisateurActif } from "@/lib/authUser";
 import { enregistrerCoutIA, coutMoisCourantIA, type UsageIA } from "@/lib/ia-couts";
 import { aujourdhuiMontreal } from "@/lib/date";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+// Jusqu'à 8 tours d'outils avec Opus : 60 s coupaient les questions qui creusent.
+export const maxDuration = 300;
 
 const SYSTEME = `Tu es « Jarvis », l'assistant d'intelligence d'affaires de Revêtement Viking Inc. (entrepreneur en revêtement extérieur, Québec, RBQ 5811-4299-01). Tu réponds à Francis (le proprio) et à Gabriel à propos de LEURS vraies données d'entreprise.
 
@@ -21,7 +22,8 @@ RÈGLES :
 - Contexte fiscal : taxes TPS 5 % + TVQ 9,975 %. La RENTABILITÉ se calcule AVANT taxes (revenu ÷ 1,14975 − coûts). Le revenu d'un projet = prix de contrat + extras facturés. La main-d'œuvre est un coût.
 - Un projet « complété » est considéré facturé.
 - Tu peux PROPOSER des actions (créer une tâche, compléter un projet, enregistrer une dépense) via les outils « proposer_* ». Ça n'exécute RIEN : ça affiche un bouton que Francis doit confirmer. Ne dis JAMAIS qu'une action est faite — dis « je te propose de… confirme le bouton ci-dessous ».
-- Pour tout le reste, tu es en lecture seule. Si une donnée manque, dis-le franchement plutôt que d'inventer. Termine par une suggestion utile si pertinent.`;
+- Pour tout le reste, tu es en lecture seule. Si une donnée manque, dis-le franchement plutôt que d'inventer. Termine par une suggestion utile si pertinent.
+- ${CONSIGNE_DONNEES}`;
 
 // Point de cache roulant sur l'historique croissant (prompt caching ~0,1× en relecture).
 function appliquerCacheMessages(messages: any[]) {
@@ -80,9 +82,11 @@ export async function POST(req: NextRequest) {
         try { controller.enqueue(encoder.encode(sse(event, data))); } catch { /* fermé */ }
       };
       const outilsUtilises: string[] = [];
-      const usage: Required<UsageIA> = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+      // Coût journalisé APRÈS CHAQUE TOUR (et non une fois à la fin) : un flux coupé au
+      // 5e tour — onglet fermé, délai de la fonction, panne — a déjà été facturé par
+      // Anthropic pour les 4 premiers, et le compteur du mois doit les voir.
+      let coutTotal = 0;
       let repondu = false;
-      let coutJournalise = false;   // évite un double comptage si le flux va au bout
 
       try {
         for (let tour = 0; tour < 8; tour++) {
@@ -102,10 +106,13 @@ export async function POST(req: NextRequest) {
 
           const resp = await s.finalMessage();
           const u: any = resp.usage || {};
-          usage.input += u.input_tokens || 0;
-          usage.output += u.output_tokens || 0;
-          usage.cacheWrite += u.cache_creation_input_tokens || 0;
-          usage.cacheRead += u.cache_read_input_tokens || 0;
+          const usageTour: Required<UsageIA> = {
+            input: u.input_tokens || 0, output: u.output_tokens || 0,
+            cacheWrite: u.cache_creation_input_tokens || 0, cacheRead: u.cache_read_input_tokens || 0,
+          };
+          if (usageTour.input + usageTour.output + usageTour.cacheWrite + usageTour.cacheRead > 0) {
+            coutTotal += await enregistrerCoutIA({ outil: "jarvis", model: MODELES.jarvis, usage: usageTour, user }).catch(() => 0);
+          }
 
           messages.push({ role: "assistant", content: resp.content });
 
@@ -125,7 +132,9 @@ export async function POST(req: NextRequest) {
               if (OUTILS_ACTION.has(tu.name) && (resultat as any)?.propose && (resultat as any).action) {
                 actions.push((resultat as any).action);
               }
-              toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(resultat).slice(0, 60000) });
+              // Résultat d'outil = donnée de la base (noms, notes, descriptions saisis par
+              // n'importe qui) : encadré, jamais lu comme une instruction.
+              toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: encadrerDonnees(JSON.stringify(resultat).slice(0, 60000), tu.name) });
             }
             if (actions.length) send("actions", { actions });
             messages.push({ role: "user", content: toolResults });
@@ -139,22 +148,16 @@ export async function POST(req: NextRequest) {
         if (!repondu) send("text", { delta: "\nJe n'ai pas réussi à formuler une réponse. Reformule ta question ?" });
         if (outilsUtilises.length) send("outils", { names: Array.from(new Set(outilsUtilises)) });
 
-        // Journal des coûts + retour du coût au client.
-        const coutAppel = await enregistrerCoutIA({ outil: "jarvis", model: MODELES.jarvis, usage, user });
-        coutJournalise = true;
+        // Retour du coût au client (chaque tour est déjà au journal).
         const mois = await coutMoisCourantIA();
-        send("cout", { total_usd: coutAppel, mois_usd: mois.total_usd, mois: mois.mois });
+        send("cout", { total_usd: coutTotal, mois_usd: mois.total_usd, mois: mois.mois });
         send("done", {});
       } catch (e: any) {
         // Une annulation n'est pas une erreur à afficher : personne n'écoute plus.
         if (!annule) send("erreur", { error: e?.message || "Erreur serveur" });
       } finally {
-        // Les tours DÉJÀ consommés sont facturés par Anthropic, même si l'utilisateur a
-        // fermé l'onglet : sans ce filet, un `return` sur annulation sautait la
-        // journalisation et le compteur du mois sous-estimait la dépense réelle.
-        if (usage.input + usage.output + usage.cacheWrite + usage.cacheRead > 0 && !coutJournalise) {
-          await enregistrerCoutIA({ outil: annule ? "jarvis:annule" : "jarvis:interrompu", model: MODELES.jarvis, usage, user }).catch(() => {});
-        }
+        // Les tours consommés sont journalisés au fil de l'eau (voir la boucle) : une
+        // annulation ou une interruption ne perd plus rien.
         try { controller.close(); } catch { /* déjà fermé */ }
       }
     },

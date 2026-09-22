@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import Navigation from "@/components/Navigation";
 import MicVocal from "@/components/MicVocal";
+import { useToast } from "@/components/Toasts";
+// Alias : la page a déjà sa propre fonction `envoyer` (la question posée à Jarvis).
+import { envoyer as envoyerEcriture } from "@/lib/envoi";
 
 interface ActionProp { type: string; params: any; resume: string; _statut?: "fait" | "erreur"; }
 interface PtGraph { label: string; value: number; }
@@ -34,22 +37,25 @@ function MiniGraph({ data, titre }: { data: PtGraph[]; titre?: string }) {
 }
 
 // Mappe une action proposée par Jarvis vers l'endpoint réel (confirmé par l'utilisateur).
-async function executerAction(a: ActionProp): Promise<boolean> {
-  try {
-    if (a.type === "creer_tache") {
-      const r = await fetch("/api/taches", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a.params) });
-      return !!(await r.json()).id;
-    }
-    if (a.type === "completer_projet") {
-      const r = await fetch("/api/projets", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: a.params.id, statut: "complete" }) });
-      return (await r.json()).ok;
-    }
-    if (a.type === "creer_depense") {
-      const r = await fetch("/api/depenses", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(a.params) });
-      return (await r.json()).ok;
-    }
-    return false;
-  } catch { return false; }
+// Retourne `true` si l'écriture a réussi, sinon le message d'erreur : l'action refusée
+// (401, validation) affichait juste « erreur » sans dire pourquoi.
+async function executerAction(a: ActionProp): Promise<true | string> {
+  // `r.ok` vérifié (via envoyer) : `(await r.json()).ok` plantait sur un 401/413 non-JSON.
+  if (a.type === "creer_tache") {
+    const r = await envoyerEcriture<{ id?: number }>("/api/taches", { corps: a.params });
+    return r.ok ? (r.data?.id ? true : "réponse inattendue du serveur") : r.erreur || "erreur";
+  }
+  if (a.type === "completer_projet") {
+    const r = await envoyerEcriture("/api/projets", { methode: "PATCH", corps: { id: a.params.id, statut: "complete" } });
+    return r.ok ? true : r.erreur || "erreur";
+  }
+  if (a.type === "creer_depense") {
+    // Clé d'idempotence par tentative : un double envoi (réseau qui bégaie, deux
+    // confirmations) ne crée qu'une dépense côté serveur.
+    const r = await envoyerEcriture("/api/depenses", { corps: a.params, entetes: { "X-Idempotence-Cle": crypto.randomUUID() } });
+    return r.ok ? true : r.erreur || "erreur";
+  }
+  return "action inconnue";
 }
 const ICONE_ACTION: Record<string, string> = { creer_tache: "✅", completer_projet: "🏁", creer_depense: "💸" };
 
@@ -97,6 +103,7 @@ export default function JarvisPage() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const finRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   useEffect(() => { finRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, busy]);
 
@@ -173,13 +180,24 @@ export default function JarvisPage() {
     } finally { setBusy(false); }
   };
 
+  // Verrou synchrone (lib/verrou.ts) : `action._statut` n'est posé qu'APRÈS la réponse
+  // du serveur, donc deux clics sur « Confirmer » dans le même instant créaient deux
+  // fois la tâche ou la dépense proposée.
+  const enCoursAction = useRef<Set<string>>(new Set());
   const confirmer = async (mi: number, ai: number) => {
     const action = messages[mi]?.actions?.[ai];
     if (!action || action._statut) return;
-    const ok = await executerAction(action);
-    setMessages((prev) => prev.map((m, i) => i !== mi ? m : {
-      ...m, actions: m.actions?.map((a, j) => j !== ai ? a : { ...a, _statut: ok ? "fait" : "erreur" }),
-    }));
+    const cle = `${mi}:${ai}`;
+    if (enCoursAction.current.has(cle)) return;
+    enCoursAction.current.add(cle);
+    try {
+      const res = await executerAction(action);
+      const ok = res === true;
+      if (!ok) toast(`Action refusée : ${res}`, "error");
+      setMessages((prev) => prev.map((m, i) => i !== mi ? m : {
+        ...m, actions: m.actions?.map((a, j) => j !== ai ? a : { ...a, _statut: ok ? "fait" : "erreur" }),
+      }));
+    } finally { enCoursAction.current.delete(cle); }
   };
 
   return (

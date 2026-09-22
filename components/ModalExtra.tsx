@@ -7,6 +7,8 @@ import MicVocal from "@/components/MicVocal";
 import ProjetPicker from "@/components/ProjetPicker";
 import { compresserImage, genererVignette } from "@/lib/img";
 import { aujourdhuiMontreal } from "@/lib/date";
+import { nombreSaisi } from "@/lib/envoi";
+import { postOuFile } from "@/lib/fileOffline";
 
 interface Props { ouvert: boolean; onClose: () => void; onSuccess?: () => void; projetIdInitial?: number; }
 
@@ -40,7 +42,7 @@ export default function ModalExtra({ ouvert, onClose, onSuccess, projetIdInitial
   }, [ouvert]);
 
   const ajouterPhoto = async (f: File) => {
-    if (f.size > 20 * 1024 * 1024) { toast("Photo > 20 MB", "warning"); return; }
+    if (f.size > 20 * 1024 * 1024) { toast("Photo > 20 Mo", "warning"); return; }
     try {
       const data = await compresserImage(f);
       const thumb = await genererVignette(f).catch(() => null);
@@ -57,26 +59,38 @@ export default function ModalExtra({ ouvert, onClose, onSuccess, projetIdInitial
   };
   const enregistrerReel = async () => {
     if (!description.trim()) { toast("Ajoute une description de l'extra", "warning"); return; }
+    // Nombres envoyés comme NOMBRES (ou null si le champ est vide), jamais comme chaînes.
+    // nombreSaisi accepte « 250 », « 250,50 », « 1 250 $ » ; une saisie illisible est
+    // refusée avec message au lieu d'être convertie en silence.
+    let montantNum: number | null = null, heuresNum: number | null = null;
+    if (nature === "montant" && montant.trim()) {
+      montantNum = nombreSaisi(montant);
+      if (!Number.isFinite(montantNum)) { toast(`Montant illisible : « ${montant} » — écris par exemple 250,50`, "warning"); return; }
+    }
+    if (nature === "heures" && heures.trim()) {
+      heuresNum = nombreSaisi(heures);
+      if (!Number.isFinite(heuresNum)) { toast(`Heures illisibles : « ${heures} » — écris par exemple 3,5`, "warning"); return; }
+    }
     setBusy(true);
     try {
-      const r = await fetch("/api/extras", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projet_id: projet_id || null, date, nature, description,
-          montant: nature === "montant" ? montant : "",
-          heures: nature === "heures" ? heures : "",
-          photo_data: photo?.data || null, thumb_data: photo?.thumb || null,
-        }),
+      // postOuFile (lib/fileOffline.ts) : clé d'idempotence dès le premier essai ; réseau
+      // coupé = mise en file locale, rejouée au retour du réseau avec la même clé.
+      const r = await postOuFile("/api/extras", {
+        projet_id: projet_id || null, date, nature, description,
+        montant: montantNum,
+        heures: heuresNum,
+        photo_data: photo?.data || null, thumb_data: photo?.thumb || null,
+        projet_nom: projets.find((p) => p.id === projet_id)?.nom,
       });
-      const d = await r.json().catch(() => ({}));
-      if (r.ok && d.ok) {
-        toast("✓ Extra enregistré — la gestion sera notifiée pour le facturer", "success");
+      if (r.ok) {
+        if (r.offline) toast("📴 Hors ligne — extra gardé sur l'appareil, il partira au retour du réseau", "warning");
+        else toast("✓ Extra enregistré — la gestion sera notifiée pour le facturer", "success");
         setDescription(""); setMontant(""); setHeures(""); setPhoto(null); setNature("montant");
-        onSuccess?.();
+        if (!r.offline) onSuccess?.();
         onClose();
       } else {
         // Échec explicite (avant : « Erreur » sans détail) — modal gardé ouvert pour réessayer.
-        toast("❌ " + (r.status === 401 ? "Session expirée — reconnecte-toi." : (d.message || d.error || `Échec (erreur ${r.status}). Réessaie.`)), "error");
+        toast("❌ " + (/non authentifi|HTTP 401/i.test(r.erreur || "") ? "Session expirée — reconnecte-toi." : (r.data?.message || r.erreur || "Échec. Réessaie.")), "error");
       }
     } catch {
       toast("❌ Problème de connexion — réessaie.", "error");
@@ -130,13 +144,14 @@ export default function ModalExtra({ ouvert, onClose, onSuccess, projetIdInitial
         {nature === "montant" && (
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Montant ($) <span className="text-slate-400">— optionnel, la gestion peut le fixer</span></label>
-            <input type="number" inputMode="decimal" step={0.01} value={montant} onChange={(e) => setMontant(e.target.value)} placeholder="ex: 250 (ou laisse vide)" className="w-full px-3 py-3 border rounded-lg text-sm text-right font-bold" />
+            {/* type="text" : un <input type="number"> refuse la virgule du clavier québécois (valeur vidée en silence). */}
+            <input type="text" inputMode="decimal" value={montant} onChange={(e) => setMontant(e.target.value)} placeholder="ex. : 250,50 (ou laisse vide)" className="w-full px-3 py-3 border rounded-lg text-sm text-right font-bold" />
           </div>
         )}
         {nature === "heures" && (
           <div>
             <label className="block text-xs font-medium text-slate-600 mb-1">Heures supplémentaires <span className="text-slate-400">— optionnel</span></label>
-            <input type="number" inputMode="decimal" step={0.25} value={heures} onChange={(e) => setHeures(e.target.value)} placeholder="ex: 3" className="w-full px-3 py-3 border rounded-lg text-sm text-right font-bold" />
+            <input type="text" inputMode="decimal" value={heures} onChange={(e) => setHeures(e.target.value)} placeholder="ex. : 3,5" className="w-full px-3 py-3 border rounded-lg text-sm text-right font-bold" />
           </div>
         )}
 
@@ -145,7 +160,10 @@ export default function ModalExtra({ ouvert, onClose, onSuccess, projetIdInitial
           {photo ? (
             <div className="relative inline-block">
               <img src={photo.thumb || photo.data} alt="Extra" className="w-24 h-24 object-cover rounded border" />
-              <button onClick={() => setPhoto(null)} className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center shadow">✕</button>
+              {/* Cible tactile 44 px (la pastille visible reste petite) */}
+              <button type="button" onClick={() => setPhoto(null)} aria-label="Retirer la photo" className="absolute -top-3 -right-3 w-11 h-11 flex items-center justify-center">
+                <span aria-hidden="true" className="bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold flex items-center justify-center shadow">✕</span>
+              </button>
             </div>
           ) : (
             <div className="flex gap-2">

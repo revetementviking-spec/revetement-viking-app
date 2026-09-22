@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { autoCadrer, filtreDocument, ocrRecu } from "@/lib/imgScanner";
+import { formatCAD } from "@/lib/calculateur";
+import Modale from "@/components/Modale";
 
 interface Props {
   imageOriginale: string;
@@ -55,14 +57,14 @@ export default function ScannerRecu({ imageOriginale, onClose, onConfirmer }: Pr
   const apercu = montre === "scan" && traitee ? traitee : imageOriginale;
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/80 flex items-end md:items-center justify-center p-0 md:p-4" onClick={onClose}>
+    <Modale onClose={onClose} titre="Scanner le reçu" className="fixed inset-0 z-[70] bg-black/80 flex items-end md:items-center justify-center p-0 md:p-4">
       <div className="bg-white rounded-t-2xl md:rounded-lg max-w-2xl w-full max-h-[95vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <header className="sticky top-0 bg-gradient-to-r from-blue-700 to-indigo-700 text-white p-4 flex justify-between items-center">
           <div>
             <h2 className="font-bold text-lg">📄 Scanner le reçu</h2>
             <p className="text-xs opacity-80">Cadrage auto · Filtre document · OCR</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full text-xl leading-none">✕</button>
+          <button onClick={onClose} aria-label="Fermer" className="min-w-11 min-h-11 flex items-center justify-center hover:bg-white/10 rounded-full text-xl leading-none">✕</button>
         </header>
 
         <div className="p-4 space-y-3">
@@ -91,7 +93,7 @@ export default function ScannerRecu({ imageOriginale, onClose, onConfirmer }: Pr
             </div>
             {ocr ? (
               <div className="text-xs space-y-1 bg-white border border-slate-200 rounded p-2">
-                <div>💰 Montant détecté : <strong>{ocr.montant !== undefined ? `${ocr.montant.toFixed(2)} $` : <em className="text-slate-400">non trouvé</em>}</strong></div>
+                <div>💰 Montant détecté : <strong>{ocr.montant !== undefined ? formatCAD(ocr.montant) : <em className="text-slate-400">non trouvé</em>}</strong></div>
                 <div>📅 Date détectée : <strong>{ocr.date || <em className="text-slate-400">non trouvée</em>}</strong></div>
                 <div>🏷️ Fournisseur : <strong className="truncate inline-block max-w-full">{ocr.fournisseur || <em className="text-slate-400">non trouvé</em>}</strong></div>
                 <p className="text-[10px] text-slate-500 italic mt-1">Les valeurs détectées rempliront automatiquement le formulaire si tu confirmes.</p>
@@ -111,6 +113,6 @@ export default function ScannerRecu({ imageOriginale, onClose, onConfirmer }: Pr
           </button>
         </footer>
       </div>
-    </div>
+    </Modale>
   );
 }

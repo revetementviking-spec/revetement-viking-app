@@ -4,7 +4,10 @@ import { useEffect, useMemo, useState } from "react";
 import Navigation from "@/components/Navigation";
 import { useToast } from "@/components/Toasts";
 import { aujourdhuiMontreal } from "@/lib/date";
-import { ecrire, envoyer } from "@/lib/envoi";
+import { ecrire, envoyer, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
+import ErreurChargement from "@/components/ErreurChargement";
+import Modale from "@/components/Modale";
 
 const PERSONNES = ["Francis", "Gabriel"];
 const PRIORITES = [
@@ -33,25 +36,31 @@ export default function TachesPage() {
   const [editing, setEditing] = useState<any | null>(null);
   const { toast } = useToast();
 
+  const [erreur, setErreur] = useState<string | null>(null);
   const charger = async () => {
-    const d = await fetch("/api/taches").then((r) => r.json()).catch(() => []);
-    setTaches(Array.isArray(d) ? d : []);
+    // Avant : un échec (500, réseau) ressemblait à « aucune tâche » — page vide, sans un mot.
+    const r = await lireListe("/api/taches");
+    if (!r.ok) { setErreur(r.erreur); return; }
+    setErreur(null);
+    setTaches(r.data);
   };
   useEffect(() => { charger(); }, []);
 
-  const creer = async () => {
+  // Verrou par ref (lib/verrou.ts) : Entrée + clic « Ajouter » dans le même instant
+  // créaient la même tâche deux fois.
+  const verrouCreer = useVerrou();
+  const creer = () => verrouCreer.executer(async () => {
     if (!form.titre.trim()) { toast("Écris la tâche", "warning"); return; }
-    const r = await fetch("/api/taches", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, titre: form.titre.trim(), assigne_a: form.assigne_a || null, date_due: form.date_due || null }),
-    });
-    if ((await r.json()).id) {
-      toast("✓ Tâche ajoutée", "success");
-      setForm({ ...FORM_VIDE });
-      setDetailsOuverts(false);
-      charger();
-    } else toast("Erreur", "error");
-  };
+    // `r.ok` vérifié : `(await r.json()).id` plantait sur un 401/413 non-JSON et un refus
+    // de validation donnait « Erreur » sans la raison.
+    const r = await envoyer<{ id?: number }>("/api/taches", { corps: { ...form, titre: form.titre.trim(), assigne_a: form.assigne_a || null, date_due: form.date_due || null } });
+    if (!r.ok) { toast(`Tâche NON ajoutée : ${r.erreur}`, "error"); return; }
+    if (!r.data?.id) { toast("Tâche NON ajoutée : réponse inattendue du serveur", "error"); return; }
+    toast("✓ Tâche ajoutée", "success");
+    setForm({ ...FORM_VIDE });
+    setDetailsOuverts(false);
+    charger();
+  });
 
   const terminer = async (t: any) => {
     // Réponse vérifiée : « ✓ Tâche complétée » s'affichait même sur un 401 — la tâche
@@ -69,6 +78,7 @@ export default function TachesPage() {
   const supprimer = async (t: any) => {
     if (!confirm(`Supprimer « ${t.titre} » ?`)) return;
     if (!(await ecrire(`/api/taches?id=${t.id}`, "DELETE", undefined, "Suppression"))) return;
+    toast(`Tâche « ${t.titre} » supprimée`, "info");
     charger();
   };
   const reassigner = async (t: any, who: string) => {
@@ -157,7 +167,7 @@ export default function TachesPage() {
               className="flex-1 px-3 py-2.5 border rounded-lg text-sm"
             />
             <button onClick={() => setDetailsOuverts(!detailsOuverts)} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm" title="Plus d'options">⚙️</button>
-            <button onClick={creer} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold">Ajouter</button>
+            <button onClick={creer} disabled={verrouCreer.occupe} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold">{verrouCreer.occupe ? "…" : "Ajouter"}</button>
           </div>
 
           {detailsOuverts && (
@@ -200,7 +210,9 @@ export default function TachesPage() {
           ))}
         </div>
 
-        {ouvertes.length === 0 ? (
+        {erreur ? (
+          <ErreurChargement erreur={erreur} onReessayer={charger} />
+        ) : ouvertes.length === 0 ? (
           <div className="bg-white rounded-lg border p-10 text-center text-slate-400">
             <div className="text-5xl mb-3">🎉</div>
             <p className="font-semibold text-slate-600">Aucune tâche à faire{filtreAssigne ? ` pour ${filtreAssigne}` : ""}.</p>
@@ -227,7 +239,7 @@ export default function TachesPage() {
 
       {/* Modal édition */}
       {editing && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4" onClick={() => setEditing(null)}>
+        <Modale onClose={() => setEditing(null)} titre="Modifier la tâche" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-lg font-bold">✏️ Modifier la tâche</h3>
             <div>
@@ -268,7 +280,7 @@ export default function TachesPage() {
               <button onClick={sauverEdition} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold">Enregistrer</button>
             </div>
           </div>
-        </div>
+        </Modale>
       )}
     </div>
   );

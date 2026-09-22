@@ -2,7 +2,7 @@
 // La logique de session (signature, validation, expiration, rotation) vit dans
 // lib/session.ts — source unique partagée avec les routes API et le login.
 import { NextResponse, type NextRequest } from "next/server";
-import { authConfiguree, utilisateurDuCookie } from "@/lib/session";
+import { authConfiguree, utilisateurDuCookie, comparaisonConstante } from "@/lib/session";
 
 const COOKIE_NAME = "xpress_auth";
 
@@ -82,6 +82,7 @@ export async function proxy(req: NextRequest) {
   // Routes & assets publics (toujours avec headers de sécurité)
   if (
     path === "/login" ||
+    path === "/hors-ligne" ||                                 // page de repli du service worker (statique, sans données)
     path.startsWith("/_next") ||
     path.startsWith("/api/login") ||
     estAssetPublic(path) ||
@@ -102,7 +103,7 @@ export async function proxy(req: NextRequest) {
     // cookie — il était bloqué en 401 et le cron nocturne ne rafraîchissait RIEN depuis
     // toujours. On l'ouvre uniquement s'il porte le secret de cron.
     (path === "/api/prix-web" && req.method === "POST" && !!process.env.CRON_SECRET
-      && req.headers.get("authorization") === `Bearer ${process.env.CRON_SECRET}`) ||
+      && comparaisonConstante(req.headers.get("authorization") || "", `Bearer ${process.env.CRON_SECRET}`)) ||
     // GET infos + PDF + certificat d'authentification + devis joint + POST signature
     // (le jeton EST le secret ; chaque route revérifie qu'il correspond à un contrat)
     /^\/api\/contrats-pipeline\/[^/]+(\/pdf|\/certificat|\/annexe)?$/.test(path)

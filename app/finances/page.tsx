@@ -8,6 +8,8 @@ import ExtrasVue from "@/components/ExtrasVue";
 import RentabiliteVue from "@/components/RentabiliteVue";
 import PaieVue from "@/components/PaieVue";
 import { formatCAD } from "@/lib/calculateur";
+import { lireJson, lireListe } from "@/lib/envoi";
+import ErreurChargement from "@/components/ErreurChargement";
 
 const MOIS = ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
 
@@ -27,13 +29,24 @@ export default function FinancesPage() {
 
   // Compteur d'extras à facturer (pour l'onglet + le KPI)
   useEffect(() => {
-    fetch("/api/extras?compteur=1").then((r) => r.json()).then((d) => setExtrasInfo({ n: d?.n || 0, total: d?.total || 0 })).catch(() => {});
+    lireJson<{ n?: number; total?: number }>("/api/extras?compteur=1").then((r) => { if (r.ok) setExtrasInfo({ n: r.data?.n || 0, total: r.data?.total || 0 }); });
   }, []);
 
+  const [erreur, setErreur] = useState<string | null>(null);
+  const chargerApercu = () => {
+    setErreur(null);
+    // Lectures avec filet : un 500 sur /api/finances laissait « Chargement... » pour
+    // toujours, et un objet d'erreur dans `projets` faisait planter `.filter`.
+    lireJson<any>(`/api/finances?annee=${annee}`).then((r) => {
+      if (r.ok && r.data && Array.isArray(r.data.mois)) setData(r.data);
+      else setErreur(r.ok ? "réponse inattendue du serveur" : r.erreur);
+    });
+    lireListe("/api/projets").then((r) => { if (r.ok) setProjets(r.data); });
+  };
   useEffect(() => {
     if (onglet !== "apercu") return;
-    fetch(`/api/finances?annee=${annee}`).then((r) => r.json()).then(setData);
-    fetch("/api/projets").then((r) => r.json()).then(setProjets);
+    chargerApercu();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [annee, onglet]);
 
   const Tabs = (
@@ -98,7 +111,9 @@ export default function FinancesPage() {
       <Navigation titre="💰 Finances" soustitre="Vue d'ensemble · Dépenses" />
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         {Tabs}
-        <div className="bg-white rounded-lg shadow p-8 text-center text-slate-500">Chargement...</div>
+        {erreur
+          ? <ErreurChargement erreur={erreur} onReessayer={chargerApercu} />
+          : <div className="bg-white rounded-lg shadow p-8 text-center text-slate-500">Chargement...</div>}
       </main>
     </div>
   );
@@ -140,6 +155,8 @@ export default function FinancesPage() {
 
       <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
         {Tabs}
+        {/* Les chiffres affichés viennent de l'année précédente si le rechargement a échoué : on le dit. */}
+        {erreur && <ErreurChargement compact erreur={erreur} onReessayer={chargerApercu} />}
         <div className="flex items-center justify-end gap-2">
           <button onClick={() => setAnnee(annee - 1)} className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-sm font-bold">← {annee - 1}</button>
           <span className="px-3 py-1.5 bg-emerald-100 text-emerald-900 rounded text-sm font-bold">{annee}</span>

@@ -10,7 +10,8 @@ import {
 import { aujourdhuiMontreal } from "@/lib/date";
 import { useToast } from "@/components/Toasts";
 import { ETAPES_PIPELINE } from "@/lib/vocabulaire";
-import { envoyer } from "@/lib/envoi";
+import { envoyer, lireJson, lireListe } from "@/lib/envoi";
+import { useVerrou } from "@/lib/verrou";
 
 const PipelineDrawer = lazy(() => import("@/components/PipelineDrawer"));
 
@@ -35,10 +36,12 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
   const [stats, setStats] = useState<Record<number, { taches_total?: number; taches_done?: number; commentaires?: number; fichiers?: number }>>({});
   const { toast } = useToast();
 
-  const rechargerStats = () => fetch("/api/clients/pipeline-stats", { cache: "no-store" }).then((r) => r.json()).then(setStats).catch(() => {});
+  const rechargerStats = () => lireJson<Record<number, any>>("/api/clients/pipeline-stats").then((r) => { if (r.ok && r.data && typeof r.data === "object") setStats(r.data); });
 
   useEffect(() => {
-    fetch("/api/projets").then((r) => r.json()).then((p: any[]) => Array.isArray(p) && setProjets(p)).catch(() => {});
+    // ?lite=1 : la liste ne sert qu'au menu « projet lié » du tiroir (id + nom) ; la
+    // liste complète recalculait coûts et marges de chaque projet pour rien.
+    lireListe("/api/projets?lite=1").then((r) => { if (r.ok) setProjets(r.data); });
     rechargerStats();
   }, []);
 
@@ -57,7 +60,9 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
     onUpdate();
   };
 
-  const ajouter = async (stage: string) => {
+  // Verrou par ref (lib/verrou.ts) : deux clics du même instant créaient deux prospects.
+  const verrouAjout = useVerrou();
+  const ajouter = (stage: string) => verrouAjout.executer(async () => {
     if (!nouveau.nom.trim()) { toast("Nom requis", "warning"); return; }
     // Échec silencieux avant : un courriel malformé ou un doublon refusé ne produisait
     // aucun message, la carte n'apparaissait pas et l'utilisateur recliquait.
@@ -67,7 +72,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
     setNouveau({ nom: "", telephone: "", courriel: "" });
     setAjoutOuvert(null);
     onUpdate();
-  };
+  });
 
   const filtres = useMemo(() => {
     let list = clients;
@@ -144,6 +149,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
               nouveau={nouveau}
               setNouveau={setNouveau}
               onAjouter={() => ajouter(s.key)}
+              ajoutOccupe={verrouAjout.occupe}
               onOuvrirDetail={(c) => setDrawerClient(c)}
             />
           ))}
@@ -171,7 +177,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
             client={drawerClient}
             projets={projets}
             onClose={() => setDrawerClient(null)}
-            onUpdate={() => { onUpdate(); rechargerStats(); fetch(`/api/clients?id=${drawerClient.id}`, { cache: "no-store" }).then((r) => r.json()).then((c) => setDrawerClient(c)).catch(() => {}); }}
+            onUpdate={() => { onUpdate(); rechargerStats(); lireJson<any>(`/api/clients?id=${drawerClient.id}`).then((r) => { if (r.ok && r.data && r.data.id) setDrawerClient(r.data); }); }}
           />
         </Suspense>
       )}
@@ -179,7 +185,7 @@ export default function PipelineCRM({ clients, onUpdate }: Props) {
   );
 }
 
-function Colonne({ stage, clients, stats, ajoutOuvert, onOuvrirAjout, onFermerAjout, nouveau, setNouveau, onAjouter, cacherAjout, onOuvrirDetail }: {
+function Colonne({ stage, clients, stats, ajoutOuvert, onOuvrirAjout, onFermerAjout, nouveau, setNouveau, onAjouter, ajoutOccupe, cacherAjout, onOuvrirDetail }: {
   stage: { key: string; label: string; couleur: string; emoji: string };
   clients: any[];
   stats?: Record<number, any>;
@@ -187,6 +193,7 @@ function Colonne({ stage, clients, stats, ajoutOuvert, onOuvrirAjout, onFermerAj
   nouveau: { nom: string; telephone: string; courriel: string };
   setNouveau: (v: any) => void;
   onAjouter: () => void;
+  ajoutOccupe?: boolean;
   cacherAjout?: boolean;
   onOuvrirDetail: (client: any) => void;
 }) {
@@ -210,7 +217,7 @@ function Colonne({ stage, clients, stats, ajoutOuvert, onOuvrirAjout, onFermerAj
               <input type="tel" value={nouveau.telephone} onChange={(e) => setNouveau({ ...nouveau, telephone: e.target.value })} placeholder="Téléphone" className="w-full px-2 py-1.5 border rounded text-xs" />
               <input type="email" value={nouveau.courriel} onChange={(e) => setNouveau({ ...nouveau, courriel: e.target.value })} placeholder="Courriel" className="w-full px-2 py-1.5 border rounded text-xs" />
               <div className="flex gap-1">
-                <button onClick={onAjouter} className="flex-1 px-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-bold">✓ Ajouter</button>
+                <button onClick={onAjouter} disabled={ajoutOccupe} className="flex-1 px-2 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded text-xs font-bold">{ajoutOccupe ? "…" : "✓ Ajouter"}</button>
                 <button onClick={onFermerAjout} className="px-2 py-1.5 bg-slate-200 hover:bg-slate-300 rounded text-xs">✕</button>
               </div>
             </div>
@@ -228,13 +235,16 @@ function CarteDraggable({ client, stats, onOuvrir }: { client: any; stats?: any;
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
   // Précharge la fiche complète au survol pour ouverture instantanée du drawer
   const prefetch = () => { import("@/lib/prefetchClient").then((m) => m.prefetchClient(client.id)); };
+  // Au toucher, on attend 150 ms sans mouvement : faire défiler le pipeline au doigt ne doit
+  // pas lancer quatre requêtes par carte effleurée.
+  const prefetchTactile = () => { import("@/lib/prefetchClient").then((m) => m.prechargerDiffere(() => m.prefetchClient(client.id))); };
   return (
     <div
       ref={setNodeRef}
       style={style}
       className={`bg-white rounded p-2 shadow-sm border border-slate-200 cursor-grab active:cursor-grabbing select-none ${isDragging ? "opacity-30" : ""}`}
       onMouseEnter={prefetch}
-      onTouchStart={prefetch}
+      onTouchStart={prefetchTactile}
       {...attributes}
       {...listeners}
     >

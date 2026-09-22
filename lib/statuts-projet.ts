@@ -42,6 +42,41 @@ export function trierProjetsPourSaisie<T extends { statut?: string | null }>(lis
   return [...liste].sort((a, b) => rangProjet(a.statut) - rangProjet(b.statut));
 }
 
+/**
+ * Transitions de statut permises (de → vers). Tout le reste est refusé (409 côté API).
+ *
+ * Ordre naturel : à venir → en activité (actif / en_cours) ⇄ en pause → complété. Un
+ * chantier peut être annulé depuis n'importe quel statut vivant. Deux retours en arrière
+ * gardent un sens métier, et seulement ceux-là :
+ * - annulé → à venir ou actif (annulation par erreur, ou client revenu) ;
+ * - complété → en_cours ou actif (rouvert : /api/projets remet alors `facturee = 0` et
+ *   efface `date_fin_reelle`, sinon le chantier resterait « facturé » dans le CA).
+ * Un complété ne s'annule pas (les heures et dépenses sont facturées) et ne redevient
+ * pas « à venir ». Même statut = pas de transition, toujours permis.
+ */
+const TRANSITIONS: Record<StatutProjet, readonly StatutProjet[]> = {
+  a_venir: ["actif", "en_cours", "en_pause", "annule"],
+  actif: ["a_venir", "en_cours", "en_pause", "complete", "annule"],
+  en_cours: ["a_venir", "actif", "en_pause", "complete", "annule"],
+  en_pause: ["a_venir", "actif", "en_cours", "complete", "annule"],
+  complete: ["en_cours", "actif"],
+  annule: ["a_venir", "actif"],
+};
+
+export function transitionPermise(de: string | null | undefined, vers: string): boolean {
+  if (!(STATUTS_PROJET as readonly string[]).includes(vers)) return false;
+  // Statut d'origine absent ou inconnu (vieux projet importé) : on ne peut rien juger,
+  // on laisse passer vers n'importe quel statut valide.
+  if (!de || !(STATUTS_PROJET as readonly string[]).includes(de)) return true;
+  if (de === vers) return true;
+  return TRANSITIONS[de as StatutProjet].includes(vers as StatutProjet);
+}
+
+/** Réouverture d'un chantier complété : les champs à remettre à zéro avec le statut. */
+export function estReouverture(de: string | null | undefined, vers: string): boolean {
+  return de === "complete" && estProjetActif(vers);
+}
+
 /** Délai de grâce après la fin d'un chantier, pour la saisie tardive. */
 export const JOURS_GRACE_SAISIE = 14;
 
