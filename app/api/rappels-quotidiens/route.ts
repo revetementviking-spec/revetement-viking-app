@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { db, compterDoublonsSuspects } from "@/lib/db";
 import { envoyerPushUtilisateur, pushEstConfigure } from "@/lib/push";
 import { SQL_PROJET_ACTIF } from "@/lib/statuts-projet";
 import { aujourdhuiMontreal } from "@/lib/date";
@@ -25,6 +25,10 @@ export async function GET(req: NextRequest) {
   const c: any = db();
   const auj = aujourdhuiMontreal();
   const il_y_a_30j = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+
+  // Le balayage des doublons est le MÊME pour tout le monde : on le fait une seule fois,
+  // hors de la boucle (il lit 10 000 lignes ; deux fois serait deux fois trop).
+  const doublons = await compterDoublonsSuspects().catch(() => ({ total: 0, francs: 0 }));
 
   const resultats: any[] = [];
   for (const user of ["Francis", "Gabriel"]) {
@@ -56,10 +60,18 @@ export async function GET(req: NextRequest) {
     const totFact = +(fIm.rows[0] as any).total || 0;
     const nPr = +(pR.rows[0] as any).n || 0;
     const nT = (+(tE.rows[0] as any).n || 0) + (+(tG.rows[0] as any).n || 0);
+    // Factures en double en attente de décision. Même calcul que l'écran (lib/db.ts), donc
+    // le push et la page ne peuvent pas raconter deux choses différentes. Pas de repli à
+    // zéro déguisé : si la détection échoue, `nDbl` reste 0 mais les autres alertes partent.
+    const dbl = doublons;
 
-    if (nFact + nPr + nT === 0) { resultats.push({ user, push: false, raison: "aucune alerte" }); continue; }
+    if (nFact + nPr + nT + dbl.total === 0) { resultats.push({ user, push: false, raison: "aucune alerte" }); continue; }
 
     const parts: string[] = [];
+    // En tête : c'est de l'argent qui peut sortir deux fois, et ça se règle en deux minutes.
+    if (dbl.total > 0) {
+      parts.push(`🧾 ${dbl.total} facture(s) en double à vérifier${dbl.francs > 0 ? ` (dont ${dbl.francs} certaine(s))` : ""}`);
+    }
     if (nFact > 0) parts.push(`💰 ${nFact} facture(s) impayée(s) (${totFact.toFixed(0)} $)`);
     if (nPr > 0) parts.push(`🔥 ${nPr} projet(s) en retard`);
     if (nT > 0) parts.push(`📌 ${nT} tâche(s) à échéance`);
@@ -67,7 +79,9 @@ export async function GET(req: NextRequest) {
     const r = await envoyerPushUtilisateur(user, {
       title: `🌅 Rappel matinal Viking`,
       body: parts.join(" · "),
-      url: "/",
+      // Le push ouvre directement la page des doublons quand c'est l'alerte dominante :
+      // un rappel qui oblige à chercher l'écran se fait ignorer.
+      url: dbl.total > 0 ? "/finances/doublons" : "/",
       tag: "rappel-quotidien",
     }).catch(() => ({ envoyes: 0, erreurs: 1 }));
 

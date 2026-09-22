@@ -7,12 +7,14 @@ import DepensesVue from "@/components/DepensesVue";
 import ExtrasVue from "@/components/ExtrasVue";
 import RentabiliteVue from "@/components/RentabiliteVue";
 import PaieVue from "@/components/PaieVue";
+import DoublonsVue from "@/components/DoublonsVue";
 import { formatCAD } from "@/lib/calculateur";
 
 const MOIS = ["", "Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
 
 export default function FinancesPage() {
-  const [onglet, setOnglet] = useState<"apercu" | "rentabilite" | "depenses" | "extras" | "paie">("apercu");
+  const [onglet, setOnglet] = useState<"apercu" | "rentabilite" | "depenses" | "extras" | "paie" | "doublons">("apercu");
+  const [nDoublons, setNDoublons] = useState(0);
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [data, setData] = useState<any>(null);
   const [projets, setProjets] = useState<any[]>([]);
@@ -22,12 +24,14 @@ export default function FinancesPage() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const tab = new URLSearchParams(window.location.search).get("tab");
-    if (tab === "depenses" || tab === "extras" || tab === "rentabilite" || tab === "paie") setOnglet(tab);
+    if (tab === "depenses" || tab === "extras" || tab === "rentabilite" || tab === "paie" || tab === "doublons") setOnglet(tab);
   }, []);
 
   // Compteur d'extras à facturer (pour l'onglet + le KPI)
   useEffect(() => {
     fetch("/api/extras?compteur=1").then((r) => r.json()).then((d) => setExtrasInfo({ n: d?.n || 0, total: d?.total || 0 })).catch(() => {});
+    // Pastille des factures en double : le décompte seul, pas la liste complète.
+    fetch("/api/doublons?compte=1").then((r) => (r.ok ? r.json() : null)).then((d) => d && setNDoublons(d.total || 0)).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -45,6 +49,20 @@ export default function FinancesPage() {
         💲 Extras{extrasInfo.n > 0 ? <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-amber-500 text-white rounded-full text-[10px] font-bold">{extrasInfo.n}</span> : ""}
       </button>
       <button onClick={() => setOnglet("paie")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "paie" ? "border-emerald-600 text-emerald-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>💵 Paie</button>
+      <button onClick={() => setOnglet("doublons")} className={`px-4 py-2 text-sm font-semibold border-b-2 transition ${onglet === "doublons" ? "border-rose-600 text-rose-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
+        🧾 Doublons{nDoublons > 0 ? <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-rose-600 text-white rounded-full text-[10px] font-bold">{nDoublons}</span> : ""}
+      </button>
+    </div>
+  );
+
+  // Onglet DOUBLONS — même vue que la page /finances/doublons (celle qu'ouvre le push).
+  if (onglet === "doublons") return (
+    <div className="min-h-screen bg-slate-50">
+      <Navigation titre="💰 Finances" soustitre="Factures qui semblent en double" />
+      <main className="max-w-7xl mx-auto p-4 md:p-6 space-y-4">
+        {Tabs}
+        <DoublonsVue />
+      </main>
     </div>
   );
 

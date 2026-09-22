@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerProjets, listerProjetsLite, listerProjetsAFacturer, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, clientParNom, charger } from "@/lib/db";
+import { listerProjets, listerProjetsLite, listerProjetsAFacturer, getProjet, ajouterProjet, modifierProjet, supprimerProjet, trouverOuCreerClient, clientParNom, charger, confirmerFacturationProjet } from "@/lib/db";
 import { envoyerPushUtilisateur } from "@/lib/push";
 import { STATUTS_PROJET } from "@/lib/statuts-projet";
 import { aujourdhuiMontreal } from "@/lib/date";
@@ -105,6 +105,20 @@ export async function PATCH(req: NextRequest) {
     if (!body.id) return NextResponse.json({ error: "id requis" }, { status: 400 });
     if (statutInvalide(body.statut)) return NextResponse.json({ error: `statut invalide : ${body.statut}` }, { status: 400 });
     const user = await utilisateurActif(req);
+
+    // Confirmation de facturation — geste À PART, jamais un champ modifiable comme un autre.
+    // Le nom vient de la session (`user`), pas du corps : c'est une signature. Le client ne
+    // peut donc pas écrire « Facturé par Francis » sans être Francis.
+    if (body.facturation_confirmee !== undefined) {
+      const confirme = !!body.facturation_confirmee;
+      const etat = await confirmerFacturationProjet(+body.id, user, confirme);
+      journaliser(confirme ? "projet.facturation_confirmee" : "projet.facturation_annulee", {
+        ref_type: "projet", ref_id: +body.id, utilisateur: user || undefined,
+        description: confirme ? `Facturé — confirmé par ${user || "inconnu"}` : "Confirmation de facturation retirée",
+      });
+      return ok({ ok: true, facturation_confirmee_le: etat.le, facturation_confirmee_par: etat.par });
+    }
+
     const avant = await getProjet(+body.id);
     const nouvelleCompletion = body.statut === "complete" && avant?.statut !== "complete";
     if (nouvelleCompletion) {

@@ -26,6 +26,16 @@ export type ActiviteType =
   // Avis interne quand un client répond (accepte / refuse) à une soumission en ligne.
   | "soumission.avis_courriel"
   | "soumission.avis_courriel_echec"
+  // Confirmation humaine « la facture est partie » (bouton de la fiche chantier), et son
+  // retrait. Le statut « complété » ne le dit pas : ces deux traces-là, datées et signées,
+  // sont ce qui alimente le rappel « À facturer ».
+  | "projet.facturation_confirmee"
+  | "projet.facturation_annulee"
+  // Factures en double : la décision humaine d'écarter une paire, et son retour en arrière.
+  // Écarter une alerte d'argent doit laisser une trace — sinon « qui a fait taire ça ? »
+  // n'a pas de réponse le jour où le fournisseur est payé deux fois.
+  | "doublon.ignore"
+  | "doublon.reactive"
   | "projet.document_ajoute"
   | "projet.document_supprime"
   | "projet.supprime"

@@ -87,6 +87,17 @@ export function messageProjetComplete(p: ProjetComplete, lienBase?: string, ferm
 
   if (lienBase) lignes.push("", `Fiche du chantier : ${lienBase.replace(/\/+$/, "")}/projets/${p.id}`);
 
+  // Le geste attendu après ce courriel : confirmer la facture, sur la fiche. Tant que le
+  // bouton n'est pas cliqué, le chantier reste dans « À facturer » au tableau de bord.
+  // Le lien MÈNE au bouton, il ne le remplace pas : un lien qui écrirait tout seul serait
+  // déclenché par le simple préchargement de Gmail, et la facture serait « confirmée »
+  // sans que personne ne l'ait envoyée.
+  lignes.push(
+    "",
+    "Une fois la facture envoyée au client : ouvre la fiche et clique sur « 🧾 Facturé ! ».",
+    "Le chantier sort alors de la liste « À facturer », avec la date et ton nom.",
+  );
+
   // Le sujet porte l'action : lisible d'un coup d'œil sur le téléphone, sans ouvrir.
   const suffixe = aFacturer > 0.005 ? ` — à facturer ${argent(aFacturer)}` : "";
   return { sujet: `🧾 Chantier terminé — ${nom}${client ? ` (${client})` : ""}${suffixe}`, texte: lignes.join("\n") };

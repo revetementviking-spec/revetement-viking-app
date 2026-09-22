@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerFacturesProjet, ajouterFactureProjet, marquerFacturePayee, annulerPaiementFacture, supprimerFactureProjet, projetReferenceValide } from "@/lib/db";
+import { listerFacturesProjet, ajouterFactureProjet, marquerFacturePayee, annulerPaiementFacture, supprimerFactureProjet, projetReferenceValide, doublonsDeLaPieceEnregistree } from "@/lib/db";
 import { aujourdhuiMontreal } from "@/lib/date";
 import { nombreSaisi } from "@/lib/calculs";
 import { validerEcritureArgent } from "@/lib/validation-argent";
@@ -39,7 +39,11 @@ export async function POST(req: NextRequest) {
     const u = await utilisateurActif(req);
     journaliser("facture.creee", { req, utilisateur: u || undefined, ref_type: "facture", ref_id: id,
       description: `${body.numero || "sans n°"} · ${montant} $ · projet ${body.projet_id}` }).catch(() => {});
-    return NextResponse.json({ ok: true, id });
+    // Deux factures au même numéro, ou même chantier/même montant à quelques jours : on le
+    // dit tout de suite, sans refuser l'écriture (un contrat peut avoir deux versements
+    // égaux). La facture est déjà créée quand cette vérification tourne.
+    const doublons = await doublonsDeLaPieceEnregistree("facture", id);
+    return NextResponse.json({ ok: true, id, doublons });
   } catch (e) { return fail(e); }
 }
 

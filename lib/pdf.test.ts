@@ -146,3 +146,56 @@ describe("PDF de soumission (rendu réel)", () => {
     expect(buf.subarray(0, 5).toString()).toBe("%PDF-");
   });
 });
+
+// ============================================================================
+// Talon de paie avec indemnité de jour férié
+// ============================================================================
+// Le talon est le seul papier que l'employé reçoit. Depuis les fériés payés, les heures
+// PAYÉES contiennent une indemnité qu'il n'a pas punchée : si le talon ne la nomme pas,
+// l'employé qui recompte ses punchs ne retrouve pas son total et doute de sa paie.
+// On vérifie donc ce qui est ÉCRIT dedans, pas seulement qu'il se rende.
+describe("Talon de paie (rendu réel) — indemnité de jour férié", () => {
+  it("sépare les heures travaillées de l'indemnité, et les deux montants redonnent le brut", async () => {
+    const { TalonPaiePDF } = await import("./pdf-talon-paie");
+    // Le cas de Francis : 80 h punchées + 8 h de férié = 80 h payées, 8 h à la banque.
+    const buf = await renderToBuffer(
+      React.createElement(TalonPaiePDF, {
+        talon: {
+          employe: "Maxime Tremblay", debut: "2026-10-05", fin: "2026-10-18",
+          heures_normales: 80, heures_sup: 0, taux_horaire: 45, das_pct: 0.15,
+          montant_brut: 3600, das_montant: 540, montant_net: 3060,
+          date_paiement: "2026-10-23",
+          heures_ferie: 8,
+          feries_detail: JSON.stringify([{ date: "2026-10-12", nom: "Action de grâce", heures: 8 }]),
+          banque_solde: 8,
+        },
+      }) as any
+    );
+    const t = texteDuPdf(buf);
+    expect(t).toContain("Indemnité jour férié");
+    expect(t).toContain("Action de grâce");
+    // 72 h de travail + 8 h d'indemnité = les 80 h payées, et 3 240 $ + 360 $ = 3 600 $.
+    expect(chiffres(t)).toContain(chiffres("72,00"));
+    expect(chiffres(t)).toContain(chiffres("3 240,00"));
+    expect(chiffres(t)).toContain(chiffres("360,00"));
+    expect(chiffres(t)).toContain(chiffres("3 600,00"));
+    // La banque doit être dite : sinon l'employé croit avoir perdu ces 8 heures.
+    expect(t).toContain("Banque d'heures");
+  });
+  it("un talon sans férié ne parle pas de férié (paie ordinaire inchangée)", async () => {
+    const { TalonPaiePDF } = await import("./pdf-talon-paie");
+    const buf = await renderToBuffer(
+      React.createElement(TalonPaiePDF, {
+        talon: {
+          employe: "Maxime Tremblay", debut: "2026-09-21", fin: "2026-10-04",
+          heures_normales: 70, heures_sup: 0, taux_horaire: 45, das_pct: 0.15,
+          montant_brut: 3150, das_montant: 472.5, montant_net: 2677.5,
+        },
+      }) as any
+    );
+    const t = texteDuPdf(buf);
+    expect(t).not.toContain("Indemnité");
+    expect(chiffres(t)).toContain(chiffres("70,00"));
+    expect(chiffres(t)).toContain(chiffres("3 150,00"));
+  });
+});

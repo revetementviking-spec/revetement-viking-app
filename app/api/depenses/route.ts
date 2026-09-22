@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listerDepensesProjet, ajouterDepenseProjet, supprimerDepenseProjet, modifierDepenseProjet, fournisseursConnus, listerToutesDepenses, categoriesParFournisseur, projetReferenceValide } from "@/lib/db";
+import { listerDepensesProjet, ajouterDepenseProjet, supprimerDepenseProjet, modifierDepenseProjet, fournisseursConnus, listerToutesDepenses, categoriesParFournisseur, projetReferenceValide, doublonsDeLaPieceEnregistree } from "@/lib/db";
 import { journaliser } from "@/lib/audit";
 import { utilisateurActif } from "@/lib/authUser";
 import { nombreSaisi } from "@/lib/calculs";
@@ -54,7 +54,11 @@ export async function POST(req: NextRequest) {
       description: `${body.fournisseur || "?"} · ${body.montant}$ · ${body.categorie || "?"} · projet ${body.projet_id || "—"}`,
       ip: ipDe(req),
     }).catch(() => {});
-    return NextResponse.json({ ok: true, id });
+    // Doublon possible : on AVERTIT, on ne refuse pas. Deux voyages de gravier le même
+    // jour au même prix, ça existe. L'écriture est déjà faite ; la détection ne peut donc
+    // pas faire échouer la saisie (elle avale ses propres erreurs, voir lib/db.ts).
+    const doublons = await doublonsDeLaPieceEnregistree("depense", id);
+    return NextResponse.json({ ok: true, id, doublons });
   } catch (e: any) {
     console.error("[/api/depenses POST]", e);
     // JSON propre (jamais de page HTML) → le client peut toujours lire le message.

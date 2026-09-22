@@ -11,6 +11,7 @@ const ICONES: Record<string, string> = {
   "soumission.facturee": "💰", "soumission.supprimee": "🗑️",
   "client.cree": "👤", "client.modifie": "✏️", "client.supprime": "🗑️",
   "projet.cree": "🏗️", "projet.statut_change": "🔄", "projet.supprime": "🗑️",
+  "projet.facturation_confirmee": "🧾", "projet.facturation_annulee": "↩️",
   "contrat.cree": "📝", "contrat.signe": "🖋️",
   "heures.ajoutees": "⏱️", "depense.ajoutee": "💸", "paye.marquee_payee": "💵",
   "backup.execute": "💾", "drive.connecte": "🔗", "drive.deconnecte": "🔌",

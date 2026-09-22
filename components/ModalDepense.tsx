@@ -152,6 +152,12 @@ export default function ModalDepense({ ouvert, onClose, onSuccess, projetIdIniti
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.ok) {
         toast(`✓ Dépense ${formatCAD(montantNum)} ajoutée${aRecu ? (pagesRecu.length >= 2 ? ` (facture ${pagesRecu.length} pages → PDF)` : " (reçu joint)") : ""}`, "success");
+        // Une facture déjà entrée ailleurs (à la main, ou photographiée deux fois) : on
+        // avertit pendant que la pièce est encore en main. La dépense EST enregistrée —
+        // deux voyages de gravier le même jour au même prix, ça arrive pour vrai.
+        if (Array.isArray(d.doublons) && d.doublons.length > 0) {
+          toast(`⚠ ${d.doublons[0].raison} — à vérifier dans Finances → Doublons`, "warning");
+        }
         setForm({ projet_id: form.projet_id, date: today, montant: "", fournisseur: "", description: "", categorie: "matériaux", detaxe: false });
         setRecu(null); setPagesRecu([]);
         onSuccess?.();

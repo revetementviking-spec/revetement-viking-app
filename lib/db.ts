@@ -4,6 +4,8 @@ import { createClient, type Client as LibsqlClient, type ResultSet } from "@libs
 import path from "path";
 import fs from "fs";
 import { calculerMargeProjet, revenuAvantTaxes, depensesAvantTaxes, avancerDateRecurrence, periodeBiHebdo as periodeBiHebdoCalc, calculerHeuresPaye as calculerHeuresPayeCalc, calculerPaye, heuresDuesPeriodePayee, SEUIL_SUP_PERIODE } from "@/lib/calculs";
+import { feriesDeLaPeriode, feriesPayesEntre, indemniteFerie, repartitionFerie, FERIES_PAYES_DEPUIS } from "@/lib/paie-feries";
+import { detecterDoublons, doublonsDeLaPiece } from "@/lib/doublons-factures";
 import { SQL_PROJET_ACTIF } from "@/lib/statuts-projet";
 import { estStatutSoumission, STATUTS_SOUMISSION } from "@/lib/vocabulaire";
 import { aujourdhuiMontreal } from "./date";
@@ -19,7 +21,7 @@ let _initPromise: Promise<void> | null = null;
 // Incrémenter à CHAQUE changement de schéma (nouvelle colonne/table/index).
 // Tant que la version stockée (PRAGMA user_version) ≥ cette valeur, initDb saute
 // toutes les migrations → 1 seul aller-retour réseau au lieu de ~70 (clé de la rapidité).
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 27;
 
 function getLibsqlClient(): LibsqlClient {
   if (_client) return _client;
@@ -588,6 +590,40 @@ async function doInitDb() {
   // Banque dispo avant la période (proposable) + heures effectivement tirées (choisi par l'utilisateur)
   await tryExec("ALTER TABLE paies_periodes ADD COLUMN banque_dispo REAL DEFAULT 0");
   await tryExec("ALTER TABLE paies_periodes ADD COLUMN banque_appliquee REAL DEFAULT 0");
+  // Paires de factures écartées à la main (« ce n'est pas un doublon »). La clé porte la
+  // famille ET les deux ids triés (lib/doublons-factures.ts) : une décision ne peut donc
+  // pas déteindre sur une autre paire, ni changer d'identité au prochain balayage.
+  await tryExec(`CREATE TABLE IF NOT EXISTS doublons_ignores (
+    cle TEXT PRIMARY KEY,
+    ignore_le TEXT, ignore_par TEXT, note TEXT
+  )`);
+  // CONFIRMATION DE FACTURATION — « la facture est partie chez le client ».
+  // À ne pas confondre avec `projets.facturee`, qui passe à 1 TOUT SEUL à la complétion
+  // (règle « complété = revenu reconnu ») : ce flag-là ne dit rien sur la facture réelle,
+  // et c'est pour ça que le rappel « à facturer » du tableau de bord ne se déclenchait
+  // jamais. Ici, c'est un geste HUMAIN, daté et signé, posé par le bouton de la fiche.
+  await tryExec("ALTER TABLE projets ADD COLUMN facturation_confirmee_le TEXT");
+  await tryExec("ALTER TABLE projets ADD COLUMN facturation_confirmee_par TEXT");
+  // Migration UNIQUE (gardée) : les chantiers DÉJÀ complétés ont été facturés dans le vrai
+  // monde. Sans ça, brancher le rappel sur la confirmation ferait remonter d'un coup tout
+  // l'historique comme « jamais facturé » — des dizaines de faux retards le premier jour.
+  // On écrit « migration (historique) » et non « Francis » : personne n'a cliqué.
+  try {
+    const faitConf = await one<{ valeur: string }>("SELECT valeur FROM parametres_app WHERE cle = 'mig_facturation_confirmee_v1'");
+    if (!faitConf) {
+      await run(
+        `UPDATE projets SET facturation_confirmee_le = COALESCE(date_fin_reelle, date_fin_prevue, date_creation),
+         facturation_confirmee_par = 'migration (historique)'
+         WHERE statut = 'complete' AND facturation_confirmee_le IS NULL`
+      );
+      await run("INSERT OR REPLACE INTO parametres_app (cle, valeur) VALUES ('mig_facturation_confirmee_v1', '1')");
+    }
+  } catch { /* base neuve : rien à reprendre, la confirmation part de zéro */ }
+  // Indemnité de jour férié (1/20 des 4 semaines précédentes) créditée à la période, et le
+  // détail des congés qui la composent (JSON) pour le talon et l'écran. Une période PAYÉE
+  // garde le montant qu'elle avait : ces colonnes figent ce qui a été versé.
+  await tryExec("ALTER TABLE paies_periodes ADD COLUMN heures_ferie REAL DEFAULT 0");
+  await tryExec("ALTER TABLE paies_periodes ADD COLUMN feries_detail TEXT");
   // Backfill numéros de projet manquants (anciens projets créés avant le numérotage)
   try {
     const sansNum = await all<{ id: number; date_creation: string }>("SELECT id, date_creation FROM projets WHERE numero IS NULL ORDER BY date_creation ASC, id ASC");
@@ -1135,6 +1171,7 @@ const PROJ_SQL = `SELECT p.id, p.numero, p.client_id, p.nom, p.adresse_chantier,
   p.prix_contrat, p.facture_finale_type, (p.facture_finale_data IS NOT NULL) as a_facture_finale,
   p.contrat_signe_type, (p.contrat_signe_data IS NOT NULL) as a_contrat_signe,
   p.reno_assistance, p.cree_par, p.modifie_par, p.soumission_numero, p.date_creation,
+  p.facturee, p.facturation_confirmee_le, p.facturation_confirmee_par,
   c.nom as client_nom, c.courriel as client_courriel,
   COALESCE((SELECT SUM(heures) FROM heures_projet WHERE projet_id = p.id), 0) as total_heures,
   COALESCE((SELECT SUM(heures * taux_horaire) FROM heures_projet WHERE projet_id = p.id), 0) as cout_main_oeuvre,
@@ -1613,14 +1650,40 @@ export async function listerProjetsLite(statut?: string): Promise<any[]> {
     return await all<any>(sql, args);
   });
 }
-/** Projets complétés mais PAS encore marqués facturés (rappel "à facturer"). */
+/** Projets complétés dont la facturation n'a PAS encore été confirmée (rappel "à facturer").
+ *
+ *  Le filtre était `facturee = 0` — or `facturee` passe à 1 automatiquement à la complétion
+ *  (règle « complété = revenu reconnu », voir la migration mig_complete_facture). La liste
+ *  était donc TOUJOURS vide : le rappel existait à l'écran mais ne pouvait rien montrer.
+ *  Il s'accroche maintenant à la confirmation humaine (bouton « Facturé par … ! »). */
 export async function listerProjetsAFacturer(): Promise<any[]> {
   return await all<any>(
     `SELECT p.id, p.nom, p.prix_contrat, p.budget_estime, p.date_fin_reelle, c.nom as client_nom
      FROM projets p LEFT JOIN clients c ON c.id = p.client_id
-     WHERE p.statut = 'complete' AND COALESCE(p.facturee, 0) = 0
+     WHERE p.statut = 'complete' AND p.facturation_confirmee_le IS NULL
      ORDER BY COALESCE(p.date_fin_reelle, p.date_fin_prevue, p.date_creation) DESC LIMIT 50`
   );
+}
+
+/** Confirme (ou annule) « la facture est partie » sur un chantier.
+ *
+ *  `par` vient de la SESSION serveur, jamais du corps de la requête : une confirmation de
+ *  facturation est une signature, et un nom envoyé par le client ne prouve rien.
+ *  Renvoie l'état écrit pour que l'appelant l'affiche sans relire. */
+export async function confirmerFacturationProjet(
+  id: number, par: string | null, confirme: boolean
+): Promise<{ le: string | null; par: string | null }> {
+  await initDb();
+  // Pas d'invalidation de cache à faire : run() avance _lastWrite, donc cacheLecture()
+  // (liste des projets, 10 s) refuse d'office son entrée construite avant cette écriture.
+  if (!confirme) {
+    await run("UPDATE projets SET facturation_confirmee_le = NULL, facturation_confirmee_par = NULL WHERE id = ?", [id]);
+    return { le: null, par: null };
+  }
+  const le = aujourdhuiMontreal();
+  const qui = (par || "").trim() || null;
+  await run("UPDATE projets SET facturation_confirmee_le = ?, facturation_confirmee_par = ? WHERE id = ?", [le, qui, id]);
+  return { le, par: qui };
 }
 export async function getProjet(id: number): Promise<ProjetAvecTotaux | null> {
   // PERF : on ne charge PAS les blobs facture/contrat (plusieurs Mo) dans le JSON.
@@ -2066,6 +2129,101 @@ export async function supprimerFactureProjet(id: number): Promise<{ ok: boolean;
   return { ok: true };
 }
 
+// === FACTURES EN DOUBLE ===
+// Le moteur (quelles pièces se ressemblent) est PUR, dans lib/doublons-factures.ts.
+// Ici : ce qu'on lit en base, et la mémoire des « ce n'est pas un doublon ».
+// Rien n'est jamais supprimé ou fusionné automatiquement : une facture en double se règle
+// à la main, avec les yeux sur les deux pièces. L'app signale, Francis tranche.
+
+/** Les pièces récentes des deux familles, en version LÉGÈRE (jamais les photos de reçus :
+ *  ce sont des blobs de plusieurs Mo, et la détection n'en a aucun besoin). */
+async function piecesPourDoublons() {
+  const [depenses, factures] = await Promise.all([
+    all<any>("SELECT id, projet_id, date, montant, fournisseur, description FROM depenses_projet ORDER BY date DESC LIMIT 5000"),
+    all<any>("SELECT id, projet_id, date, montant, numero, description FROM factures_projet ORDER BY date DESC LIMIT 5000"),
+  ]);
+  return { depenses, factures };
+}
+
+/** Paires déjà écartées à la main. */
+export async function doublonsIgnores(): Promise<string[]> {
+  const r = await all<{ cle: string }>("SELECT cle FROM doublons_ignores");
+  return r.map((x) => x.cle);
+}
+
+/** Les paires suspectes, enrichies de quoi les JUGER à l'écran : les deux pièces au complet
+ *  et le nom du chantier. Sans ça, l'alerte oblige à ouvrir deux onglets pour comparer. */
+export async function listerDoublonsSuspects(): Promise<any[]> {
+  await initDb();
+  const [{ depenses, factures }, ignorees] = await Promise.all([piecesPourDoublons(), doublonsIgnores()]);
+  const paires = detecterDoublons({ depenses, factures }, ignorees);
+  if (paires.length === 0) return [];
+  const parId = {
+    depense: new Map(depenses.map((d: any) => [d.id, d])),
+    facture: new Map(factures.map((f: any) => [f.id, f])),
+  };
+  // Noms de chantier en UNE requête : un SELECT par paire ferait des dizaines d'allers-
+  // retours réseau sur Turso pour afficher un seul écran.
+  const projetIds = new Set<number>();
+  for (const p of paires) {
+    for (const id of p.ids) {
+      const piece = parId[p.famille].get(id);
+      if (piece?.projet_id) projetIds.add(Number(piece.projet_id));
+    }
+  }
+  const noms = new Map<number, string>();
+  if (projetIds.size > 0) {
+    const liste = [...projetIds];
+    const rows = await all<{ id: number; nom: string }>(
+      `SELECT id, nom FROM projets WHERE id IN (${liste.map(() => "?").join(",")})`, liste
+    );
+    for (const r of rows) noms.set(Number(r.id), r.nom);
+  }
+  return paires.map((p) => ({
+    ...p,
+    pieces: p.ids.map((id) => {
+      const piece = parId[p.famille].get(id) || { id };
+      return { ...piece, projet_nom: piece.projet_id ? noms.get(Number(piece.projet_id)) || null : null };
+    }),
+  }));
+}
+
+/** Combien de paires attendent une décision — pour le push du matin et la pastille. */
+export async function compterDoublonsSuspects(): Promise<{ total: number; francs: number }> {
+  const paires = await listerDoublonsSuspects();
+  return { total: paires.length, francs: paires.filter((p) => p.certitude === "franc").length };
+}
+
+/** Ce qu'une pièce tout juste enregistrée heurte. Sert à avertir À LA SAISIE, sans jamais
+ *  refuser l'écriture : deux factures identiques existent parfois pour vrai (deux voyages
+ *  de gravier le même jour, au même prix). C'est un signalement, pas un garde-fou. */
+export async function doublonsDeLaPieceEnregistree(famille: "depense" | "facture", id: number): Promise<any[]> {
+  try {
+    const [{ depenses, factures }, ignorees] = await Promise.all([piecesPourDoublons(), doublonsIgnores()]);
+    return doublonsDeLaPiece(famille, id, { depenses, factures }, ignorees);
+  } catch {
+    // La détection ne doit JAMAIS faire échouer une saisie : la dépense est déjà écrite,
+    // un 500 ici ferait croire à un échec et provoquerait… une deuxième saisie.
+    return [];
+  }
+}
+
+/** « Ce n'est pas un doublon » — décision humaine, datée et signée, définitive pour CETTE
+ *  paire. Une troisième pièce identique formera de nouvelles paires, donc de nouvelles
+ *  alertes : c'est voulu, une pièce de plus mérite un nouveau regard. */
+export async function ignorerDoublon(cle: string, par: string | null, note?: string | null): Promise<void> {
+  await initDb();
+  await run(
+    "INSERT OR REPLACE INTO doublons_ignores (cle, ignore_le, ignore_par, note) VALUES (?, ?, ?, ?)",
+    [cle, new Date().toISOString(), (par || "").trim() || null, (note || "").trim() || null]
+  );
+}
+/** Remet une paire sous surveillance (on s'est trompé en l'écartant). */
+export async function reactiverDoublon(cle: string): Promise<void> {
+  await initDb();
+  await run("DELETE FROM doublons_ignores WHERE cle = ?", [cle]);
+}
+
 /** Le projet référencé existe-t-il ? `null`/absent = dépense générale, c'est permis.
  *  Un id qui ne pointe sur RIEN ne l'est pas : la ligne devient un orphelin invisible
  *  (aucune fiche projet ne l'affiche) mais bien compté dans les totaux globaux. */
@@ -2407,6 +2565,10 @@ export interface PaiePeriode {
   /** Heures travaillées mais NON payées dans une période déjà versée (feuille de temps
    *  saisie après le versement). Calculé à la lecture, jamais stocké. */
   heures_non_payees?: number;
+  /** Indemnité de jour férié créditée à la période, en heures (1/20 — lib/paie-feries.ts). */
+  heures_ferie?: number;
+  /** Détail JSON des fériés de la période : [{ date, nom, heures }]. */
+  feries_detail?: string | null;
 }
 
 // Logique paie centralisée + testée dans lib/calculs.ts
@@ -2439,11 +2601,26 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   //    employé peut avoir des taux différents dans la même quinzaine (augmentation
   //    en cours de période, ou taux distinct selon le chantier).
   const groupes = new Map<string, { employe: string; debut: string; fin: string; heures: { date: string; heures: number; taux: number }[] }>();
+  const heuresParEmploye = new Map<string, { date: string; heures: number }[]>();
   for (const h of heures) {
     const p = periodeBiHebdo(h.date);
     const key = `${h.employe}|${p.debut}`;
     if (!groupes.has(key)) groupes.set(key, { employe: h.employe, debut: p.debut, fin: p.fin, heures: [] });
     groupes.get(key)!.heures.push({ date: h.date, heures: h.heures || 0, taux: h.taux_horaire || 0 });
+    // Toutes les heures punchées de l'employé, à plat : la base du 1/20 d'un férié est
+    // ANTÉRIEURE à la quinzaine qui le paie, donc elle ne peut pas venir du groupe.
+    if (!heuresParEmploye.has(h.employe)) heuresParEmploye.set(h.employe, []);
+    heuresParEmploye.get(h.employe)!.push({ date: String(h.date).slice(0, 10), heures: h.heures || 0 });
+  }
+
+  // 2b. Fiches employés : qui a droit à l'indemnité de férié (actif), et à quel taux quand
+  //     la quinzaine du congé n'a AUCUNE heure punchée (congé des Fêtes, semaine de pluie).
+  //     Un employé désactivé après une fin d'emploi ne touche pas un férié postérieur.
+  const fiches = new Map<string, { actif: boolean; taux: number }>();
+  for (const e of await all<{ nom: string; taux_horaire: number; actif: number | null }>(
+    "SELECT nom, taux_horaire, actif FROM employes"
+  )) {
+    fiches.set(e.nom, { actif: (e.actif ?? 1) !== 0, taux: Number(e.taux_horaire) || 0 });
   }
 
   // 3. BANQUE D'HEURES — traitement CHRONOLOGIQUE par employé.
@@ -2457,6 +2634,20 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   for (const g of groupes.values()) {
     if (!parEmploye.has(g.employe)) parEmploye.set(g.employe, [] as any);
     (parEmploye.get(g.employe) as any).push(g);
+  }
+  // Quinzaines qui contiennent un JOUR FÉRIÉ PAYÉ mais aucune heure punchée : sans ça,
+  // l'indemnité de Noël ou du Jour de l'An serait simplement perdue — aucune période n'est
+  // créée pendant le congé des Fêtes, et personne ne verrait qu'il manque une paie.
+  // On ne remonte jamais avant FERIES_PAYES_DEPUIS ni au-delà de la quinzaine courante.
+  const finHorizon = periodeBiHebdo(aujourdhuiMontreal()).fin;
+  for (const f of feriesPayesEntre(FERIES_PAYES_DEPUIS, finHorizon)) {
+    const p = periodeBiHebdo(f.date);
+    for (const [emp, liste] of parEmploye) {
+      if ((liste as any[]).some((g) => g.debut === p.debut)) continue;   // déjà couverte
+      if (!(fiches.get(emp)?.actif ?? true)) continue;                    // plus à l'emploi
+      if (indemniteFerie(heuresParEmploye.get(emp) || [], f.date) <= 0) continue; // aucun droit acquis
+      (liste as any[]).push({ employe: emp, debut: p.debut, fin: p.fin, heures: [] });
+    }
   }
   // Périodes déjà en base, chargées EN UNE FOIS et indexées : avant, un SELECT par
   // quinzaine puis un UPDATE/INSERT par quinzaine — 376 requêtes mesurées pour trois
@@ -2478,20 +2669,38 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
       // un employé avec 40 h @ 50 $ + 40 h @ 60 $ était payé 80 h × 60 $ au lieu de
       // 40×50 + 40×60. Pour un taux unique (cas normal), la moyenne = ce taux.
       const montantHeures = g.heures.reduce((s: number, e: any) => s + (e.heures || 0) * (e.taux || 0), 0);
-      const taux = travaillees > 0 ? montantHeures / travaillees : 0;
-      const base = Math.min(travaillees, SEUIL);          // heures payées d'office (max 80)
-      const surplus = Math.max(0, travaillees - SEUIL);   // surplus → accumulé en banque
-      const dispoAvant = banque;                          // banque disponible AVANT cette période
-
       const existant = existants.get(`${g.employe}|${g.debut}|${g.fin}`) || null;
 
+      // INDEMNITÉ DE JOUR FÉRIÉ — 1/20 des 4 semaines complètes qui précèdent la semaine du
+      // congé (lib/paie-feries.ts). Une période DÉJÀ PAYÉE garde l'indemnité qu'elle a
+      // versée : la recalculer changerait le talon remis à l'employé, et le solde de banque
+      // qui en découle. Sinon on recalcule (une feuille de temps saisie en retard change la
+      // base, donc l'indemnité — tant que rien n'est versé, c'est le bon montant qui gagne).
+      const feries = existant?.paye
+        ? { heures: Number(existant.heures_ferie) || 0, detail: null as any }
+        : feriesDeLaPeriode(heuresParEmploye.get(g.employe) || [], g.debut, g.fin);
+      const heuresFerie = feries.heures;
+      const detailFerie = existant?.paye
+        ? (existant.feries_detail ?? null)
+        : (feries.detail && feries.detail.length ? JSON.stringify(feries.detail) : null);
+
+      // Le taux : moyenne pondérée des heures punchées. Quand la quinzaine n'a aucune heure
+      // (congé des Fêtes payé au férié seulement), on prend le taux de la fiche employé.
+      const taux = travaillees > 0 ? montantHeures / travaillees : (fiches.get(g.employe)?.taux || 0);
+
+      // L'indemnité COMPTE dans le seuil de 80 h (LNT art. 53, décision de Francis) : elle
+      // est créditée à la période comme des heures, donc 80 h punchées + 8 h de férié se
+      // paient 80 h et mettent 8 h à la banque — l'employé ne perd rien, il le reporte.
+      const { creditees, payeesDoffice: base, versBanque: surplus } = repartitionFerie(travaillees, heuresFerie, SEUIL);
+      const dispoAvant = banque;                          // banque disponible AVANT cette période
+
       // Heures tirées de la banque pour combler cette période — CHOISI par l'utilisateur (banque_appliquee).
-      // Jamais automatique : on propose seulement. Plafonné au manque (80 - travaillees) et à la dispo.
+      // Jamais automatique : on propose seulement. Plafonné au manque (80 - créditées) et à la dispo.
       let appliquee = 0;
       if (existant?.paye) {
         appliquee = Math.min(existant.banque_appliquee || 0, dispoAvant);
-      } else if (travaillees < SEUIL) {
-        appliquee = Math.min(existant?.banque_appliquee || 0, SEUIL - travaillees, dispoAvant);
+      } else if (creditees < SEUIL) {
+        appliquee = Math.min(existant?.banque_appliquee || 0, SEUIL - creditees, dispoAvant);
       }
       const payees = base + appliquee;
       banque = dispoAvant + surplus - appliquee;          // solde résultant
@@ -2505,10 +2714,11 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
         if (!existant.paye) {
           const inchangee = egal(existant.heures_normales, payees) && egal(existant.heures_travaillees, travaillees)
             && egal(existant.banque_dispo, dispoAvant) && egal(existant.banque_appliquee, appliquee) && egal(existant.banque_solde, banque)
-            && egal(existant.taux_horaire, taux) && egal(existant.montant_brut, brut) && egal(existant.das_montant, dasMontant) && egal(existant.montant_net, net);
+            && egal(existant.taux_horaire, taux) && egal(existant.montant_brut, brut) && egal(existant.das_montant, dasMontant) && egal(existant.montant_net, net)
+            && egal(existant.heures_ferie, heuresFerie) && (existant.feries_detail ?? null) === detailFerie;
           if (!inchangee) ecritures.push({
-            sql: `UPDATE paies_periodes SET heures_normales=?, heures_sup=0, heures_travaillees=?, banque_dispo=?, banque_appliquee=?, banque_solde=?, taux_horaire=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
-            args: [payees, travaillees, dispoAvant, appliquee, banque, taux, brut, dasMontant, net, existant.id],
+            sql: `UPDATE paies_periodes SET heures_normales=?, heures_sup=0, heures_travaillees=?, heures_ferie=?, feries_detail=?, banque_dispo=?, banque_appliquee=?, banque_solde=?, taux_horaire=?, montant_brut=?, das_montant=?, montant_net=? WHERE id=?`,
+            args: [payees, travaillees, heuresFerie, detailFerie, dispoAvant, appliquee, banque, taux, brut, dasMontant, net, existant.id],
           });
         } else {
           // Période payée : on ne touche JAMAIS aux montants versés. En revanche on
@@ -2525,8 +2735,8 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
         }
       } else {
         ecritures.push({
-          sql: `INSERT OR IGNORE INTO paies_periodes (employe, debut, fin, heures_normales, heures_sup, heures_travaillees, banque_dispo, banque_appliquee, banque_solde, taux_horaire, das_pct, montant_brut, das_montant, montant_net, paye, date_creation) VALUES (?, ?, ?, ?, 0, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?)`,
-          args: [g.employe, g.debut, g.fin, payees, travaillees, dispoAvant, banque, taux, 0.15, brut, dasMontant, net, new Date().toISOString()],
+          sql: `INSERT OR IGNORE INTO paies_periodes (employe, debut, fin, heures_normales, heures_sup, heures_travaillees, heures_ferie, feries_detail, banque_dispo, banque_appliquee, banque_solde, taux_horaire, das_pct, montant_brut, das_montant, montant_net, paye, date_creation) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?)`,
+          args: [g.employe, g.debut, g.fin, payees, travaillees, heuresFerie, detailFerie, dispoAvant, banque, taux, 0.15, brut, dasMontant, net, new Date().toISOString()],
         });
       }
     }
@@ -2542,10 +2752,14 @@ export async function listerPaiePeriodes(employe?: string, limit = 12): Promise<
   // Calculé à la lecture (aucune colonne à migrer) et jamais négatif.
   // L'écart brut travaillées − payées ne suffit PAS : au-delà de 80 h, l'écart est le
   // surplus qui part en banque d'heures, pas une dette (voir heuresDuesPeriodePayee).
+  // L'indemnité de férié est incluse dans `heures_normales` (heures payées) mais elle n'a
+  // jamais été punchée : il faut la retirer avant de comparer, sinon une quinzaine avec un
+  // congé masquerait autant d'heures réellement dues (8 h de férié = 8 h de travail oublié
+  // qui ne serait plus signalé).
   return list.map((p: any) => ({
     ...p,
     heures_non_payees: p.paye
-      ? heuresDuesPeriodePayee(p.heures_travaillees || 0, p.heures_normales || 0)
+      ? heuresDuesPeriodePayee(p.heures_travaillees || 0, (p.heures_normales || 0) - (p.heures_ferie || 0))
       : 0,
   }));
 }
@@ -2566,11 +2780,14 @@ export async function nettoyerPayePeriodesOrphelines(): Promise<number> {
     "SELECT DISTINCT employe, date FROM heures_projet WHERE employe IS NOT NULL"
   );
   if (heuresExistantes.length === 0) {
-    const r = await run("DELETE FROM paies_periodes WHERE paye = 0", []);
+    // Une période qui ne porte QUE une indemnité de férié n'a, par définition, aucune heure
+    // punchée : elle n'est pas orpheline. La supprimer ici la ferait renaître au prochain
+    // listerPaiePeriodes, puis mourir — une paie qui clignote, jamais versée.
+    const r = await run("DELETE FROM paies_periodes WHERE paye = 0 AND COALESCE(heures_ferie, 0) <= 0", []);
     return r.rowsAffected;
   }
   // Liste les périodes existantes
-  const periodes = await all<{ id: number; employe: string; debut: string; fin: string; paye: number }>("SELECT id, employe, debut, fin, paye FROM paies_periodes");
+  const periodes = await all<{ id: number; employe: string; debut: string; fin: string; paye: number; heures_ferie: number | null }>("SELECT id, employe, debut, fin, paye, heures_ferie FROM paies_periodes");
   // Les (employé, période) qui ont encore des heures — calculé EN MÉMOIRE à partir des
   // dates déjà chargées. Avant : un COUNT(*) par période, à chaque ouverture de la paie.
   // Mesuré : 376 requêtes pour trois employés sur deux ans et demi ; sur une base distante
@@ -2586,8 +2803,9 @@ export async function nettoyerPayePeriodesOrphelines(): Promise<number> {
     // 1. Borne mal alignée avec l'ancrage de paie actuel → période obsolète, on supprime.
     const aligne = periodeBiHebdoCalc(p.debut);
     if (aligne.debut !== p.debut || aligne.fin !== p.fin) { aSupprimer.push(p.id); continue; }
-    // 2. Aucune heure réelle dans la période → orpheline, on supprime.
-    if (!avecHeures.has(`${p.employe}|${p.debut}|${p.fin}`)) aSupprimer.push(p.id);
+    // 2. Aucune heure réelle dans la période → orpheline, on supprime… SAUF si elle porte
+    //    une indemnité de jour férié : c'est une paie légitime sans heure punchée.
+    if (!avecHeures.has(`${p.employe}|${p.debut}|${p.fin}`) && (p.heures_ferie || 0) <= 0) aSupprimer.push(p.id);
   }
   await runBatch(aSupprimer.map((id) => ({ sql: "DELETE FROM paies_periodes WHERE id = ?", args: [id] })));
   return aSupprimer.length;

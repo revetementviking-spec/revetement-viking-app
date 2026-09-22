@@ -26,6 +26,15 @@ function ajouterJours(iso: string, n: number): string {
   dt.setDate(dt.getDate() + Math.round(n));
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
+// « 21 sept. » — une date ISO lue comme MINUIT LOCAL. `new Date("2026-09-21")` est minuit
+// UTC et s'affiche « 20 sept. » à Montréal : une confirmation de facturation datée de la
+// veille, c'est exactement le genre de détail qui fait douter d'un chiffre.
+function dateCourte(iso?: string | null): string {
+  const s = String(iso || "").slice(0, 10);
+  const [y, m, d] = s.split("-").map(Number);
+  if (!y || !m || !d) return "—";
+  return new Date(y, m - 1, d).toLocaleDateString("fr-CA", { day: "numeric", month: "short" });
+}
 // Nombre de jours entre deux dates ISO (fin - début).
 function diffJours(debut: string, fin: string): number {
   const [y1, m1, d1] = debut.split("-").map(Number);
@@ -109,6 +118,9 @@ export default function ProjetDetail() {
   const [lightboxId, setLightboxId] = useState<number | null>(null);
   const [resumeIa, setResumeIa] = useState<string | null>(null);
   const [resumeBusy, setResumeBusy] = useState(false);
+  // Qui est connecté — sert à écrire « Facturé par Francis ! » sur le bouton. Le serveur
+  // repose la question à la session au moment d'écrire : ce nom-là n'est qu'un libellé.
+  const [utilisateur, setUtilisateur] = useState<string | null>(null);
 
   const genererResumeIa = async () => {
     setResumeBusy(true);
@@ -163,7 +175,18 @@ export default function ProjetDetail() {
   useEffect(() => {
     charger();
     fetch("/api/employes").then((r) => r.json()).then(setEmployes);
+    fetch("/api/auth/me").then((r) => (r.ok ? r.json() : null)).then((d) => d?.user && setUtilisateur(d.user)).catch(() => {});
   }, [id]);
+
+  /** Confirme (ou retire) « la facture est partie chez le client ».
+   *  Le chantier « complété » dit seulement que les travaux sont finis ; cette trace-là dit
+   *  que la facture est sortie, et c'est elle qui vide le rappel « À facturer ». */
+  const confirmerFacturation = async (confirme: boolean) => {
+    if (!confirme && !confirm("Retirer la confirmation de facturation ? Le chantier reviendra dans « À facturer ».")) return;
+    if (!(await ecrire("/api/projets", "PATCH", { id, facturation_confirmee: confirme }, "Enregistrement"))) return;
+    toast(confirme ? `🧾 Facturé — confirmé${utilisateur ? ` par ${utilisateur}` : ""}` : "Confirmation de facturation retirée", confirme ? "success" : "info");
+    charger();
+  };
 
   // Verrous anti-double-clic : sur un chantier en 4G faible, deux taps sur « ＋ Ajouter »
   // enregistraient DEUX fois les mêmes heures (16 h facturées pour la journée) ou la même
@@ -410,6 +433,36 @@ ${VIKING_EMAIL}
               <button onClick={() => changerStatut("en_cours")} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-sm font-bold active:scale-95 transition" title="Reprendre le chantier">
                 ▶️ Reprendre le chantier
               </button>
+            )}
+            {/* Chantier terminé : confirmer que la FACTURE est partie chez le client.
+                C'est le geste que Francis pose en recevant le courriel « chantier terminé ».
+                Distinct du statut : un chantier peut être complété depuis deux semaines sans
+                que la facture soit sortie — et c'est exactement ce qu'on veut voir. */}
+            {projet.statut === "complete" && (
+              projet.facturation_confirmee_le ? (
+                <span
+                  className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-50 border border-emerald-300 text-emerald-900 rounded text-sm font-bold"
+                  title={`Confirmé le ${projet.facturation_confirmee_le}`}
+                >
+                  🧾 Facturé{projet.facturation_confirmee_par ? ` par ${projet.facturation_confirmee_par}` : ""} ·{" "}
+                  {dateCourte(projet.facturation_confirmee_le)}
+                  <button
+                    onClick={() => confirmerFacturation(false)}
+                    className="ml-1 text-[11px] font-semibold text-emerald-700 underline hover:text-emerald-900"
+                    title="Retirer la confirmation (si la facture n'est finalement pas partie)"
+                  >
+                    annuler
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => confirmerFacturation(true)}
+                  className="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-white rounded text-sm font-bold active:scale-95 transition"
+                  title="Confirmer que la facture a été envoyée au client"
+                >
+                  🧾 Facturé{utilisateur ? ` par ${utilisateur}` : ""} !
+                </button>
+              )
             )}
             {projet.soumission_numero && (
               <a href={`/soumissions/nouveau?modifier=${projet.soumission_numero}`} className="text-xs px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded font-semibold">📄 Voir soumission {projet.soumission_numero}</a>

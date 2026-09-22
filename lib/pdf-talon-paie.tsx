@@ -29,6 +29,12 @@ interface TalonProps {
   das_montant: number;
   montant_net: number;
   date_paiement?: string;
+  /** Indemnité de jour férié incluse dans `heures_normales` (1/20 — lib/paie-feries.ts). */
+  heures_ferie?: number;
+  /** JSON [{ date, nom, heures }] des fériés de la période. */
+  feries_detail?: string | null;
+  /** Solde de banque après la période — affiché quand des heures y ont été reportées. */
+  banque_solde?: number;
 }
 
 const cad = (n: number) => new Intl.NumberFormat("fr-CA", { style: "currency", currency: "CAD" }).format(n || 0);
@@ -37,8 +43,25 @@ const dateLisible = (iso: string) => {
   return new Date(y, (m || 1) - 1, d || 1).toLocaleDateString("fr-CA", { day: "numeric", month: "long", year: "numeric" });
 };
 
+/** Fériés de la période, lisibles. Un JSON abîmé ne doit pas empêcher un talon de sortir. */
+function feriesLisibles(json?: string | null): { date: string; nom: string; heures: number }[] {
+  try {
+    const d = JSON.parse(json || "[]");
+    return Array.isArray(d) ? d : [];
+  } catch {
+    return [];
+  }
+}
+
 export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
-  const brutNormal = talon.heures_normales * talon.taux_horaire;
+  // L'indemnité de férié est DANS les heures payées : on la sort de la ligne de travail pour
+  // que l'employé voie les deux gains séparément. Sans ça, le talon montre des heures qu'il
+  // n'a pas travaillées, et un employé qui recompte ses punchs ne retrouve pas son total.
+  const heuresFerie = talon.heures_ferie || 0;
+  const heuresTravail = Math.max(0, talon.heures_normales - heuresFerie);
+  const brutTravail = heuresTravail * talon.taux_horaire;
+  const brutFerie = heuresFerie * talon.taux_horaire;
+  const feries = feriesLisibles(talon.feries_detail);
   return (
     <Document>
       <Page size="LETTER" style={s.page}>
@@ -64,13 +87,33 @@ export function TalonPaiePDF({ talon }: { talon: TalonProps }) {
         {/* Gains */}
         <Text style={s.sectionTitre}>Gains</Text>
         <View style={s.row}>
-          <Text>Heures payées — {talon.heures_normales.toFixed(2)} h × {cad(talon.taux_horaire)}</Text>
-          <Text style={s.val}>{cad(brutNormal)}</Text>
+          <Text>Heures payées — {heuresTravail.toFixed(2)} h × {cad(talon.taux_horaire)}</Text>
+          <Text style={s.val}>{cad(brutTravail)}</Text>
         </View>
+        {heuresFerie > 0 && (
+          <View style={s.row}>
+            <Text>
+              Indemnité jour férié — {heuresFerie.toFixed(2)} h × {cad(talon.taux_horaire)}
+              {feries.length > 0 ? `\n${feries.map((f) => `${f.nom} (${dateLisible(f.date)})`).join(", ")}` : ""}
+            </Text>
+            <Text style={s.val}>{cad(brutFerie)}</Text>
+          </View>
+        )}
         <View style={s.row}>
           <Text style={s.val}>Salaire brut</Text>
           <Text style={s.val}>{cad(talon.montant_brut)}</Text>
         </View>
+        {heuresFerie > 0 && (
+          <Text style={[s.small, { marginTop: 4 }]}>
+            Indemnité de jour férié : 1/20 des heures travaillées des 4 semaines complètes précédant
+            la semaine du congé (Loi sur les normes du travail, art. 62).
+          </Text>
+        )}
+        {(talon.banque_solde || 0) > 0 && (
+          <Text style={[s.small, { marginTop: 2 }]}>
+            Banque d'heures au terme de la période : {(talon.banque_solde || 0).toFixed(2)} h, payables plus tard.
+          </Text>
+        )}
 
         {/* Net (DAS retiré de l'affichage — montant payé tel quel) */}
         <View style={s.net}>

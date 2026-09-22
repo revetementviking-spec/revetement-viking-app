@@ -15,6 +15,20 @@ function dateLocale(iso: string): Date {
   return (y && m && d) ? new Date(y, m - 1, d) : new Date(iso);
 }
 
+/** « Action de grâce (12 oct.) — 8,00 h » à partir du JSON stocké sur la période.
+ *  Un JSON illisible ne doit jamais faire écran blanc sur la page Paie : on rend "". */
+function detailFeries(p: any): string {
+  try {
+    const d = JSON.parse(p.feries_detail || "[]");
+    if (!Array.isArray(d) || d.length === 0) return "";
+    return d
+      .map((f: any) => `${f.nom} (${dateLocale(f.date).toLocaleDateString("fr-CA", { day: "numeric", month: "short" })}) — ${Number(f.heures || 0).toFixed(2).replace(".", ",")} h`)
+      .join(" · ");
+  } catch {
+    return "";
+  }
+}
+
 // Vue Paie (suivi bi-hebdo + banque d'heures) — réutilisée par /finances/paye et l'onglet Finances.
 export default function PaieVue() {
   const [periodes, setPeriodes] = useState<any[]>([]);
@@ -69,6 +83,10 @@ export default function PaieVue() {
         taux_horaire: p.taux_horaire || 0, das_pct: p.das_pct || 0.15,
         montant_brut: p.montant_brut || 0, das_montant: p.das_montant || 0,
         montant_net: p.montant_net || 0, date_paiement: p.date_paiement,
+        // Indemnité de jour férié : détaillée sur le talon, sinon l'employé voit des heures
+        // payées qu'il n'a pas travaillées sans savoir d'où elles viennent.
+        heures_ferie: p.heures_ferie || 0, feries_detail: p.feries_detail || null,
+        banque_solde: p.banque_solde || 0,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -287,6 +305,12 @@ export default function PaieVue() {
                     <div className="text-[10px] text-slate-500 uppercase">Heures payées</div>
                     <div className="font-bold">{(p.heures_normales || 0).toFixed(1)} h</div>
                   </div>
+                  {(p.heures_ferie || 0) > 0 && (
+                    <div className="bg-amber-50 p-2 rounded" title={detailFeries(p) || "Indemnité de jour férié — 1/20 des heures des 4 semaines complètes précédentes"}>
+                      <div className="text-[10px] text-amber-700 uppercase">🎉 Férié (1/20)</div>
+                      <div className="font-bold text-amber-900">{(p.heures_ferie || 0).toFixed(2)} h</div>
+                    </div>
+                  )}
                   <div className={`p-2 rounded ${(p.banque_solde || 0) > 0 ? "bg-indigo-50" : "bg-slate-50"}`}>
                     <div className="text-[10px] text-slate-500 uppercase">Banque (solde)</div>
                     <div className={`font-bold ${(p.banque_solde || 0) > 0 ? "text-indigo-700" : ""}`}>{(p.banque_solde || 0).toFixed(1)} h</div>
@@ -305,10 +329,20 @@ export default function PaieVue() {
                   </div>
                 </div>
 
+                {(p.heures_ferie || 0) > 0 && (
+                  <div className="mt-2 text-xs bg-amber-50 border border-amber-200 rounded p-2 text-amber-900">
+                    🎉 <strong>{(p.heures_ferie || 0).toFixed(2)} h</strong> d'indemnité de jour férié —{" "}
+                    {detailFeries(p) || "1/20 des heures des 4 semaines complètes précédentes"}.
+                    {" "}Ces heures comptent dans les 80 h de la période.
+                  </div>
+                )}
+
                 <div className="mt-2 text-xs text-slate-500">
                   {(() => {
-                    const trav = p.heures_travaillees ?? p.heures_normales ?? 0;
-                    const surplus = Math.max(0, trav - 80);
+                    // L'indemnité de férié est créditée comme des heures : elle compte dans
+                    // les 80 h, donc c'est elle qui peut pousser le surplus en banque.
+                    const creditees = (p.heures_travaillees ?? p.heures_normales ?? 0) + (p.heures_ferie || 0);
+                    const surplus = Math.max(0, creditees - 80);
                     if (surplus > 0.01) return <span className="text-indigo-700">🏦 {surplus.toFixed(1)} h accumulées en banque (payées plus tard)</span>;
                     const appliquee = p.banque_appliquee || 0;
                     if (appliquee > 0.01) return <span className="text-indigo-700">🏦 {appliquee.toFixed(1)} h tirées de la banque pour compléter la période</span>;
@@ -317,7 +351,7 @@ export default function PaieVue() {
                 </div>
 
                 {!p.paye && (() => {
-                  const trav = p.heures_travaillees ?? p.heures_normales ?? 0;
+                  const trav = (p.heures_travaillees ?? p.heures_normales ?? 0) + (p.heures_ferie || 0);
                   const manque = Math.max(0, 80 - trav);
                   const dispo = p.banque_dispo || 0;
                   const appliquee = p.banque_appliquee || 0;

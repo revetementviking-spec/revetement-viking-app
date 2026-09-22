@@ -24,6 +24,26 @@ export const MAX_BLOCS = 3;
 
 export const NOUVEAUTES: Nouveaute[] = [
   {
+    version: "2026-09-22",
+    titre: "Détection des factures en double",
+    points: [
+      "L'app compare vos factures et signale celles qui semblent être des doublons : même fournisseur, même montant, à 30 jours ou moins — et, pour les factures envoyées aux clients, deux factures qui portent le même numéro.",
+      "L'avertissement apparaît tout de suite à la saisie (la facture est quand même enregistrée : c'est un signalement, pas un refus), et le nombre de doublons à vérifier s'ajoute au rappel de 8 h du matin.",
+      "Tout se règle dans Finances → 🧾 Doublons : les deux factures sont montrées côte à côte. Rien n'est jamais supprimé ni fusionné automatiquement — un bouton « Ce n'est pas un doublon » fait taire l'alerte pour de bon, avec votre nom et la date.",
+    ],
+  },
+  {
+    version: "2026-09-21",
+    titre: "Jours fériés payés et bouton « Facturé ! »",
+    points: [
+      "Les jours fériés sont maintenant calculés et payés dans la paie : l'indemnité vaut 1/20 des heures travaillées des 4 semaines complètes qui précèdent le congé (un temps plein donne 8 h). Elle apparaît sur la période et sur le talon de paie, avec le nom du congé.",
+      "Ces heures comptent dans les 80 h de la quinzaine : 80 h travaillées + 8 h de férié se paient 80 h, et les 8 h restantes s'ajoutent à votre banque d'heures — rien n'est perdu, c'est reporté.",
+      "Huit congés payés : Jour de l'An, lundi de Pâques, Patriotes, 24 juin, 1er juillet, fête du Travail, Action de grâce et Noël. Premier congé payé : l'Action de grâce du 12 octobre 2026.",
+      "Sur un chantier complété, un bouton « 🧾 Facturé ! » confirme que la facture est partie au client — avec la date et le nom de qui l'a confirmé. Tant qu'il n'est pas cliqué, le chantier reste dans « Projets à facturer » au tableau de bord.",
+      "Ce rappel « Projets à facturer » ne se déclenchait jamais : compléter un chantier le marquait « facturé » tout seul. Il fonctionne maintenant.",
+    ],
+  },
+  {
     version: "2026-09-17",
     titre: "Écran d'ouverture Viking",
     points: [

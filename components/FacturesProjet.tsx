@@ -54,6 +54,13 @@ export default function FacturesProjet({ projetId, onChange }: { projetId: numbe
         return;
       }
       toast(`✓ Facture de ${formatCAD(montant)} ajoutée`, "success");
+      // Doublon possible : on le dit TOUT DE SUITE, pendant que la facture est sous les
+      // yeux. La facture est bel et bien enregistrée — c'est un avertissement, pas un
+      // refus : deux versements égaux sur un même contrat, ça existe.
+      const d = await r.json().catch(() => ({} as any));
+      if (Array.isArray(d?.doublons) && d.doublons.length > 0) {
+        toast(`⚠ ${d.doublons[0].raison} — à vérifier dans Finances → Doublons`, "warning");
+      }
       setForm({ numero: "", montant: "", date: aujourdhui, description: "" });
       setOuvert(false);
       rafraichir();
