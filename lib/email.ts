@@ -17,15 +17,20 @@ export interface EmailOpts { to: string; subject: string; text: string; html?: s
 const NOM_EXPEDITEUR = "Revêtement Viking Inc.";
 const REPLY_TO_DEFAUT = "revetementviking@gmail.com";
 
-export function emailEstConfigure(): boolean {
-  return !!(process.env.RESEND_API_KEY || (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD));
+/** L'app peut-elle envoyer un courriel D'ELLE-MÊME ? Resend compte seulement si
+ *  l'expéditeur est posé en production (sinon `sendEmail` refuse, voir `enProduction`) :
+ *  les appelants retombent alors sur « non configuré » (mailto, Gmail) au lieu d'un 500. */
+export function emailEstConfigure(env: NodeJS.ProcessEnv = process.env): boolean {
+  const resendPret = !!env.RESEND_API_KEY && (!!env.RESEND_FROM || !enProduction(env));
+  const gmailPret = !!(env.GMAIL_USER && env.GMAIL_APP_PASSWORD);
+  return resendPret || gmailPret;
 }
 
 /** En production (Vercel ou NODE_ENV=production), l'expéditeur de test de Resend est
  *  interdit : un courriel parti de « onboarding@resend.dev » finit en pourriel ou est
  *  refusé, et personne ne le voit. Sans RESEND_FROM, on n'envoie PAS. */
-export function enProduction(): boolean {
-  return !!process.env.VERCEL || process.env.NODE_ENV === "production";
+export function enProduction(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !!env.VERCEL || env.NODE_ENV === "production";
 }
 
 /** « m***@domaine.ca » : assez pour retrouver le destinataire dans le journal, sans y

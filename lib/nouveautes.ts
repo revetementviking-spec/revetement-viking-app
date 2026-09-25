@@ -24,6 +24,15 @@ export const MAX_BLOCS = 3;
 
 export const NOUVEAUTES: Nouveaute[] = [
   {
+    version: "2026-09-25",
+    titre: "Demande d'avis Google : ça marche aussi sur le téléphone",
+    points: [
+      "Quand un chantier passe à « complété », un panneau s'ouvre avec le message d'avis Google prérempli et deux boutons : « Ouvrir mon app courriel » (téléphone) et « Ouvrir dans Gmail » (ordinateur). Avant, l'app tentait d'ouvrir Gmail toute seule et le téléphone bloquait la fenêtre : rien ne partait.",
+      "Sur un chantier déjà complété, le bouton « ⭐ Demander un avis » rouvre ce panneau : si l'envoi a raté une fois, on recommence sans toucher au statut.",
+      "« Copier le message » met le texte dans le presse-papiers ; « Envoyer par l'app » l'envoie directement quand le courriel du serveur est configuré, et le dit clairement quand il ne l'est pas.",
+    ],
+  },
+  {
     version: "2026-09-22",
     titre: "Factures en double, jours fériés payés et bouton « Facturé ! »",
     points: [

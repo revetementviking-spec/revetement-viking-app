@@ -22,6 +22,7 @@ import { fichierTropLourd } from "@/lib/limites-fichiers";
 import { useVerrou } from "@/lib/verrou";
 import ErreurChargement from "@/components/ErreurChargement";
 import Modale from "@/components/Modale";
+import { messageDemandeAvis, urlGmailDemandeAvis, urlMailtoDemandeAvis, estAppareilTactile, SUJET_DEMANDE_AVIS } from "@/lib/demande-avis";
 
 // Ajoute n jours à une date ISO (yyyy-mm-dd) en heure locale, sans dérive de fuseau.
 function ajouterJours(iso: string, n: number): string {
@@ -275,48 +276,49 @@ export default function ProjetDetail() {
     charger();
   };
 
-  const envoyerDemandeReview = (courriel: string, nomClient?: string) => {
-    const VIKING_EMAIL = "revetementviking@gmail.com";
-    const prenom = (nomClient || "").trim().split(/\s+/)[0]; // premier mot du nom client
-    const sujet = "Travaux complétés — Revêtement Viking Inc.";
-    const corps = `Bonjour${prenom ? " " + prenom : ""},
-
-Les travaux sont maintenant complets.
-
-Si vous avez apprécié notre service vous pouvez nous laisser un avis sur notre page, c'est toujours grandement apprécié.
-
-Voici le lien : https://g.page/r/CY_Ub0jeQKebEB0/review
-
-Page Google : Revêtement Viking Inc.
-
-Au plaisir de refaire affaire avec vous dans le futur.
-
-Cordialement,
-
-Revêtement Viking Inc.
-${VIKING_EMAIL}
-(438) 493-2041`;
-    // Ouvre la fenêtre de rédaction GMAIL (compte Viking), pré-remplie — tu révises
-    // et envoies depuis Gmail. Repli sur le même onglet si la pop-up est bloquée.
-    const url = `https://mail.google.com/mail/?authuser=${encodeURIComponent(VIKING_EMAIL)}&view=cm&fs=1&to=${encodeURIComponent(courriel)}&su=${encodeURIComponent(sujet)}&body=${encodeURIComponent(corps)}`;
-    const w = window.open(url, "_blank");
-    if (!w) window.location.href = url;
+  // Demande d'avis Google : un panneau avec de VRAIS liens que l'utilisateur touche lui-même.
+  // L'ancien `window.open(...)` lancé après un `confirm()` et un `await` n'était plus dans le
+  // geste de l'utilisateur : bloqué comme pop-up sur téléphone (et la composition Gmail web
+  // ne marche pas sur mobile de toute façon). Le panneau reste accessible sur un chantier
+  // complété : si l'envoi a raté une fois, on recommence sans changer le statut.
+  const [avisPanneau, setAvisPanneau] = useState<null | { courriel: string; nom: string }>(null);
+  const [avisEnvoiServeur, setAvisEnvoiServeur] = useState(false);
+  const ouvrirDemandeAvis = () => {
+    const courriel = projet?.client_courriel;
+    if (!courriel) { toast("Aucun courriel client enregistré pour la demande d'avis.", "info"); return; }
+    setAvisPanneau({ courriel, nom: projet?.client_nom || "" });
+  };
+  const copierDemandeAvis = async () => {
+    if (!avisPanneau) return;
+    try {
+      await navigator.clipboard.writeText(`À : ${avisPanneau.courriel}\nObjet : ${SUJET_DEMANDE_AVIS}\n\n${messageDemandeAvis(avisPanneau.nom)}`);
+      toast("Message copié — colle-le dans ton courriel", "success");
+    } catch {
+      toast("Copie impossible sur cet appareil : utilise un des deux liens", "error");
+    }
+  };
+  const envoyerDemandeAvisParServeur = async () => {
+    if (!avisPanneau || avisEnvoiServeur) return;
+    setAvisEnvoiServeur(true);
+    try {
+      const r = await envoyer("/api/email/review", { methode: "POST", corps: { projet_id: id } });
+      const d: any = r.data || {};
+      if (r.ok && d.ok) { toast(`✉️ Demande d'avis envoyée à ${d.to}`, "success"); setAvisPanneau(null); return; }
+      if (d.raison === "non_configure") { toast("L'envoi par l'app n'est pas configuré (RESEND_FROM). Utilise Gmail ou l'app courriel.", "info"); return; }
+      toast(`Envoi refusé : ${d.error || d.raison || r.erreur || "erreur"}`, "error");
+    } finally {
+      setAvisEnvoiServeur(false);
+    }
   };
 
   const changerStatut = async (nouveauStatut: string) => {
     if (!(await ecrire("/api/projets", "PATCH", { id, statut: nouveauStatut }, "Enregistrement"))) return;
     toast(`Statut → ${STATUTS_LABEL[nouveauStatut]}`, "success");
-    // Projet complété → envoi du courriel de demande d'avis Google
+    // Projet complété → panneau de demande d'avis Google (liens touchés par l'utilisateur)
     if (nouveauStatut === "complete") {
       const courriel = projet?.client_courriel;
-      if (courriel) {
-        if (confirm(`Projet complété ✅\n\nOuvrir Gmail pour envoyer la demande d'avis à ${courriel} ?`)) {
-          // Ouvre la rédaction Gmail pré-remplie — l'envoi se fait depuis Gmail.
-          envoyerDemandeReview(courriel, projet?.client_nom);
-        }
-      } else {
-        toast("Projet complété. Aucun courriel client enregistré pour la demande d'avis.", "info");
-      }
+      if (courriel) setAvisPanneau({ courriel, nom: projet?.client_nom || "" });
+      else toast("Projet complété. Aucun courriel client enregistré pour la demande d'avis.", "info");
     }
     charger();
   };
@@ -482,6 +484,15 @@ ${VIKING_EMAIL}
                   🧾 Facturé{utilisateur ? ` par ${utilisateur}` : ""} !
                 </button>
               )
+            )}
+            {projet.statut === "complete" && (
+              <button
+                onClick={ouvrirDemandeAvis}
+                className="px-3 py-1.5 bg-yellow-100 hover:bg-yellow-200 text-yellow-900 rounded text-sm font-bold"
+                title="Envoyer au client la demande d'avis Google (Gmail, app courriel ou envoi par l'app)"
+              >
+                ⭐ Demander un avis
+              </button>
             )}
             {projet.soumission_numero && (
               <a href={`/soumissions/nouveau?modifier=${projet.soumission_numero}`} className="text-xs px-3 py-1 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded font-semibold">📄 Voir soumission {projet.soumission_numero}</a>
@@ -985,6 +996,42 @@ ${VIKING_EMAIL}
       </main>
 
       {/* MODAL ÉDITION nom / client du projet */}
+      {avisPanneau && (
+        <Modale onClose={() => setAvisPanneau(null)} titre="Demande d'avis Google" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-bold">⭐ Demande d'avis Google</h3>
+            <p className="text-sm text-slate-700">
+              À <strong className="break-all">{avisPanneau.courriel}</strong>{avisPanneau.nom ? ` (${avisPanneau.nom})` : ""}.
+              Le message est prérempli : tu le relis et tu l'envoies depuis ton courriel.
+            </p>
+            <pre className="text-xs whitespace-pre-wrap bg-slate-50 border rounded p-2 max-h-40 overflow-y-auto">{messageDemandeAvis(avisPanneau.nom)}</pre>
+            {/* Ordre selon l'appareil : sur téléphone, l'app courriel d'abord (Gmail web ignore
+                la composition sur mobile) ; sur ordinateur, Gmail web d'abord. Ce sont de vrais
+                liens : le navigateur ne peut pas les bloquer comme une pop-up. */}
+            {(() => {
+              const tactile = typeof navigator !== "undefined" && estAppareilTactile(navigator);
+              const lienApp = (
+                <a key="app" href={urlMailtoDemandeAvis(avisPanneau.courriel, avisPanneau.nom)} className="block w-full text-center px-4 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold">
+                  📱 Ouvrir mon app courriel
+                </a>
+              );
+              const lienGmail = (
+                <a key="gmail" href={urlGmailDemandeAvis(avisPanneau.courriel, avisPanneau.nom)} target="_blank" rel="noopener noreferrer" className="block w-full text-center px-4 py-3 bg-red-600 hover:bg-red-500 text-white rounded font-bold">
+                  ✉️ Ouvrir dans Gmail (ordinateur)
+                </a>
+              );
+              return <div className="space-y-2">{tactile ? [lienApp, lienGmail] : [lienGmail, lienApp]}</div>;
+            })()}
+            <div className="flex gap-2">
+              <button onClick={copierDemandeAvis} className="flex-1 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded text-sm font-semibold">📋 Copier le message</button>
+              <button onClick={envoyerDemandeAvisParServeur} disabled={avisEnvoiServeur} className="flex-1 px-3 py-2 bg-emerald-100 hover:bg-emerald-200 disabled:opacity-50 text-emerald-900 rounded text-sm font-semibold" title="Envoi direct par l'app (exige la configuration courriel du serveur)">
+                {avisEnvoiServeur ? "Envoi…" : "🚀 Envoyer par l'app"}
+              </button>
+            </div>
+            <button onClick={() => setAvisPanneau(null)} className="w-full px-3 py-2 text-sm text-slate-600 hover:text-slate-900">Fermer</button>
+          </div>
+        </Modale>
+      )}
       {editInfo && (
         <Modale onClose={() => setEditInfo(null)} titre="Modifier le projet" className="fixed inset-0 bg-black/50 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="bg-white rounded-t-2xl md:rounded-lg max-w-md w-full p-5 space-y-3 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
